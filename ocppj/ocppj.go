@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"sync/atomic"
 
 	"github.com/lorenzodonini/ocpp-go/logging"
 
@@ -18,11 +19,11 @@ import (
 // The internal verbose logger
 var log logging.Logger
 
-var EscapeHTML = true
+var EscapeHTML atomic.Bool
 
 func init() {
 	log = &logging.VoidLogger{}
-	validationEnabled = true
+	EscapeHTML.Store(true)
 }
 
 // Sets a custom Logger implementation, allowing the ocpp-j package to log events.
@@ -39,7 +40,7 @@ func SetLogger(logger logging.Logger) {
 // Allows an instance of ocppj to configure if the message is Marshaled by escaping special caracters like "<", ">", "&" etc
 // For more info https://pkg.go.dev/encoding/json#HTMLEscape
 func SetHTMLEscape(flag bool) {
-	EscapeHTML = flag
+	EscapeHTML.Store(flag)
 }
 
 // MessageType identifies the type of message exchanged between two OCPP endpoints.
@@ -302,7 +303,7 @@ func errorFromValidation(d dialector, validationErrors validator.ValidationError
 func jsonMarshal(t interface{}) ([]byte, error) {
 	buffer := &bytes.Buffer{}
 	encoder := json.NewEncoder(buffer)
-	encoder.SetEscapeHTML(EscapeHTML)
+	encoder.SetEscapeHTML(EscapeHTML.Load())
 	err := encoder.Encode(t)
 	return bytes.TrimRight(buffer.Bytes(), "\n"), err
 }
