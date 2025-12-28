@@ -15,19 +15,12 @@ import (
 	"github.com/lorenzodonini/ocpp-go/ocpp"
 )
 
-// The validator, used for validating incoming/outgoing OCPP messages.
-var Validate = validator.New()
-
-// The internal validation settings. Enabled by default.
-var validationEnabled bool
-
 // The internal verbose logger
 var log logging.Logger
 
 var EscapeHTML = true
 
 func init() {
-	_ = Validate.RegisterValidation("errorCode", IsErrorCodeValid)
 	log = &logging.VoidLogger{}
 	validationEnabled = true
 }
@@ -47,18 +40,6 @@ func SetLogger(logger logging.Logger) {
 // For more info https://pkg.go.dev/encoding/json#HTMLEscape
 func SetHTMLEscape(flag bool) {
 	EscapeHTML = flag
-}
-
-// Allows to enable/disable automatic validation for OCPP messages
-// (this includes the field constraints defined for every request/response).
-// The feature may be useful when working with OCPP implementations that don't fully comply to the specs.
-//
-// Validation is enabled by default.
-//
-// ⚠️ Use at your own risk! When disabled, outgoing and incoming OCPP messages will not be validated anymore,
-// potentially leading to errors.
-func SetMessageValidation(enabled bool) {
-	validationEnabled = enabled
 }
 
 // MessageType identifies the type of message exchanged between two OCPP endpoints.
@@ -536,7 +517,7 @@ func (endpoint *Endpoint) CreateCall(request ocpp.Request) (*Call, error) {
 		Action:        action,
 		Payload:       request,
 	}
-	if validationEnabled {
+	if validationEnabled.Load() {
 		err := Validate.Struct(call)
 		if err != nil {
 			return nil, err
@@ -559,7 +540,7 @@ func (endpoint *Endpoint) CreateCallResult(confirmation ocpp.Response, uniqueId 
 		UniqueId:      uniqueId,
 		Payload:       confirmation,
 	}
-	if validationEnabled {
+	if validationEnabled.Load() {
 		err := Validate.Struct(callResult)
 		if err != nil {
 			return nil, err
@@ -577,7 +558,7 @@ func (endpoint *Endpoint) CreateCallError(uniqueId string, code ocpp.ErrorCode, 
 		ErrorDescription: description,
 		ErrorDetails:     details,
 	}
-	if validationEnabled {
+	if validationEnabled.Load() {
 		err := Validate.Struct(callError)
 		if err != nil {
 			return nil, err
