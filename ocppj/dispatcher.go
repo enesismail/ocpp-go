@@ -543,21 +543,32 @@ func (d *DefaultServerDispatcher) messagePump() {
 					log.Error("dispatcher timeout for client %s triggered, but no pending request found", clientID)
 					continue
 				}
+
 				bundle, _ := el.(RequestBundle)
+				if bundle.Call == nil {
+					log.Errorf("dispatcher timeout for client %s failed; nil Call attribute", clientID)
+					continue
+				}
+
+				if bundle.Data == nil {
+					log.Errorf("dispatcher timeout for client for %s; nil Data attribute", clientID)
+					continue
+				}
+
 				// Complete the request inline instead of calling CompleteRequest,
 				// which sends to readyForDispatch. Since messagePump is the sole
 				// reader of that channel, sending to it here would self-deadlock
 				// if the buffer is already full from a previous iteration.
 				q.Pop()
-				d.pendingRequestState.DeletePendingRequest(clientID, bundle.Call.UniqueId)
-				log.Debugf("completed request %s for %s", bundle.Call.UniqueId, clientID)
+				d.pendingRequestState.DeletePendingRequest(clientID, bundle.Call.GetUniqueId())
+				log.Debugf("completed request %s for %s", bundle.Call.GetUniqueId(), clientID)
 				// Mark this client as ready for its next queued request
 				clientQueue = q
 				rdy = true
-				log.Infof("request %v for %v timed out", bundle.Call.UniqueId, clientID)
+				log.Infof("request %v for %v timed out", bundle.Call.GetUniqueId(), clientID)
 				if d.onRequestCancel != nil {
-					d.onRequestCancel(clientID, bundle.Call.UniqueId, bundle.Call.Payload,
-						ocpp.NewError(GenericError, "Request timed out", bundle.Call.UniqueId))
+					d.onRequestCancel(clientID, bundle.Call.GetUniqueId(), bundle.Call.Payload,
+						ocpp.NewError(GenericError, "Request timed out", bundle.Call.GetUniqueId()))
 				}
 			}
 		case clientID = <-d.readyForDispatch:
@@ -599,6 +610,16 @@ func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCt
 	}
 	el := q.Peek()
 	bundle, _ := el.(RequestBundle)
+	if bundle.Call == nil {
+		log.Errorf("failed to dispatch next request for %s; nil Call attribute", clientID)
+		return
+	}
+
+	if bundle.Data == nil {
+		log.Errorf("failed to dispatch next request for %s; nil Data attribute", clientID)
+		return
+	}
+
 	jsonMessage := bundle.Data
 	callID := bundle.Call.GetUniqueId()
 	d.pendingRequestState.AddPendingRequest(clientID, callID, bundle.Call.Payload)
