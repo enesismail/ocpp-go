@@ -1,3 +1,14 @@
+> **Community-maintained friendly fork** of [`lorenzodonini/ocpp-go`](https://github.com/lorenzodonini/ocpp-go) (MIT licensed). The upstream project is the canonical one — this fork is not official.
+>
+> **Why this fork exists**, in priority order:
+> 1. Adopt well-developed, open upstream pull requests that fix real bugs or restore build/test health.
+> 2. Keep the library correct and faithful to upstream's design.
+> 3. Incorporate good-practice improvements from other forks that are ahead of upstream `master` — always with sound engineering and tests.
+>
+> **Upstream authorship is preserved.** Adopted changes retain their original commit authorship; see `NOTICE.md` for contributor credits and `CHANGELOG.md` for notable divergences (both planned). We aim to send fixes back upstream rather than compete with it, and build/test restoration is currently in progress.
+>
+> **Contributions are welcome.** Thanks to the original author and to all previous contributors whose work this fork builds on.
+
 # ocpp-go
 
 [![Build Status](https://github.com/lorenzodonini/ocpp-go/actions/workflows/test.yaml/badge.svg)](https://github.com/lorenzodonini/ocpp-go/actions/workflows/test.yaml)
