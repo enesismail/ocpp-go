@@ -1,0 +1,43 @@
+name: Gate
+
+# Self-contained build/vet gate for the friendly fork, complementing the
+# docker-compose-based Test workflow. Runs the library checks directly on the
+# runner; the network suite (toxiproxy) skips cleanly when toxiproxy-server is
+# absent.
+#
+# The full race gate (`go test ./... -race`) and the replace-based validation of
+# the downstream consumer projects are run locally via scripts/gate.sh and are
+# intentionally not wired into public CI: the race gate is the post-Phase-1
+# target (master still carries pre-existing data races at the time this workflow
+# was added), and those projects are not available in CI.
+
+on:
+  push:
+    paths-ignore:
+      - "**.md"
+      - LICENSE
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - LICENSE
+  workflow_dispatch:
+
+jobs:
+  gate:
+    name: build / vet / race
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.2.2
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Build
+        run: go build ./...
+      - name: Build (race-instrumented)
+        run: go build ./... -race
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
