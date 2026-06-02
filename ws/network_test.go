@@ -39,19 +39,28 @@ func (s *NetworkTestSuite) SetupSuite() {
 
 	endpoint := fmt.Sprintf("%v:%v", cfg.ToxiProxyHost, cfg.ToxiProxyPort)
 	client := toxiproxy.NewClient(endpoint)
+	// Skip the whole network suite cleanly when toxiproxy-server is not
+	// reachable (e.g. running `go test ./...` locally without the docker
+	// test harness). Probing here avoids leaving s.proxy nil and then
+	// panicking on a nil-pointer dereference in TearDownSuite.
+	if _, err := client.Proxies(); err != nil {
+		s.T().Skipf("toxiproxy-server not reachable at %v, skipping network tests: %v", endpoint, err)
+	}
 	s.proxyPort = 8886
 	// Proxy listens on 8886 and upstreams to 8887 (where ocpp server is actually listening)
-	oldProxy, err := client.Proxy("ocpp")
+	oldProxy, _ := client.Proxy("ocpp")
 	if oldProxy != nil {
 		s.Require().NoError(oldProxy.Delete())
 	}
 	p, err := client.CreateProxy("ocpp", cfg.ProxyOcppListener, cfg.ProxyOcppUpstream)
-	s.NoError(err)
+	s.Require().NoError(err)
 	s.proxy = p
 }
 
 func (s *NetworkTestSuite) TearDownSuite() {
-	s.Require().NoError(s.proxy.Delete())
+	if s.proxy != nil {
+		s.Require().NoError(s.proxy.Delete())
+	}
 }
 
 func (s *NetworkTestSuite) SetupTest() {
