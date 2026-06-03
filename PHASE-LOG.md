@@ -116,6 +116,11 @@ baseline), and none addressed by the 6-PR Phase-1 set:
    `done`-guarded like WriteManual/Close; a latent robustness item.
 5. **`.mockery.yaml` stale `ws` section** — still lists the removed `WsClient`/`WsServer` interfaces; harmless
    for build (mocks are checked in) but should be reconciled when mock regeneration tooling is revisited.
+6. **`DefaultClientDispatcher` nil-deref (`ocppj/dispatcher.go:208`)** — #399 added nil-guards to the *server*
+   dispatcher's `messagePump`, but the *client* dispatcher's timeout path can still nil-deref
+   `bundle.Call.UniqueId` if `el` / `bundle.Call` is nil. Pre-existing and a faithful match to upstream scope
+   (not introduced here) — the client-side analog of #399's server-side guards. Surfaced by an independent
+   Gemini CLI review of Phase 0+1.
 
 ## Summary
 
