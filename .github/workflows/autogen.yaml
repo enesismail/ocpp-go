@@ -33,7 +33,10 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.17
+          # 1.19+ required: ocppj uses atomic.Bool (added in Go 1.19) since the
+          # #391 validation/escape atomic migration. Matches the Test image
+          # (cimg/go:1.22.5); mockery loads packages with this toolchain.
+          go-version: "1.22"
 
       - name: Install Mockery
         uses: jaxxstorm/action-install-gh-release@v1.10.0
