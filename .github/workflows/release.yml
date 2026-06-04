@@ -1,7 +1,10 @@
 name: Release examples
 on:
-  release:
-    types: [published,prereleased]
+  # Disabled on this fork: see docker-publish.yml. Publishes example images to
+  # the upstream ldonini/ DockerHub namespace and needs DockerHub secrets the
+  # fork doesn't have. Kept as workflow_dispatch only; to re-enable, restore
+  # the `release` trigger and add the DockerHub secrets.
+  workflow_dispatch:
 jobs:
   release_tag:
     runs-on: ubuntu-latest

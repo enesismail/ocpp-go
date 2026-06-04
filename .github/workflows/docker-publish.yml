@@ -1,10 +1,11 @@
 name: Publish examples
 on:
-  push:
-    paths-ignore:
-      - "**.md"
-    branches:
-      - master
+  # Disabled on this fork: these steps push example images to the upstream
+  # ldonini/ DockerHub namespace and require DOCKER_USERNAME/DOCKER_PASSWORD
+  # secrets the fork doesn't have, so the job failed on every master push.
+  # Kept as workflow_dispatch only (no automatic triggers); to re-enable,
+  # restore the `push` trigger and add the DockerHub secrets.
+  workflow_dispatch:
 jobs:
   publish_latest:
     runs-on: ubuntu-latest
