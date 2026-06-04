@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"sync/atomic"
 
 	"github.com/lorenzodonini/ocpp-go/logging"
 
@@ -15,21 +16,14 @@ import (
 	"github.com/lorenzodonini/ocpp-go/ocpp"
 )
 
-// The validator, used for validating incoming/outgoing OCPP messages.
-var Validate = validator.New()
-
-// The internal validation settings. Enabled by default.
-var validationEnabled bool
-
 // The internal verbose logger
 var log logging.Logger
 
-var EscapeHTML = true
+var EscapeHTML atomic.Bool
 
 func init() {
-	_ = Validate.RegisterValidation("errorCode", IsErrorCodeValid)
 	log = &logging.VoidLogger{}
-	validationEnabled = true
+	EscapeHTML.Store(true)
 }
 
 // Sets a custom Logger implementation, allowing the ocpp-j package to log events.
@@ -46,19 +40,7 @@ func SetLogger(logger logging.Logger) {
 // Allows an instance of ocppj to configure if the message is Marshaled by escaping special caracters like "<", ">", "&" etc
 // For more info https://pkg.go.dev/encoding/json#HTMLEscape
 func SetHTMLEscape(flag bool) {
-	EscapeHTML = flag
-}
-
-// Allows to enable/disable automatic validation for OCPP messages
-// (this includes the field constraints defined for every request/response).
-// The feature may be useful when working with OCPP implementations that don't fully comply to the specs.
-//
-// Validation is enabled by default.
-//
-// ⚠️ Use at your own risk! When disabled, outgoing and incoming OCPP messages will not be validated anymore,
-// potentially leading to errors.
-func SetMessageValidation(enabled bool) {
-	validationEnabled = enabled
+	EscapeHTML.Store(flag)
 }
 
 // MessageType identifies the type of message exchanged between two OCPP endpoints.
@@ -321,7 +303,7 @@ func errorFromValidation(d dialector, validationErrors validator.ValidationError
 func jsonMarshal(t interface{}) ([]byte, error) {
 	buffer := &bytes.Buffer{}
 	encoder := json.NewEncoder(buffer)
-	encoder.SetEscapeHTML(EscapeHTML)
+	encoder.SetEscapeHTML(EscapeHTML.Load())
 	err := encoder.Encode(t)
 	return bytes.TrimRight(buffer.Bytes(), "\n"), err
 }
@@ -461,7 +443,10 @@ func (endpoint *Endpoint) ParseMessage(arr []interface{}, pendingRequestState Cl
 			log.Infof("No previous request %v sent. Discarding response message", uniqueId)
 			return nil, nil
 		}
-		profile, _ := endpoint.GetProfileForFeature(request.GetFeatureName())
+		profile, ok := endpoint.GetProfileForFeature(request.GetFeatureName())
+		if !ok {
+			return nil, ocpp.NewError(InternalError, fmt.Sprintf("no profile found for feature %v", request.GetFeatureName()), uniqueId)
+		}
 		confirmation, err := profile.ParseResponse(request.GetFeatureName(), arr[2], parseRawJsonConfirmation)
 		if err != nil {
 			return nil, ocpp.NewError(FormatErrorType(endpoint), err.Error(), uniqueId)
@@ -533,7 +518,7 @@ func (endpoint *Endpoint) CreateCall(request ocpp.Request) (*Call, error) {
 		Action:        action,
 		Payload:       request,
 	}
-	if validationEnabled {
+	if validationEnabled.Load() {
 		err := Validate.Struct(call)
 		if err != nil {
 			return nil, err
@@ -556,7 +541,7 @@ func (endpoint *Endpoint) CreateCallResult(confirmation ocpp.Response, uniqueId 
 		UniqueId:      uniqueId,
 		Payload:       confirmation,
 	}
-	if validationEnabled {
+	if validationEnabled.Load() {
 		err := Validate.Struct(callResult)
 		if err != nil {
 			return nil, err
@@ -574,7 +559,7 @@ func (endpoint *Endpoint) CreateCallError(uniqueId string, code ocpp.ErrorCode, 
 		ErrorDescription: description,
 		ErrorDetails:     details,
 	}
-	if validationEnabled {
+	if validationEnabled.Load() {
 		err := Validate.Struct(callError)
 		if err != nil {
 			return nil, err

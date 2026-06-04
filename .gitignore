@@ -14,8 +14,14 @@
 # Idea
 .idea/*
 
+# macOS
+.DS_Store
+
 # Project-specific
 certs/
 
 central_system_sim
 charge_point_sim
+
+# Local task notes (not part of the library)
+tasks/
