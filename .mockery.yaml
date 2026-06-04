@@ -128,12 +128,40 @@ packages:
       CentralSystem:
 
   github.com/lorenzodonini/ocpp-go/ocppj:
+    # all: false + an explicit list (exclude-regex is ignored when all is true).
+    # Message is intentionally omitted: its generated expecter declares a
+    # MarshalJSON method that trips `go vet` (stdmethods) and the mock is unused.
+    config:
+      all: false
     interfaces:
-      ServerQueueMap:
+      CanceledRequestHandler:
+      ClientDispatcher:
+      ClientHandler:
+      ClientState:
+      ErrorHandler:
+      InvalidMessageHook:
+      RequestHandler:
       RequestQueue:
+      ResponseHandler:
+      ServerDispatcher:
+      ServerQueueMap:
+      ServerState:
+      dialector:
 
   github.com/lorenzodonini/ocpp-go/ws:
+    # all: false + an explicit list. ClientOpt/ServerOpt are intentionally
+    # omitted: they are func types over the unexported *client/*server, so
+    # mockery emits references to ws.client without importing ws and the
+    # generated mocks don't compile. (WsClient/WsServer no longer exist; the
+    # interfaces are Client/Server/Channel.)
+    config:
+      all: false
     interfaces:
-      WsClient:
-      WsServer:
       Channel:
+      CheckClientHandler:
+      Client:
+      ConnectedHandler:
+      DisconnectedHandler:
+      ErrorHandler:
+      MessageHandler:
+      Server:
