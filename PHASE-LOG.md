@@ -101,17 +101,42 @@ detector:
 
 The conflict resolution (#399 ⊕ #412 union), #396 subsumption, and #413/#391/Phase-0 commits all hold up.
 
+## External code reviews (read-only, independent)
+
+Two external CLIs reviewed the Phase 0+1 diff against `master` (read-only; **no code changed**):
+
+- **Gemini CLI** — verdict **"Sound."** No regressions; confirmed the #399 ⊕ #412 union, the #396
+  subsumption, #414 channel ordering, and the #391 atomics. Surfaced the `DefaultClientDispatcher`
+  nil-deref now logged as Phase-2 item 6.
+- **Codex CLI** (`codex exec`, read-only sandbox) — **no findings against this branch.** Independently
+  confirmed: the dispatcher union completes the timeout **inline** (`q.Pop` + `DeletePendingRequest` +
+  `clientQueue=q` + `rdy=true`) instead of calling `CompleteRequest`, whose `readyForDispatch` send
+  (`dispatcher.go:694`) would self-deadlock `messagePump`; the nil guards are ordered before the
+  `bundle.Call`/`bundle.Data` derefs with `continue` preventing stale fallthrough; the #396 skip; the
+  `ws/websocket.go` cleanup ordering (close `done` before the exclusive lock — `websocket.go:384` — with
+  single-owner cleanup so no new double-close); and the #391/#413 fixes. It corroborated that the residual
+  `-race` failures are **pre-existing and unconnected to this branch**, explicitly naming Phase-2 items
+  **1** (dispatcher goroutine join / test mocks), **2** (logger guard), and **3** (ws `errC` sync).
+
+**Three independent reviews — adversarial workflow + Gemini + Codex — agree:** no regression introduced, and
+the Phase-2 candidates below are confirmed-real and sound to tackle once Phase 0/1 is in place.
+
 ## Residual findings — out of Phase-1 scope (Phase-2 candidates)
 
 `go test ./... -race` remains red due to **pre-existing** issues, none introduced by Phase 0/1 (reproduced at
-baseline), and none addressed by the 6-PR Phase-1 set:
-1. **ocppj test-lifecycle races** — a dispatcher `messagePump` goroutine outlives its test and races the next
-   test's `SetupTest` on mock counters / shared suite state. Fix: make dispatcher `Stop()` synchronously join
-   its goroutine, and/or make the test mocks goroutine-safe.
-2. **ocppj `log` global race** — `SetLogger()` (ocppj.go:43) writes the package global `log` while dispatcher
-   goroutines read it (`TestLogger`). Not covered by #391 (which only atomicized validation/escape). Fix: guard/atomic `log`.
-3. **ws library races** — `client.errC` (Errors() write vs readPump error() read), `webSocket.run/readPump/writePump`
-   field access. Separate from the #414 deadlock fix.
+baseline), and none addressed by the 6-PR Phase-1 set. Items 1–3 were independently corroborated by both
+external reviews; 4–6 are latent/robustness items surfaced during review:
+1. **ocppj test-lifecycle races** *(Gemini + Codex confirmed)* — a dispatcher `messagePump` goroutine outlives
+   its test and races the next test's `SetupTest` on mock counters / shared suite state. Fix: make dispatcher
+   `Stop()` synchronously join its goroutine (e.g. a `sync.WaitGroup` / done-ack on the pump), and/or make the
+   test mocks goroutine-safe.
+2. **ocppj `log` global race** *(Gemini + Codex confirmed)* — `SetLogger()` (ocppj.go:43) writes the package
+   global `log` while dispatcher goroutines read it (`TestLogger`). Not covered by #391 (which only atomicized
+   validation/escape). Fix: guard `log` behind a mutex or store it in an `atomic.Value`/`atomic.Pointer`.
+3. **ws library races** *(Gemini + Codex confirmed)* — `client.errC` lazy init/read (Errors() write at
+   client.go:399 vs readPump `error()` read at client.go:426), and `webSocket.run/readPump/writePump` field
+   access. Separate from the #414 deadlock fix. Fix: synchronize the error-channel state (init under lock /
+   guard the field) and audit the `webSocket` field accesses.
 4. **ws `forceCloseC` channel-send asymmetry** — reviewed as not a live bug, but the send pattern is not
    `done`-guarded like WriteManual/Close; a latent robustness item.
 5. **`.mockery.yaml` stale `ws` section** — still lists the removed `WsClient`/`WsServer` interfaces; harmless
@@ -135,8 +160,9 @@ added the validation gate (`scripts/gate.sh` + `.github/workflows/gate.yaml`) wi
 via #412).
 
 **Gate result:** library build/vet/non-race tests green; **both projects build/vet/test/-race green against the
-fork**; library `go test -race` red only on the pre-existing, out-of-scope races above (Phase-2). Adversarial
-review found no introduced regression.
+fork**; library `go test -race` red only on the pre-existing, out-of-scope races above (Phase-2). **Three
+independent reviews — the adversarial multi-agent workflow plus the Gemini and Codex CLIs (both read-only) —
+found no introduced regression** and corroborated the Phase-2 candidate list.
 
 **Two environment realities** the investigation hadn't captured (it never ran `-race` on the full suite and
 never reached `TestWebSockets`): the `-race` baseline was already red (pre-existing races, not the assumed
