@@ -144,6 +144,11 @@ func (d *DefaultClientDispatcher) IsPaused() bool {
 	return d.paused
 }
 
+// Stop signals the dispatcher to stop and blocks until its messagePump goroutine
+// has exited, so no dispatcher goroutine outlives the call. It is safe to call
+// more than once and before Start. It must not be called from within an
+// onRequestCancel callback (which runs on the messagePump goroutine), as that
+// would wait for the pump to exit from the pump itself.
 func (d *DefaultClientDispatcher) Stop() {
 	d.mutex.Lock()
 	if d.requestChannel == nil {
@@ -431,6 +436,11 @@ func (d *DefaultServerDispatcher) IsRunning() bool {
 	return d.running
 }
 
+// Stop signals the dispatcher to stop and blocks until its messagePump goroutine
+// has exited, so no dispatcher goroutine outlives the call. It is safe to call
+// more than once and before Start. It must not be called from within an
+// onRequestCancel callback (which runs on the messagePump goroutine), as that
+// would wait for the pump to exit from the pump itself.
 func (d *DefaultServerDispatcher) Stop() {
 	d.mutex.Lock()
 	if !d.running {
