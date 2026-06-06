@@ -169,4 +169,49 @@ never reached `TestWebSockets`): the `-race` baseline was already red (pre-exist
 Phase-1 targets), and `ws` integration tests need port `8887` free (a running `csms` blocked them; resolved by
 freeing the port). Both handled per owner direction.
 
-**Not pushed. Phase 2 (rework) and Phase 3 (breaking) not started**, per scope.
+**Not pushed.** (Phase 2a below was executed subsequently; Phase 2b rework / Phase 3 breaking not started.)
+
+---
+
+# Phase 2a — `-race` cleanup (the residual pre-existing races)
+
+Goal: drive `go test ./... -race` to **0 data races** (the bar deferred from Phase 1), without
+changing exported API or introducing deadlocks. The races were pre-existing (reproduced at the
+Phase-1 baseline) — `ocppj` 10 race blocks, `ws` ~25 — split across library globals/lifecycle and
+race-prone test harnesses. **Branch `fork-main`, local commits only — not pushed.**
+
+Gate cadence: library `go build`/`go vet`/non-race `go test`/`-race` after each change; full
+`scripts/gate.sh` (both consumer projects) at the end.
+
+| # | Commit | Change | Kind |
+|---|---|---|---|
+| 2a.1 | `6a39af1` | `ocppj` package logger `log` is now a stable `*atomicLogger` whose delegate swaps under a `RWMutex` (non-generic — stays on the go 1.16 directive); all `log.Xxx` call sites unchanged. Fixes the `SetLogger`-vs-read race. | library |
+| 2a.2 | `8b5dc82` | `ocppj` `DefaultServerDispatcher` **and** `DefaultClientDispatcher` `Stop()` now JOIN the `messagePump` goroutine (close stop signal, capture `doneC`, release mutex, `<-doneC`; pump does `defer close(doneC)`) so no goroutine outlives `Stop()`. Plus a client-timeout nil-guard (skip cancel when `Peek()` is nil/non-bundle) — the client-side analog of #399. | library |
+| 2a.3 | `abc8a12` | `ocppj` test synchronization: `ServerDispatcherTestSuite.TearDownTest` stops the dispatcher (joined) so its goroutine can't race the next `SetupTest`; channel hand-off of `callID`; atomic `sentMessages`; goroutine-local `err` in parallel-send loops. | test |
+| 2a.4 | `0aa358b` | `ws` data races eliminated: eager-init `errC` + non-blocking guarded send + close-once (`errClosed`, never niled → no send-on-closed/double-close); new client `RWMutex` guarding `webSocket`/`errC`; server lifecycle fields (`httpServer`/`addr`/router) guarded, lock released before `Serve`/`Shutdown`; `getReadTimeout`/`writePump` read `cfg`/`log` under `RLock`. **`Stop()` made concurrency-safe** (replaced the `reconnectC` check-then-send — two concurrent `Stop()`s could deadlock — with a non-blocking send). `Errors()` docs updated for eager/lossy semantics. No exported API change; #414 cleanup ordering intact. | library |
+| 2a.5 | `b514e41` | `ws` test synchronization (TearDownTest drain, dedicated channels vs shared counters, cfg under mutex, goroutine-local err, connection-count under `connMutex`). | test |
+| 2a.6 | `ac6cbcc` | `ws` tests bind an **OS-assigned free port** (`serverPort` is now a var probing `:0`) so `-race` runs reliably without freeing 8887 (no more csms collision, no cross-run bind clashes); hardened two pre-existing flakes (nil `*CloseError` guard in `TestUnsupportedSubProtocol`; buffer the unread `disconnectedServerC` to `numClients`). | test |
+| 2a.7 | `af5df88` | `scripts/gate.sh`: drop the vendor dir in the disposable scratch copy so a consumer that now **vendors** the fork is built/tested against the live fork tree (fixes "inconsistent vendoring"). | ci |
+| 2a.8 | `8a26827` | Doc: `Stop()` is blocking/idempotent and must not be called from an `onRequestCancel` callback (review note). | docs |
+
+## Phase 2a gate — final state
+
+| Target | build | vet | `go test` (non-race) | `go test -race` |
+|---|---|---|---|---|
+| **library** | ✓ | ✓ | ✓ | ✅ **0 races** — `ocppj` (×3), `ws` (×5, dynamic port, csms still up), `ocpp1.6_test`/`ocpp2.0.1_test` |
+| **CSMS consumer** (replace→fork) | ✓ | ✓ | ✓ | ✅ green |
+| **simulator consumer** (replace→fork) | ✓ | ✓ | ✓ | ✅ green |
+
+`scripts/gate.sh` (both projects via `GATE_PROJECT_DIRS`): **GATE: ALL GREEN** — and now runnable with csms running, thanks to the dynamic test port.
+
+## Adversarial review (read-only, multi-agent)
+
+- **`ws` concurrency fix — 3 reviewers** (deadlock / correctness / behavior+API): no deadlock introduced (lock-ordering sound; never holds a lock across a channel send or `Serve`/`Shutdown`); no exported-API change; #414 ordering preserved; data races genuinely removed (baseline 23–26 → 0). Surfaced and FIXED a pre-existing concurrent-`Stop()` `reconnectC` deadlock and the eager/lossy `Errors()` doc gap.
+- **`ocppj` `Stop()`-join + log + nil-guard — 2 reviewers**: **SAFE** / **SAFE-WITH-NOTES**. The `<-done` join has no reachable deadlock — `Stop()` is never called from the pump or a cancel/handler callback (all callers are the external control goroutine), the pump always reaches `defer close(doneC)` (its only blocking ops drain during the join given the existing Stop ordering), double-Stop is guarded, and Stop-before-Start short-circuits before touching `doneC`. atomicLogger delegates correctly (defaults to VoidLogger); the client nil-guard only converts a latent nil-deref into a safe skip (mirrors the pre-existing server guard).
+
+### Residual (not data races; out of `-race` scope)
+- A consumer that calls `dispatcher.Stop()` from inside its own `onRequestCancel` callback would self-deadlock on the join — documented (2a.8); unreachable via the library's own OCPP client/server.
+- Pre-existing ws test-suite flakiness beyond the two hardened cases (sleep-based startup sync) can still theoretically flake under heavy `-race` load; not observed across the runs above.
+
+**Net: `go test ./... -race` is green for the library and both consumer projects. Phase 2b (rework PRs
+#406/#191/#387/#376) and Phase 3 (breaking #373/#343) not started.**
