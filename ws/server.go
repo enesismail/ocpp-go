@@ -66,8 +66,12 @@ type Server interface {
 	Stop()
 	// Closes a specific websocket connection.
 	StopConnection(id string, closeError websocket.CloseError) error
-	// Errors returns a channel for error messages. If it doesn't exist it es created.
-	// The channel is closed by the server when stopped.
+	// Errors returns a buffered channel for asynchronous error messages.
+	// The channel is created when the server is constructed and is closed by the
+	// server when stopped. Delivery is best-effort and lossy: the channel has a
+	// small buffer and errors are dropped (not blocked on) when it is full, so a
+	// slow or absent consumer never blocks the server. Consume it promptly if you
+	// rely on error notifications.
 	Errors() <-chan error
 	// Sets a callback function for all incoming messages.
 	// The callbacks accept a Channel and the received data.
@@ -143,6 +147,7 @@ type server struct {
 	timeoutConfig         ServerTimeoutConfig
 	upgrader              websocket.Upgrader
 	errC                  chan error
+	errClosed             bool // true once errC has been closed, to prevent double-close and sends on a closed channel
 	connMutex             sync.RWMutex
 	addr                  *net.TCPAddr
 	httpHandler           *mux.Router
@@ -186,6 +191,7 @@ func NewServer(opts ...ServerOpt) Server {
 		httpServer:    &http.Server{},
 		timeoutConfig: NewServerTimeoutConfig(),
 		upgrader:      websocket.Upgrader{Subprotocols: []string{}},
+		errC:          make(chan error, 1),
 		httpHandler:   router,
 		chargePointIdResolver: func(r *http.Request) (string, error) {
 			url := r.URL
@@ -242,42 +248,61 @@ func (s *server) SetCheckOriginHandler(handler func(r *http.Request) bool) {
 
 func (s *server) error(err error) {
 	log.Error(err)
-	if s.errC != nil {
-		s.errC <- err
+	// Guard the send with the mutex so it cannot race with Stop() closing the
+	// channel. The send is non-blocking (buffered channel with a default case),
+	// so the mutex is never held across a blocking channel operation.
+	s.connMutex.RLock()
+	defer s.connMutex.RUnlock()
+	if s.errClosed {
+		return
+	}
+	select {
+	case s.errC <- err:
+	default:
 	}
 }
 
 func (s *server) Errors() <-chan error {
-	if s.errC == nil {
-		s.errC = make(chan error, 1)
-	}
+	s.connMutex.RLock()
+	defer s.connMutex.RUnlock()
 	return s.errC
 }
 
 func (s *server) Addr() *net.TCPAddr {
+	s.connMutex.RLock()
+	defer s.connMutex.RUnlock()
 	return s.addr
 }
 
 func (s *server) AddHttpHandler(listenPath string, handler func(w http.ResponseWriter, r *http.Request)) {
+	// The mux router is not safe for concurrent registration. Guard it with the
+	// shared mutex so concurrent AddHttpHandler/Start calls don't race.
+	s.connMutex.Lock()
+	defer s.connMutex.Unlock()
 	s.httpHandler.HandleFunc(listenPath, handler)
 }
 
 func (s *server) Start(port int, listenPath string) {
+	addr := fmt.Sprintf(":%v", port)
+
+	// Configure lifecycle fields under the lock so they don't race with Stop(),
+	// Addr() and concurrent AddHttpHandler calls. The lock is released before
+	// the blocking Serve call.
 	s.connMutex.Lock()
 	s.connections = make(map[string]*webSocket)
-	s.connMutex.Unlock()
-
 	if s.httpServer == nil {
 		s.httpServer = &http.Server{}
 	}
-
-	addr := fmt.Sprintf(":%v", port)
 	s.httpServer.Addr = addr
-
-	s.AddHttpHandler(listenPath, func(w http.ResponseWriter, r *http.Request) {
+	// Register the websocket handler directly on the router (we already hold the
+	// lock, so we must not call AddHttpHandler, which re-acquires it).
+	s.httpHandler.HandleFunc(listenPath, func(w http.ResponseWriter, r *http.Request) {
 		s.wsHandler(w, r)
 	})
 	s.httpServer.Handler = s.httpHandler
+	// Snapshot the server so we can call Serve without holding the lock.
+	httpServer := s.httpServer
+	s.connMutex.Unlock()
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -285,16 +310,18 @@ func (s *server) Start(port int, listenPath string) {
 		return
 	}
 
+	s.connMutex.Lock()
 	s.addr = ln.Addr().(*net.TCPAddr)
+	s.connMutex.Unlock()
 
 	defer ln.Close()
 
 	log.Infof("listening on tcp network %v", addr)
-	s.httpServer.RegisterOnShutdown(s.stopConnections)
+	httpServer.RegisterOnShutdown(s.stopConnections)
 	if s.tlsCertificatePath != "" && s.tlsCertificateKey != "" {
-		err = s.httpServer.ServeTLS(ln, s.tlsCertificatePath, s.tlsCertificateKey)
+		err = httpServer.ServeTLS(ln, s.tlsCertificatePath, s.tlsCertificateKey)
 	} else {
-		err = s.httpServer.Serve(ln)
+		err = httpServer.Serve(ln)
 	}
 
 	if !errors.Is(err, http.ErrServerClosed) {
@@ -304,15 +331,27 @@ func (s *server) Start(port int, listenPath string) {
 
 func (s *server) Stop() {
 	log.Info("stopping websocket server")
-	err := s.httpServer.Shutdown(context.TODO())
-	if err != nil {
-		s.error(fmt.Errorf("shutdown failed: %w", err))
+	// Snapshot the http server under the lock, then shut it down outside the
+	// lock (Shutdown blocks until active connections drain).
+	s.connMutex.RLock()
+	httpServer := s.httpServer
+	s.connMutex.RUnlock()
+	if httpServer != nil {
+		err := httpServer.Shutdown(context.TODO())
+		if err != nil {
+			s.error(fmt.Errorf("shutdown failed: %w", err))
+		}
 	}
 
-	if s.errC != nil {
+	// Close the error channel (close-once, guarded by the mutex to avoid racing
+	// with concurrent error() senders). The channel is not niled out, so a
+	// concurrent sender never observes a nil channel.
+	s.connMutex.Lock()
+	if !s.errClosed {
+		s.errClosed = true
 		close(s.errC)
-		s.errC = nil
 	}
+	s.connMutex.Unlock()
 }
 
 func (s *server) StopConnection(id string, closeError websocket.CloseError) error {
