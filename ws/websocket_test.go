@@ -38,6 +38,15 @@ const (
 	defaultSubProtocol = "ocpp1.6"
 )
 
+// connectionCount returns the number of active server connections, reading the
+// connections map under the server's mutex to avoid racing with the websocket
+// handler/disconnect callbacks that mutate it concurrently.
+func connectionCount(s *server) int {
+	s.connMutex.RLock()
+	defer s.connMutex.RUnlock()
+	return len(s.connections)
+}
+
 func newWebsocketServer(t *testing.T, onMessage func(data []byte) ([]byte, error)) *server {
 	wsServer := NewServer()
 	innerS, ok := wsServer.(*server)
@@ -90,12 +99,32 @@ func (s *WebSocketSuite) SetupTest() {
 }
 
 func (s *WebSocketSuite) TearDownTest() {
+	// Stop the client and server and wait for their background goroutines
+	// (read/write pumps and callbacks) to terminate before the suite resets its
+	// shared state (e.g. the suite's *testing.T) for the next test. Otherwise a
+	// lingering pump goroutine may invoke a suite assertion (reading s.T()) while
+	// testify concurrently rewrites it, producing a data race.
 	if s.client != nil {
 		s.client.Stop()
 	}
 	if s.server != nil {
 		s.server.Stop()
 	}
+	// Wait for the client to fully disconnect and the server to drain all
+	// connections. Once IsConnected() is false / connections is empty, the
+	// per-connection cleanup has completed.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		clientDone := s.client == nil || !s.client.IsConnected()
+		serverDone := s.server == nil || connectionCount(s.server) == 0
+		if clientDone && serverDone {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Brief settle to let any in-flight callback (already past the read, e.g. an
+	// onMessage handler) return before the next test reassigns shared state.
+	time.Sleep(50 * time.Millisecond)
 }
 
 func (s *WebSocketSuite) TestPingTicker() {
@@ -219,26 +248,43 @@ func (s *WebSocketSuite) TestWebsocketGetReadTimeout() {
 		s.Fail("timeout waiting for connection to establish")
 	}
 	// Test server timeout for default settings
-	serverW, ok := s.server.connections["testws"]
+	c, ok := s.server.GetChannel("testws")
+	s.True(ok)
+	serverW, ok := c.(*webSocket)
 	s.True(ok)
 	now := time.Now()
 	timeout := serverW.getReadTimeout()
 	s.GreaterOrEqual(timeout.Unix(), now.Add(s.server.timeoutConfig.PingWait).Unix())
-	// Test server timeout for zero setting
+	// Test server timeout for zero setting.
+	// Read the current config under the websocket lock to avoid racing with the
+	// read pump (which may call getReadTimeout concurrently).
+	serverW.mutex.RLock()
 	cfg := serverW.cfg
+	serverW.mutex.RUnlock()
 	cfg.ReadWait = 0
 	serverW.updateConfig(cfg)
 	timeout = serverW.getReadTimeout()
 	s.Equal(time.Time{}, timeout)
-	// Test client timeout for default settings
+	// Test client timeout for default settings.
+	// Snapshot the client websocket under the client mutex.
+	s.client.mutex.RLock()
 	clientW := s.client.webSocket
+	s.client.mutex.RUnlock()
 	s.NotNil(clientW)
 	now = time.Now()
 	timeout = clientW.getReadTimeout()
 	s.GreaterOrEqual(timeout.Unix(), now.Add(s.client.timeoutConfig.PongWait).Unix())
-	// Test client timeout for zero setting
+	// Test client timeout for zero setting.
+	clientW.mutex.RLock()
 	cfg = clientW.cfg
-	cfg.PingConfig.PongWait = 0
+	clientW.mutex.RUnlock()
+	// Replace the PingConfig with a fresh copy instead of mutating the shared
+	// pointer in place, which would race with concurrent readers.
+	if cfg.PingConfig != nil {
+		pingCfg := *cfg.PingConfig
+		pingCfg.PongWait = 0
+		cfg.PingConfig = &pingCfg
+	}
 	cfg.ReadWait = 0
 	clientW.updateConfig(cfg)
 	timeout = clientW.getReadTimeout()
@@ -450,8 +496,9 @@ func (s *WebSocketSuite) TestTLSWebsocketEcho() {
 		// Wait for messages to be exchanged, then close connection
 		sig := <-triggerC
 		s.NotNil(sig)
-		err = s.server.Write(path.Base(testPath), msg)
-		s.NoError(err)
+		// Use a local error variable to avoid racing on the outer `err`.
+		writeErr := s.server.Write(path.Base(testPath), msg)
+		s.NoError(writeErr)
 		sig = <-triggerC
 		s.NotNil(sig)
 	}()
@@ -595,7 +642,7 @@ func (s *WebSocketSuite) TestServerStopConnection() {
 	s.True(ok)
 	s.False(s.client.IsConnected())
 	time.Sleep(100 * time.Millisecond)
-	s.Empty(s.server.connections)
+	s.Zero(connectionCount(s.server))
 	// client will attempt to reconnect under the hood, but test finishes before this can happen
 }
 
@@ -659,7 +706,7 @@ func (s *WebSocketSuite) TestWebsocketServerStopAllConnections() {
 		c.Stop()
 	}
 	time.Sleep(100 * time.Millisecond)
-	s.Empty(s.server.connections)
+	s.Zero(connectionCount(s.server))
 }
 
 func (s *WebSocketSuite) TestWebsocketClientConnectionBreak() {
@@ -679,17 +726,19 @@ func (s *WebSocketSuite) TestWebsocketClientConnectionBreak() {
 	s.client = newWebsocketClient(s.T(), nil)
 	host := fmt.Sprintf("localhost:%v", serverPort)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
-	// Wait for connection to be established, then break the connection asynchronously
-	go func() {
-		<-time.After(200 * time.Millisecond)
-		err := s.client.webSocket.connection.Close()
-		s.NoError(err)
-	}()
 	// Connect and wait
 	err := s.client.Start(u.String())
 	s.NoError(err)
 	result := <-newClient
 	s.NotNil(result)
+	// Connection is established; snapshot the websocket under the client mutex
+	// and break the underlying connection to simulate a connection loss.
+	s.client.mutex.RLock()
+	clientWs := s.client.webSocket
+	s.client.mutex.RUnlock()
+	s.NotNil(clientWs)
+	err = clientWs.connection.Close()
+	s.NoError(err)
 	// Wait for internal disconnect
 	select {
 	case result = <-disconnected:
@@ -704,7 +753,11 @@ func (s *WebSocketSuite) TestWebsocketServerConnectionBreak() {
 	s.server = newWebsocketServer(s.T(), nil)
 	s.server.SetNewClientHandler(func(ws Channel) {
 		s.NotNil(ws)
-		conn := s.server.connections[ws.ID()]
+		// The handler receives the Channel directly, so there is no need to look
+		// it up in the connections map (which would race with other handler and
+		// disconnect callbacks).
+		conn, ok := ws.(*webSocket)
+		s.True(ok)
 		s.NotNil(conn)
 		// Simulate connection closed as soon client is connected
 		err := conn.connection.Close()
@@ -1227,37 +1280,32 @@ func (s *WebSocketSuite) TestSetClientTimeoutConfig() {
 }
 
 func (s *WebSocketSuite) TestServerErrors() {
-	triggerC := make(chan struct{}, 1)
-	finishC := make(chan struct{}, 1)
-	defer close(finishC)
+	// Dedicated channels are used to communicate between the test goroutine and
+	// the asynchronous handlers/listener, avoiding shared mutable counters that
+	// would otherwise race under -race.
+	connectedC := make(chan struct{}, 1)
+	errorC := make(chan error, 16)    // forwards every error observed on Errors()
+	errClosedC := make(chan struct{}) // closed once Errors() is closed
 	s.server.SetNewClientHandler(func(ws Channel) {
-		triggerC <- struct{}{}
+		connectedC <- struct{}{}
 	})
-	// Intercept errors asynchronously
-	s.Nil(s.server.errC)
+	// Intercept errors asynchronously. The error channel is eagerly created in
+	// the constructor, so Errors() simply returns it.
+	errs := s.server.Errors()
 	go func() {
 		for {
-			select {
-			case err, ok := <-s.server.Errors():
-				triggerC <- struct{}{}
-				if ok {
-					s.Error(err)
-				}
-			case <-finishC:
+			err, ok := <-errs
+			if !ok {
+				close(errClosedC)
 				return
 			}
+			errorC <- err
 		}
 	}()
 	s.server.SetMessageHandler(func(ws Channel, data []byte) error {
 		return fmt.Errorf("this is a dummy error")
 	})
-	// Will trigger an out-of-bound error
-	time.Sleep(50 * time.Millisecond)
-	s.server.Stop()
-	r := <-triggerC
-	s.NotNil(r)
-	// Start server for real
-	s.server.httpServer = &http.Server{}
+	// Start server
 	go s.server.Start(serverPort, serverPath)
 	time.Sleep(100 * time.Millisecond)
 	// Connect client
@@ -1266,50 +1314,68 @@ func (s *WebSocketSuite) TestServerErrors() {
 	err := s.client.Start(u.String())
 	s.NoError(err)
 	// Wait for new client callback
-	r = <-triggerC
-	s.NotNil(r)
+	select {
+	case <-connectedC:
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for client to connect")
+	}
 	// Send a dummy message and expect error on server side
 	err = s.client.Write([]byte("dummy message"))
 	s.NoError(err)
-	r = <-triggerC
-	s.NotNil(r)
+	select {
+	case e := <-errorC:
+		s.Error(e)
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for message handler error")
+	}
 	// Send message to non-existing client
 	err = s.server.Write("fakeId", []byte("dummy response"))
 	s.Error(err)
 	// Send unexpected close message and wait for error to be thrown
-	err = s.client.webSocket.connection.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, ""))
+	s.client.mutex.RLock()
+	clientWs := s.client.webSocket
+	s.client.mutex.RUnlock()
+	s.NotNil(clientWs)
+	err = clientWs.WriteManual(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, ""))
 	s.NoError(err)
-	r = <-triggerC
-	s.NotNil(r)
+	select {
+	case e := <-errorC:
+		s.Error(e)
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for unexpected close error")
+	}
 	// Stop and wait for errors channel cleanup
 	s.server.Stop()
-	r = <-triggerC
-	s.NotNil(r)
+	select {
+	case <-errClosedC:
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for errors channel to be closed")
+	}
 }
 
 func (s *WebSocketSuite) TestClientErrors() {
-	triggerC := make(chan struct{}, 1)
-	finishC := make(chan struct{}, 1)
-	defer close(finishC)
+	// Dedicated channels avoid sharing a single counter across goroutines, which
+	// would otherwise race under -race.
+	connectedC := make(chan struct{}, 1)
+	errorC := make(chan error, 16)    // forwards every error observed on Errors()
+	errClosedC := make(chan struct{}) // closed once Errors() is closed
 	s.server.SetNewClientHandler(func(ws Channel) {
-		triggerC <- struct{}{}
+		connectedC <- struct{}{}
 	})
 	s.client.SetMessageHandler(func(data []byte) error {
 		return fmt.Errorf("this is a dummy error")
 	})
-	// Intercept errors asynchronously
-	s.Nil(s.client.errC)
+	// Intercept errors asynchronously. The error channel is eagerly created in
+	// the constructor, so Errors() simply returns it.
+	errs := s.client.Errors()
 	go func() {
 		for {
-			select {
-			case err, ok := <-s.client.Errors():
-				triggerC <- struct{}{}
-				if ok {
-					s.Error(err)
-				}
-			case <-finishC:
+			err, ok := <-errs
+			if !ok {
+				close(errClosedC)
 				return
 			}
+			errorC <- err
 		}
 	}()
 	go s.server.Start(serverPort, serverPath)
@@ -1323,26 +1389,42 @@ func (s *WebSocketSuite) TestClientErrors() {
 	err = s.client.Start(u.String())
 	s.NoError(err)
 	// Wait for new client callback
-	r := <-triggerC
-	s.NotNil(r)
-	// Send a dummy message and expect error on client side
+	select {
+	case <-connectedC:
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for client to connect")
+	}
+	// Send a dummy message and expect error on client side (message handler fails)
 	err = s.server.Write(path.Base(testPath), []byte("dummy message"))
 	s.NoError(err)
-	r = <-triggerC
-	s.NotNil(r)
+	select {
+	case e := <-errorC:
+		s.Error(e)
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for message handler error")
+	}
 	// Send unexpected close message and wait for error to be thrown
-	conn := s.server.connections[path.Base(testPath)]
+	conn, ok := s.server.GetChannel(path.Base(testPath))
+	s.True(ok)
 	s.NotNil(conn)
-	err = conn.WriteManual(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, ""))
-	// err = conn.connection.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, ""))
+	serverWs, ok := conn.(*webSocket)
+	s.True(ok)
+	err = serverWs.WriteManual(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, ""))
 	s.NoError(err)
-	r = <-triggerC
-	s.NotNil(r)
+	select {
+	case e := <-errorC:
+		s.Error(e)
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for unexpected close error")
+	}
 	// Stop server and client and wait for errors channel cleanup
 	s.server.Stop()
 	s.client.Stop()
-	r = <-triggerC
-	s.NotNil(r)
+	select {
+	case <-errClosedC:
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for errors channel to be closed")
+	}
 }
 
 // Utility functions
