@@ -31,12 +31,25 @@ import (
 )
 
 const (
-	serverPort = 8887
 	serverPath = "/ws/{id}"
 	testPath   = "/ws/testws"
 	// Default sub-protocol to send to peer upon connection.
 	defaultSubProtocol = "ocpp1.6"
 )
+
+// serverPort is chosen once at test-process start: an OS-assigned free port,
+// probed by binding ":0" then releasing it. Using a dynamic port instead of a
+// hard-coded one keeps `go test ./ws/ -race` runnable even when something else
+// (e.g. a local CSMS) is already listening on a fixed port, and avoids
+// cross-run bind collisions.
+var serverPort = func() int {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 8887
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}()
 
 // connectionCount returns the number of active server connections, reading the
 // connections map under the server's mutex to avoid racing with the websocket
@@ -649,7 +662,10 @@ func (s *WebSocketSuite) TestServerStopConnection() {
 func (s *WebSocketSuite) TestWebsocketServerStopAllConnections() {
 	triggerC := make(chan struct{}, 1)
 	numClients := 5
-	disconnectedServerC := make(chan struct{}, 1)
+	// Buffered to numClients: the server fires this handler once per closed
+	// connection on Stop() and nothing reads the channel, so a cap-1 buffer would
+	// block (and leak) the 2nd..Nth disconnect-handler goroutine.
+	disconnectedServerC := make(chan struct{}, numClients)
 	s.server = newWebsocketServer(s.T(), nil)
 	s.server.SetNewClientHandler(func(ws Channel) {
 		triggerC <- struct{}{}
@@ -1171,9 +1187,10 @@ func (s *WebSocketSuite) TestUnsupportedSubProtocol() {
 	s.client.SetDisconnectedHandler(func(err error) {
 		var wsErr *websocket.CloseError
 		ok := s.ErrorAs(err, &wsErr)
-		s.True(ok)
-		s.Equal(websocket.CloseProtocolError, wsErr.Code)
-		s.Equal("invalid or unsupported subprotocol", wsErr.Text)
+		if s.True(ok) && wsErr != nil {
+			s.Equal(websocket.CloseProtocolError, wsErr.Code)
+			s.Equal("invalid or unsupported subprotocol", wsErr.Text)
+		}
 		s.client.SetDisconnectedHandler(nil)
 		close(disconnectC)
 	})
