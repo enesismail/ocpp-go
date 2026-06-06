@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -180,7 +181,7 @@ func (suite *OcppJTestSuite) TestServerSendInvalidCall() {
 func (suite *OcppJTestSuite) TestCentralSystemSendRequestFailed() {
 	t := suite.T()
 	mockChargePointId := "1234"
-	var callID string
+	callIDC := make(chan string, 1)
 	suite.mockServer.On("Start", mock.AnythingOfType("int"), mock.AnythingOfType("string")).Return(nil)
 	suite.mockServer.On("Write", mock.AnythingOfType("string"), mock.Anything).Return(fmt.Errorf("networkError")).Run(func(args mock.Arguments) {
 		clientID := args.String(0)
@@ -188,10 +189,11 @@ func (suite *OcppJTestSuite) TestCentralSystemSendRequestFailed() {
 		require.True(t, ok)
 		require.False(t, q.IsEmpty())
 		req := q.Peek().(ocppj.RequestBundle)
-		callID = req.Call.GetUniqueId()
+		id := req.Call.GetUniqueId()
 		// Before error is returned, the request must still be pending
-		_, ok = suite.centralSystem.RequestState.GetClientState(mockChargePointId).GetPendingRequest(callID)
+		_, ok = suite.centralSystem.RequestState.GetClientState(mockChargePointId).GetPendingRequest(id)
 		assert.True(t, ok)
+		callIDC <- id
 	})
 	suite.centralSystem.Start(8887, "/{ws}")
 	suite.serverDispatcher.CreateClient(mockChargePointId)
@@ -199,7 +201,9 @@ func (suite *OcppJTestSuite) TestCentralSystemSendRequestFailed() {
 	err := suite.centralSystem.SendRequest(mockChargePointId, mockRequest)
 	// TODO: currently the network error is not returned by SendRequest, but is only generated internally
 	assert.Nil(t, err)
-	// Assert that pending request was removed
+	// Wait for the Write callback to hand off the call ID (synchronized), then
+	// assert the pending request was removed after the internal network error.
+	callID := <-callIDC
 	time.Sleep(500 * time.Millisecond)
 	_, ok := suite.centralSystem.RequestState.GetClientState(mockChargePointId).GetPendingRequest(callID)
 	assert.False(t, ok)
@@ -556,11 +560,11 @@ func (suite *OcppJTestSuite) TestServerEnqueueRequest() {
 func (suite *OcppJTestSuite) TestEnqueueMultipleRequests() {
 	t := suite.T()
 	messagesToQueue := 5
-	sentMessages := 0
+	var sentMessages atomic.Int32
 	mockChargePointId := "1234"
 	suite.mockServer.On("Start", mock.AnythingOfType("int"), mock.AnythingOfType("string")).Return(nil)
 	suite.mockServer.On("Write", mock.AnythingOfType("string"), mock.Anything).Run(func(args mock.Arguments) {
-		sentMessages += 1
+		sentMessages.Add(1)
 	}).Return(nil)
 	// Start normally
 	suite.centralSystem.Start(8887, "/{ws}")
@@ -572,7 +576,7 @@ func (suite *OcppJTestSuite) TestEnqueueMultipleRequests() {
 	}
 	time.Sleep(500 * time.Millisecond)
 	// Only one message was sent, but all elements should still be in queue
-	assert.Equal(t, 1, sentMessages)
+	assert.Equal(t, int32(1), sentMessages.Load())
 	q, ok := suite.serverRequestMap.Get(mockChargePointId)
 	require.True(t, ok)
 	assert.False(t, q.IsEmpty())
@@ -615,11 +619,11 @@ func (suite *OcppJTestSuite) TestRequestQueueFull() {
 func (suite *OcppJTestSuite) TestParallelRequests() {
 	t := suite.T()
 	messagesToQueue := 10
-	sentMessages := 0
+	var sentMessages atomic.Int32
 	mockChargePointId := "1234"
 	suite.mockServer.On("Start", mock.AnythingOfType("int"), mock.AnythingOfType("string")).Return(nil)
 	suite.mockServer.On("Write", mock.AnythingOfType("string"), mock.Anything).Run(func(args mock.Arguments) {
-		sentMessages += 1
+		sentMessages.Add(1)
 	}).Return(nil)
 	// Start normally
 	suite.centralSystem.Start(8887, "/{ws}")
@@ -637,7 +641,7 @@ func (suite *OcppJTestSuite) TestParallelRequests() {
 	require.True(t, ok)
 	assert.False(t, q.IsEmpty())
 	assert.Equal(t, messagesToQueue, q.Size())
-	assert.Equal(t, 1, sentMessages)
+	assert.Equal(t, int32(1), sentMessages.Load())
 }
 
 // TestRequestFlow tests a typical flow with multiple request-responses, sent to different clients.

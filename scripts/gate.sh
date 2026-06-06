@@ -54,6 +54,11 @@ gate_project() {
   fi
   (
     cd "$scratch"
+    # A consumer may vendor the fork (a pinned snapshot). The gate must test the
+    # consumer's SOURCE against the live fork tree, so drop the scratch copy's
+    # vendor dir (disposable copy — the real project is untouched) and resolve via
+    # the local `replace` in module mode.
+    rm -rf vendor
     go mod edit -replace "$FORK_MODULE=$FORK_DIR"
     go mod tidy   || exit 1
     echo "--- go build ./... ---";      go build ./...      || exit 1

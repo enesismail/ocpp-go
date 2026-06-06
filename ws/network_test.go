@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -26,10 +27,11 @@ type proxyConfig struct {
 
 type NetworkTestSuite struct {
 	suite.Suite
-	proxy     *toxiproxy.Proxy
-	proxyPort int
-	server    *server
-	client    *client
+	proxy        *toxiproxy.Proxy
+	proxyPort    int
+	upstreamPort int
+	server       *server
+	client       *client
 }
 
 func (s *NetworkTestSuite) SetupSuite() {
@@ -47,7 +49,15 @@ func (s *NetworkTestSuite) SetupSuite() {
 		s.T().Skipf("toxiproxy-server not reachable at %v, skipping network tests: %v", endpoint, err)
 	}
 	s.proxyPort = 8886
-	// Proxy listens on 8886 and upstreams to 8887 (where ocpp server is actually listening)
+	// The proxy upstreams to ProxyOcppUpstream (e.g. integration_test:8887), so the
+	// ocpp server under test must listen on THAT port — not the package-level
+	// serverPort, which is now an OS-assigned port chosen for the (non-proxied)
+	// websocket unit tests. Derive the bind port from the configured upstream.
+	_, upstreamPortStr, err := net.SplitHostPort(cfg.ProxyOcppUpstream)
+	s.Require().NoError(err)
+	s.upstreamPort, err = strconv.Atoi(upstreamPortStr)
+	s.Require().NoError(err)
+	// Proxy listens on 8886 and upstreams to the ocpp server on s.upstreamPort.
 	oldProxy, _ := client.Proxy("ocpp")
 	if oldProxy != nil {
 		s.Require().NoError(oldProxy.Delete())
@@ -81,7 +91,7 @@ func (s *NetworkTestSuite) TestClientConnectionFailed() {
 	s.server.SetNewClientHandler(func(ws Channel) {
 		s.Fail("should not accept new clients")
 	})
-	go s.server.Start(serverPort, serverPath)
+	go s.server.Start(s.upstreamPort, serverPath)
 	time.Sleep(100 * time.Millisecond)
 
 	// Test client
@@ -112,7 +122,7 @@ func (s *NetworkTestSuite) TestClientConnectionFailedTimeout() {
 	s.server.SetNewClientHandler(func(ws Channel) {
 		s.Fail("should not accept new clients")
 	})
-	go s.server.Start(serverPort, serverPath)
+	go s.server.Start(s.upstreamPort, serverPath)
 	time.Sleep(100 * time.Millisecond)
 
 	// Test client
@@ -152,7 +162,7 @@ func (s *NetworkTestSuite) TestClientAutoReconnect() {
 	s.server.SetDisconnectedClientHandler(func(ws Channel) {
 		serverOnDisconnected <- struct{}{}
 	})
-	go s.server.Start(serverPort, serverPath)
+	go s.server.Start(s.upstreamPort, serverPath)
 	time.Sleep(100 * time.Millisecond)
 
 	// Test bench
@@ -226,7 +236,7 @@ func (s *NetworkTestSuite) TestClientPongTimeout() {
 		s.Fail("unexpected message received")
 		return fmt.Errorf("unexpected message received")
 	})
-	go s.server.Start(serverPort, serverPath)
+	go s.server.Start(s.upstreamPort, serverPath)
 	time.Sleep(100 * time.Millisecond)
 
 	// Test client
@@ -294,7 +304,7 @@ func (s *NetworkTestSuite) TestClientReadTimeout() {
 		s.Fail("unexpected message received")
 		return fmt.Errorf("unexpected message received")
 	})
-	go s.server.Start(serverPort, serverPath)
+	go s.server.Start(s.upstreamPort, serverPath)
 	time.Sleep(100 * time.Millisecond)
 
 	// Test client
@@ -360,7 +370,7 @@ func (s *NetworkTestSuite) TestServerReadTimeout() {
 		s.Fail("unexpected message received")
 		return fmt.Errorf("unexpected message received")
 	})
-	go s.server.Start(serverPort, serverPath)
+	go s.server.Start(s.upstreamPort, serverPath)
 	time.Sleep(100 * time.Millisecond)
 
 	// Test client

@@ -335,12 +335,17 @@ func (w *webSocket) updateConfig(cfg WebSocketConfig) {
 }
 
 func (w *webSocket) getReadTimeout() time.Time {
+	// cfg is written under w.mutex (updateConfig); read it under the read lock to
+	// avoid racing with concurrent config updates.
+	w.mutex.RLock()
+	cfg := w.cfg
+	w.mutex.RUnlock()
 	var wait time.Duration
 	// Prefer ping config, then read wait, then no timeout
-	if w.cfg.PingConfig != nil && w.cfg.PingConfig.PongWait > 0 {
-		wait = w.cfg.PingConfig.PongWait
-	} else if w.cfg.ReadWait > 0 {
-		wait = w.cfg.ReadWait
+	if cfg.PingConfig != nil && cfg.PingConfig.PongWait > 0 {
+		wait = cfg.PingConfig.PongWait
+	} else if cfg.ReadWait > 0 {
+		wait = cfg.ReadWait
 	} else {
 		// No timeout configured
 		return time.Time{}
@@ -452,8 +457,20 @@ func (w *webSocket) readPump() {
 
 // All actions and events are handled within this centralized control flow function.
 func (w *webSocket) writePump() {
+	// Snapshot the connection and the (immutable for the lifetime of this pump)
+	// config under the read lock. cfg/log are only written by updateConfig before
+	// the pump is started, but reading them under the lock keeps the race detector
+	// happy and is safe against any concurrent updateConfig call.
+	w.mutex.RLock()
 	conn := w.connection
-	ticker := newOptTicker(w.cfg.PingConfig)
+	cfg := w.cfg
+	wsLog := w.log
+	w.mutex.RUnlock()
+	if wsLog == nil {
+		wsLog = log
+	}
+	ticker := newOptTicker(cfg.PingConfig)
+	writeWait := cfg.WriteWait
 
 	closure := func(err error) {
 		ticker.Stop()
@@ -464,7 +481,7 @@ func (w *webSocket) writePump() {
 		select {
 		case <-ticker.T():
 			// Send periodic ping
-			_ = conn.SetWriteDeadline(time.Now().Add(w.cfg.WriteWait))
+			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 			err := conn.WriteMessage(websocket.PingMessage, []byte{})
 			if err != nil {
 				w.onError(w, fmt.Errorf("failed to send ping message for %s: %w", w.id, err))
@@ -475,7 +492,7 @@ func (w *webSocket) writePump() {
 			log.Debugf("ping sent for %s", w.id)
 		case ping := <-w.pingC:
 			// Reply with pong message
-			_ = conn.SetWriteDeadline(time.Now().Add(w.cfg.WriteWait))
+			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 			err := conn.WriteMessage(websocket.PongMessage, ping)
 			if err != nil {
 				w.onError(w, fmt.Errorf("failed to send pong message %s: %w", w.id, err))
@@ -493,7 +510,7 @@ func (w *webSocket) writePump() {
 				return
 			}
 			// Send data
-			_ = conn.SetWriteDeadline(time.Now().Add(w.cfg.WriteWait))
+			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 			err := conn.WriteMessage(msg.typ, msg.data)
 			if err != nil {
 				w.onError(w, fmt.Errorf("write failed for %s: %w", w.id, err))
@@ -504,12 +521,12 @@ func (w *webSocket) writePump() {
 			log.Debugf("written %d bytes to %s", len(msg.data), w.id)
 		case closeErr := <-w.closeC:
 			// webSocket is being gracefully closed by user command
-			w.log.Debugf("closing connection for %s: %d - %s", w.id, closeErr.Code, closeErr.Text)
+			wsLog.Debugf("closing connection for %s: %d - %s", w.id, closeErr.Code, closeErr.Text)
 			// Send explicit close message
 			err := conn.WriteControl(
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(closeErr.Code, closeErr.Text),
-				time.Now().Add(w.cfg.WriteWait))
+				time.Now().Add(writeWait))
 			if err != nil {
 				// At this point the connection is considered to be forcefully closed,
 				// but we still continue with the intended flow.

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -75,11 +76,12 @@ type Client interface {
 	StartWithRetries(url string)
 	// Stop closes the output of the websocket Channel, effectively closing the connection to the server with a normal closure.
 	Stop()
-	// Errors returns a channel for error messages. If it doesn't exist it es created.
-	// The channel is closed by the client when stopped.
-	//
-	// It is recommended to invoke this function before starting a client.
-	// Creating the error channel while the client is running may lead to unexpected behavior.
+	// Errors returns a buffered channel for asynchronous error messages.
+	// The channel is created when the client is constructed and is closed by the
+	// client when stopped. Delivery is best-effort and lossy: the channel has a
+	// small buffer and errors are dropped (not blocked on) when it is full, so a
+	// slow or absent consumer never blocks the client. Consume it promptly if you
+	// rely on error notifications.
 	Errors() <-chan error
 	// Sets a callback function for all incoming messages.
 	SetMessageHandler(handler func(data []byte) error)
@@ -132,7 +134,9 @@ type client struct {
 	timeoutConfig  ClientTimeoutConfig
 	onDisconnected func(err error)
 	onReconnected  func()
+	mutex          sync.RWMutex // guards webSocket, errC and errClosed
 	errC           chan error
+	errClosed      bool          // true once errC has been closed, to prevent double-close and sends on a closed channel
 	reconnectC     chan struct{} // used for signaling, that a reconnection attempt should be interrupted
 }
 
@@ -182,6 +186,7 @@ func NewClient(opts ...ClientOpt) Client {
 		dialOptions:   []func(*websocket.Dialer){},
 		timeoutConfig: NewClientTimeoutConfig(),
 		reconnectC:    make(chan struct{}, 1),
+		errC:          make(chan error, 1),
 		header:        http.Header{},
 	}
 	for _, o := range opts {
@@ -279,18 +284,27 @@ func (c *client) handleReconnection() {
 }
 
 func (c *client) IsConnected() bool {
-	if c.webSocket == nil {
+	c.mutex.RLock()
+	ws := c.webSocket
+	c.mutex.RUnlock()
+	if ws == nil {
 		return false
 	}
-	return c.webSocket.IsConnected()
+	return ws.IsConnected()
 }
 
 func (c *client) Write(data []byte) error {
-	if !c.IsConnected() {
+	// Snapshot the websocket under the lock, then perform the (potentially
+	// blocking) write outside the lock to avoid holding the mutex across the
+	// channel send inside webSocket.Write.
+	c.mutex.RLock()
+	ws := c.webSocket
+	c.mutex.RUnlock()
+	if ws == nil || !ws.IsConnected() {
 		return fmt.Errorf("client is currently not connected, cannot send data")
 	}
 	log.Debugf("queuing data for server")
-	return c.webSocket.Write(data)
+	return ws.Write(data)
 }
 
 func (c *client) StartWithRetries(urlStr string) {
@@ -341,7 +355,7 @@ func (c *client) Start(urlStr string) error {
 	id := path.Base(u.Path)
 
 	// Create web socket, state is automatically set to connected
-	c.webSocket = newWebSocket(
+	newWs := newWebSocket(
 		id,
 		ws,
 		resp.TLS,
@@ -357,48 +371,54 @@ func (c *client) Start(urlStr string) error {
 			c.error(err)
 		},
 	)
+	// Publish the new websocket under the lock so that concurrent IsConnected/Write
+	// calls (and reconnection) observe a consistent value.
+	c.mutex.Lock()
+	c.webSocket = newWs
+	c.mutex.Unlock()
 	log.Infof("connected to server as %s", id)
 	// Start reader and write routine
-	c.webSocket.run()
+	newWs.run()
 	return nil
 }
 
 func (c *client) Stop() {
 	log.Infof("closing connection to server")
-	if c.IsConnected() {
+	// Snapshot the websocket under the lock, then perform the (potentially
+	// blocking) close outside the lock.
+	c.mutex.RLock()
+	ws := c.webSocket
+	c.mutex.RUnlock()
+	if ws != nil && ws.IsConnected() {
 		// Attempt to gracefully shut down the connection
-		err := c.webSocket.Close(websocket.CloseError{Code: websocket.CloseNormalClosure, Text: ""})
+		err := ws.Close(websocket.CloseError{Code: websocket.CloseNormalClosure, Text: ""})
 		if err != nil {
 			c.error(err)
 		}
 	}
-	// Notify reconnection goroutine to stop (if any)
+	// Notify reconnection goroutine to stop (if any). Use a non-blocking send so
+	// concurrent Stop() calls cannot deadlock: the buffered(1) signal is set if the
+	// buffer is empty, otherwise a signal is already pending and there is nothing
+	// to do. (The previous check-then-send idiom let two concurrent Stop() calls
+	// both reach the send and the second blocked forever.)
 	select {
-	case <-c.reconnectC:
-		// Already closed, ignore
-		break
+	case c.reconnectC <- struct{}{}:
 	default:
-		// Channel is open, signal reconnection to stop
-		c.reconnectC <- struct{}{}
 	}
-	// Close error channel if any
-	select {
-	case <-c.errC:
-		// Already closed, ignore
-		break
-	default:
-		// Channel is open, close it
-		if c.errC != nil {
-			close(c.errC)
-		}
+	// Close error channel (close-once, guarded by the mutex to avoid racing
+	// with concurrent error() senders).
+	c.mutex.Lock()
+	if !c.errClosed {
+		c.errClosed = true
+		close(c.errC)
 	}
+	c.mutex.Unlock()
 	// Connection will close asynchronously and invoke the onDisconnected handler
 }
 
 func (c *client) Errors() <-chan error {
-	if c.errC == nil {
-		c.errC = make(chan error, 1)
-	}
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
 	return c.errC
 }
 
@@ -423,7 +443,16 @@ func (c *client) handleDisconnect(_ Channel, err error) {
 
 func (c *client) error(err error) {
 	log.Error(err)
-	if c.errC != nil {
-		c.errC <- err
+	// Guard the send with the mutex so it cannot race with Stop() closing the
+	// channel. The send is non-blocking (buffered channel with a default case),
+	// so the mutex is never held across a blocking channel operation.
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	if c.errClosed {
+		return
+	}
+	select {
+	case c.errC <- err:
+	default:
 	}
 }

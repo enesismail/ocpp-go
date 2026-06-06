@@ -169,4 +169,92 @@ never reached `TestWebSockets`): the `-race` baseline was already red (pre-exist
 Phase-1 targets), and `ws` integration tests need port `8887` free (a running `csms` blocked them; resolved by
 freeing the port). Both handled per owner direction.
 
-**Not pushed. Phase 2 (rework) and Phase 3 (breaking) not started**, per scope.
+**Not pushed.** (Phase 2a below was executed subsequently; Phase 2b rework / Phase 3 breaking not started.)
+
+---
+
+# Phase 2a — `-race` cleanup (the residual pre-existing races)
+
+Goal: drive `go test ./... -race` to **0 data races** (the bar deferred from Phase 1), without
+changing exported API or introducing deadlocks. The races were pre-existing (reproduced at the
+Phase-1 baseline) — `ocppj` 10 race blocks, `ws` ~25 — split across library globals/lifecycle and
+race-prone test harnesses. **Branch `fork-main`, local commits only — not pushed.**
+
+Gate cadence: library `go build`/`go vet`/non-race `go test`/`-race` after each change; full
+`scripts/gate.sh` (both consumer projects) at the end.
+
+| # | Commit | Change | Kind |
+|---|---|---|---|
+| 2a.1 | `6a39af1` | `ocppj` package logger `log` is now a stable `*atomicLogger` whose delegate swaps under a `RWMutex` (non-generic — stays on the go 1.16 directive); all `log.Xxx` call sites unchanged. Fixes the `SetLogger`-vs-read race. | library |
+| 2a.2 | `8b5dc82` | `ocppj` `DefaultServerDispatcher` **and** `DefaultClientDispatcher` `Stop()` now JOIN the `messagePump` goroutine (close stop signal, capture `doneC`, release mutex, `<-doneC`; pump does `defer close(doneC)`) so no goroutine outlives `Stop()`. Plus a client-timeout nil-guard (skip cancel when `Peek()` is nil/non-bundle) — the client-side analog of #399. | library |
+| 2a.3 | `abc8a12` | `ocppj` test synchronization: `ServerDispatcherTestSuite.TearDownTest` stops the dispatcher (joined) so its goroutine can't race the next `SetupTest`; channel hand-off of `callID`; atomic `sentMessages`; goroutine-local `err` in parallel-send loops. | test |
+| 2a.4 | `0aa358b` | `ws` data races eliminated: eager-init `errC` + non-blocking guarded send + close-once (`errClosed`, never niled → no send-on-closed/double-close); new client `RWMutex` guarding `webSocket`/`errC`; server lifecycle fields (`httpServer`/`addr`/router) guarded, lock released before `Serve`/`Shutdown`; `getReadTimeout`/`writePump` read `cfg`/`log` under `RLock`. **`Stop()` made concurrency-safe** (replaced the `reconnectC` check-then-send — two concurrent `Stop()`s could deadlock — with a non-blocking send). `Errors()` docs updated for eager/lossy semantics. No exported API change; #414 cleanup ordering intact. | library |
+| 2a.5 | `b514e41` | `ws` test synchronization (TearDownTest drain, dedicated channels vs shared counters, cfg under mutex, goroutine-local err, connection-count under `connMutex`). | test |
+| 2a.6 | `ac6cbcc` | `ws` tests bind an **OS-assigned free port** (`serverPort` is now a var probing `:0`) so `-race` runs reliably without freeing 8887 (no more csms collision, no cross-run bind clashes); hardened two pre-existing flakes (nil `*CloseError` guard in `TestUnsupportedSubProtocol`; buffer the unread `disconnectedServerC` to `numClients`). | test |
+| 2a.7 | `af5df88` | `scripts/gate.sh`: drop the vendor dir in the disposable scratch copy so a consumer that now **vendors** the fork is built/tested against the live fork tree (fixes "inconsistent vendoring"). | ci |
+| 2a.8 | `8a26827` | Doc: `Stop()` is blocking/idempotent and must not be called from an `onRequestCancel` callback (review note). | docs |
+
+## Phase 2a gate — final state
+
+| Target | build | vet | `go test` (non-race) | `go test -race` |
+|---|---|---|---|---|
+| **library** | ✓ | ✓ | ✓ | ✅ **0 races** — `ocppj` (×3), `ws` (×5, dynamic port, csms still up), `ocpp1.6_test`/`ocpp2.0.1_test` |
+| **CSMS consumer** (replace→fork) | ✓ | ✓ | ✓ | ✅ green |
+| **simulator consumer** (replace→fork) | ✓ | ✓ | ✓ | ✅ green |
+
+`scripts/gate.sh` (both projects via `GATE_PROJECT_DIRS`): **GATE: ALL GREEN** — and now runnable with csms running, thanks to the dynamic test port.
+
+## Adversarial review (read-only, multi-agent)
+
+- **`ws` concurrency fix — 3 reviewers** (deadlock / correctness / behavior+API): no deadlock introduced (lock-ordering sound; never holds a lock across a channel send or `Serve`/`Shutdown`); no exported-API change; #414 ordering preserved; data races genuinely removed (baseline 23–26 → 0). Surfaced and FIXED a pre-existing concurrent-`Stop()` `reconnectC` deadlock and the eager/lossy `Errors()` doc gap.
+- **`ocppj` `Stop()`-join + log + nil-guard — 2 reviewers**: **SAFE** / **SAFE-WITH-NOTES**. The `<-done` join has no reachable deadlock — `Stop()` is never called from the pump or a cancel/handler callback (all callers are the external control goroutine), the pump always reaches `defer close(doneC)` (its only blocking ops drain during the join given the existing Stop ordering), double-Stop is guarded, and Stop-before-Start short-circuits before touching `doneC`. atomicLogger delegates correctly (defaults to VoidLogger); the client nil-guard only converts a latent nil-deref into a safe skip (mirrors the pre-existing server guard).
+
+### Residual (not data races; out of `-race` scope)
+- A consumer that calls `dispatcher.Stop()` from inside its own `onRequestCancel` callback would self-deadlock on the join — documented (2a.8); unreachable via the library's own OCPP client/server.
+- Pre-existing ws test-suite flakiness beyond the two hardened cases (sleep-based startup sync) can still theoretically flake under heavy `-race` load; not observed across the runs above.
+
+**Net: `go test ./... -race` is green for the library and both consumer projects. Phase 2b (rework PRs
+#406/#191/#387/#376) executed next; Phase 3 (breaking #373/#343) not started.**
+
+---
+
+# Phase 2b — rework PRs (selective adoption)
+
+These four PRs were flagged in the plan as needing rework (selective cherry-pick / rebase / rewrite /
+optional). Final outcome after external review (below): **adopt 1 (#406), revert 1 (#376), skip 2
+(#387/#191).** **Branch `fork-main`, local commits only — not pushed.**
+
+| PR | Decision | Commit | Author | Notes |
+|---|---|---|---|---|
+| **#406** callback-queue panic | **ADOPTED (selective core, review-hardened)** | `3a39a23` + fixes `d8c6d76`, `5b4bdd6`, `2c1de8a` | **acv (qosmotec)** + fork fixes | Took only the real fix — route a response to the callback registered for its feature so it can't dequeue & type-assert against the wrong request (interface-conversion panic). **Excluded** the PR's bundled scope creep (ocpp1.6 validation loosening that breaks 3 tests, the 24h→2min client timeout-tick, the `AddPendingRequest` signature change, new `ocppj` panics). Review then found three queue bugs in the adopted code, all fixed: rollback over-deleted the whole type bucket (now pops only the appended entry); `Dequeue` leaked empty per-client entries (now removed); and `Dequeue("")` picked an arbitrary type bucket → CALL_ERROR could hit the wrong callback (**redesigned as a per-client ordered slice**: typed dequeue = oldest-of-type, untyped = oldest overall/FIFO). Added the queue's first unit tests. `internal/callbackqueue` is internal — no exported-API impact. |
+| **#376** duplicate-connection behavior | **REVERTED** (`d46e411`; was adopted `ba29636`) | — | trond nordheim (not used) | `SetDuplicateConnectionBehavior(KeepNew)` was adopted opt-in, but four external-review rounds peeled back **four cross-layer state-coordination gaps**: (1) the KeepNew branch called `s.error()` under `connMutex.Lock` → self-deadlock (this was the true cause of the KeepNew test hangs); (2) the stale displaced-disconnect tore down the replacement's dispatcher state (fixed via identity-aware `handleDisconnect`); (3) the displaced connection's callbacks were never drained (fixed via connect-drain); (4) its **dispatcher pending-state** was still never reset, so a displaced request's timeout fired the replacement's callback. Correct KeepNew needs an atomic per-client reset across ws-map + callbackQueue + dispatcher — a re-architecture upstream never attempted. Per owner decision, **fully reverted**; the default reject-duplicate behavior (= upstream) is unchanged. |
+| **#387** connection removal | **SKIPPED** | — | (xBlaz3kx-adjacent) | Redundant: current master already removes connections on disconnect (`handleDisconnect` `delete(s.connections, …)` under the lock). The PR's only net change is a redundant immediate-delete plus a `defer s.connMutex.Lock()` (should be `Unlock`) **deadlock bug**. Net value ≈ nil. |
+| **#191** UseNumber JSON decode | **SKIPPED / deferred** | — | — | Would prevent float64 rounding of integers **>2⁵³** in the generic parse — *theoretical* for OCPP (realistic meter Wh ~10⁹ ≪ 9×10¹⁵). Needs a real rebase of the hot `ParseMessage`/`ParseRawJsonMessage` path (`Unmarshal`→`Decoder.UseNumber`, `arr[0].(float64)`→`json.Number`); hot-path regression risk outweighs the theoretical payoff. Recorded as a deferred item. |
+
+## Phase 2b external review (gemini + codex CLIs, read-only, 5 rounds)
+
+Both CLIs reviewed the Phase-2b diff in parallel each round. They found **5 real, introduced defects** that
+the gate and `-race` could not (none are exercised by the default-path tests or the consumer projects):
+KeepNew self-deadlock; callbackqueue rollback over-delete; callbackqueue per-client leak; client-dispatcher
+concurrent-`Stop()` double-close; and `Dequeue("")` CALL_ERROR misrouting. The three callbackqueue/dispatcher
+defects were fixed and **kept** (#406); the KeepNew defects kept cascading across layers (4 distinct gaps over
+4 rounds) → **#376 reverted**. Final round (round 5) on the reverted state: **gemini SAFE, codex
+SAFE-WITH-NOTES ("no code defects found")**. The review process is the reason these latent bugs didn't ship.
+
+## Phase 2b gate — final state
+
+`scripts/gate.sh` (`GATE_PROJECT_DIRS` = both consumers): **GATE: ALL GREEN** — library build/vet/`-race`
+(`ocpp1.6_test`/`ocpp2.0.1_test`/`ocppj`/`ws`) and **both consumer projects build/vet/test/`-race`** against the
+fork. #406 changed the `internal/callbackqueue` API used by the endpoints; the consumers compile + pass against
+it. `go test ./ws/ -race` is reliably green at `-count=1`.
+
+### Residual (pre-existing, not introduced by Phase 2)
+- `go test ./ws/ -race -count=2+` can **intermittently** fail with "connection refused" (0 data races) — the
+  pre-existing sleep-based-startup + shared-port harness fragility. The OS-assigned port (2a.6) removed the csms
+  collision but each test still reuses one port with a 100ms sleep before dialing. **Proper fix (deferred):** give
+  each test its own ephemeral port and wait on `server.Addr()` instead of sleeping (~25 call sites). Does not
+  affect the `-count=1` gate.
+
+**Phase 2 complete: 2a (`-race` cleanup) + 2b (#406 selective + review-hardened; #376 reverted; #387/#191
+skipped with rationale). Final external review: gemini SAFE, codex SAFE-WITH-NOTES (no code defects).
+Not pushed. Phase 3 (breaking #373/#343) not started.**

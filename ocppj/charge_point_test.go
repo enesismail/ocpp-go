@@ -180,22 +180,25 @@ func (suite *OcppJTestSuite) TestChargePointSendInvalidCall() {
 
 func (suite *OcppJTestSuite) TestChargePointSendRequestFailed() {
 	t := suite.T()
-	var callID string
+	callIDC := make(chan string, 1)
 	suite.mockClient.On("Start", mock.AnythingOfType("string")).Return(nil)
 	suite.mockClient.On("Write", mock.Anything).Return(fmt.Errorf("networkError")).Run(func(args mock.Arguments) {
 		require.False(t, suite.clientRequestQueue.IsEmpty())
 		req := suite.clientRequestQueue.Peek().(ocppj.RequestBundle)
-		callID = req.Call.GetUniqueId()
-		_, ok := suite.chargePoint.RequestState.GetPendingRequest(callID)
+		id := req.Call.GetUniqueId()
+		_, ok := suite.chargePoint.RequestState.GetPendingRequest(id)
 		// Before anything is returned, the request must still be pending
 		assert.True(t, ok)
+		callIDC <- id
 	})
 	_ = suite.chargePoint.Start("someUrl")
 	mockRequest := newMockRequest("mockValue")
 	err := suite.chargePoint.SendRequest(mockRequest)
 	// TODO: currently the network error is not returned by SendRequest, but is only generated internally
 	assert.Nil(t, err)
-	// Assert that pending request was removed
+	// Wait for the Write callback to hand off the call ID (synchronized), then
+	// assert the pending request was removed after the internal network error.
+	callID := <-callIDC
 	time.Sleep(500 * time.Millisecond)
 	_, ok := suite.chargePoint.RequestState.GetPendingRequest(callID)
 	assert.False(t, ok)
@@ -519,7 +522,7 @@ func (suite *OcppJTestSuite) TestClientParallelRequests() {
 	for i := 0; i < messagesToQueue; i++ {
 		go func() {
 			req := newMockRequest("someReq")
-			err = suite.chargePoint.SendRequest(req)
+			err := suite.chargePoint.SendRequest(req)
 			require.Nil(t, err)
 		}()
 	}
@@ -602,7 +605,7 @@ func (suite *OcppJTestSuite) TestClientRequestFlow() {
 	for i := 0; i < messagesToQueue; i++ {
 		go func(j int) {
 			req := newMockRequest(fmt.Sprintf("%v", j))
-			err = suite.chargePoint.SendRequest(req)
+			err := suite.chargePoint.SendRequest(req)
 			require.Nil(t, err)
 		}(i)
 	}

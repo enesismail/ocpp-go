@@ -37,6 +37,14 @@ func (s *ServerDispatcherTestSuite) SetupTest() {
 	s.dispatcher.SetNetworkServer(&s.websocketServer)
 }
 
+func (s *ServerDispatcherTestSuite) TearDownTest() {
+	// Stop the dispatcher so its messagePump goroutine is joined before the next
+	// SetupTest reassigns the shared mock server (avoids a cross-test data race).
+	if s.dispatcher.IsRunning() {
+		s.dispatcher.Stop()
+	}
+}
+
 func (s *ServerDispatcherTestSuite) TestServerSendRequest() {
 	t := s.T()
 	// Setup

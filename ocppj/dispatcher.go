@@ -89,6 +89,8 @@ type DefaultClientDispatcher struct {
 	requestQueue        RequestQueue
 	requestChannel      chan bool
 	readyForDispatch    chan bool
+	doneC               chan struct{}
+	running             bool
 	pendingRequestState ClientState
 	network             ws.Client
 	mutex               sync.RWMutex
@@ -126,6 +128,8 @@ func (d *DefaultClientDispatcher) Start() {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
 	d.requestChannel = make(chan bool, 1)
+	d.doneC = make(chan struct{})
+	d.running = true
 	d.timer = time.NewTimer(defaultTimeoutTick) // Default to 24 hours tick
 	go d.messagePump()
 }
@@ -142,10 +146,26 @@ func (d *DefaultClientDispatcher) IsPaused() bool {
 	return d.paused
 }
 
+// Stop signals the dispatcher to stop and blocks until its messagePump goroutine
+// has exited, so no dispatcher goroutine outlives the call. It is safe to call
+// more than once and before Start. It must not be called from within an
+// onRequestCancel callback (which runs on the messagePump goroutine), as that
+// would wait for the pump to exit from the pump itself.
 func (d *DefaultClientDispatcher) Stop() {
 	d.mutex.Lock()
-	defer d.mutex.Unlock()
+	// Guard on `running` (set synchronously in Start/Stop) rather than on
+	// requestChannel, which the pump only nils on exit — otherwise two concurrent
+	// Stop() calls could both pass the check and double-close the channel.
+	if !d.running {
+		d.mutex.Unlock()
+		return
+	}
+	d.running = false
 	close(d.requestChannel)
+	done := d.doneC
+	d.mutex.Unlock()
+	// Wait for messagePump to actually exit so no goroutine outlives Stop().
+	<-done
 	// TODO: clear pending requests?
 }
 
@@ -171,6 +191,7 @@ func (d *DefaultClientDispatcher) SendRequest(req RequestBundle) error {
 }
 
 func (d *DefaultClientDispatcher) messagePump() {
+	defer close(d.doneC)
 	rdy := true // Ready to transmit at the beginning
 
 	reqChan := func() chan bool {
@@ -196,13 +217,16 @@ func (d *DefaultClientDispatcher) messagePump() {
 				continue
 			}
 			if d.pendingRequestState.HasPendingRequest() {
-				// Current request timed out. Removing request and triggering cancel callback
+				// Current request timed out. Removing request and triggering cancel callback.
+				// Guard against the queue and pending state being out of sync (nil/empty
+				// queue or a non-RequestBundle element) to avoid a nil-deref on bundle.Call.
 				el := d.requestQueue.Peek()
-				bundle, _ := el.(RequestBundle)
-				d.CompleteRequest(bundle.Call.UniqueId)
-				if d.onRequestCancel != nil {
-					d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload,
-						ocpp.NewError(GenericError, "Request timed out", bundle.Call.UniqueId))
+				if bundle, ok := el.(RequestBundle); ok && bundle.Call != nil {
+					d.CompleteRequest(bundle.Call.UniqueId)
+					if d.onRequestCancel != nil {
+						d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload,
+							ocpp.NewError(GenericError, "Request timed out", bundle.Call.UniqueId))
+					}
 				}
 			}
 			// No request is currently pending -> set timer to high number
@@ -370,6 +394,7 @@ type DefaultServerDispatcher struct {
 	timerC              chan string
 	running             bool
 	stoppedC            chan struct{}
+	doneC               chan struct{}
 	onRequestCancel     CanceledRequestHandler
 	network             ws.Server
 	mutex               sync.RWMutex
@@ -406,6 +431,7 @@ func (d *DefaultServerDispatcher) Start() {
 	d.requestChannel = make(chan string, 20)
 	d.timerC = make(chan string, 10)
 	d.stoppedC = make(chan struct{}, 1)
+	d.doneC = make(chan struct{})
 	d.running = true
 	go d.messagePump()
 }
@@ -416,11 +442,23 @@ func (d *DefaultServerDispatcher) IsRunning() bool {
 	return d.running
 }
 
+// Stop signals the dispatcher to stop and blocks until its messagePump goroutine
+// has exited, so no dispatcher goroutine outlives the call. It is safe to call
+// more than once and before Start. It must not be called from within an
+// onRequestCancel callback (which runs on the messagePump goroutine), as that
+// would wait for the pump to exit from the pump itself.
 func (d *DefaultServerDispatcher) Stop() {
 	d.mutex.Lock()
-	defer d.mutex.Unlock()
+	if !d.running {
+		d.mutex.Unlock()
+		return
+	}
 	d.running = false
 	close(d.stoppedC)
+	done := d.doneC
+	d.mutex.Unlock()
+	// Wait for messagePump to actually exit so no goroutine outlives Stop().
+	<-done
 }
 
 func (d *DefaultServerDispatcher) SetTimeout(timeout time.Duration) {
@@ -474,6 +512,7 @@ func (d *DefaultServerDispatcher) SendRequest(clientID string, req RequestBundle
 // requestPump processes new outgoing requests for each client and makes sure they are processed sequentially.
 // This method is executed by a dedicated coroutine as soon as the server is started and runs indefinitely.
 func (d *DefaultServerDispatcher) messagePump() {
+	defer close(d.doneC)
 	var clientID string
 	var ok bool
 	var rdy bool
