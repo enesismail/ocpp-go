@@ -494,14 +494,6 @@ func (cs *centralSystem) SetNewChargingStationValidationHandler(handler ws.Check
 
 func (cs *centralSystem) SetNewChargePointHandler(handler ChargePointConnectionHandler) {
 	cs.server.SetNewClientHandler(func(chargePoint ws.Channel) {
-		// Drain any callbacks left over from a previous connection with the same ID
-		// (e.g. when DuplicateConnectionBehaviorKeepNew displaced it without a
-		// disconnect notification), so this connection starts with a clean queue and
-		// its responses are never routed to the dead connection's pending callbacks.
-		for cb, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), ""); ok; cb, ok = cs.callbackQueue.Dequeue(chargePoint.ID(), "") {
-			err := ocpp.NewError(ocppj.GenericError, "client reconnected, no response received from previous connection", "")
-			cb(nil, err)
-		}
 		handler(chargePoint)
 	})
 }
