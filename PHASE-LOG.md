@@ -214,4 +214,36 @@ Gate cadence: library `go build`/`go vet`/non-race `go test`/`-race` after each 
 - Pre-existing ws test-suite flakiness beyond the two hardened cases (sleep-based startup sync) can still theoretically flake under heavy `-race` load; not observed across the runs above.
 
 **Net: `go test ./... -race` is green for the library and both consumer projects. Phase 2b (rework PRs
-#406/#191/#387/#376) and Phase 3 (breaking #373/#343) not started.**
+#406/#191/#387/#376) executed next; Phase 3 (breaking #373/#343) not started.**
+
+---
+
+# Phase 2b — rework PRs (selective adoption)
+
+These four PRs were flagged in the plan as needing rework (selective cherry-pick / rebase / rewrite /
+optional). After inspecting each against current master, the outcome was **adopt 2, skip 2** — the two skips
+are justified, not deferrals of value. **Branch `fork-main`, local commits only — not pushed.**
+
+| PR | Decision | Commit | Author | Notes |
+|---|---|---|---|---|
+| **#406** callback-queue panic | **ADOPTED (selective core)** | `3a39a23` | **acv (qosmotec)** | Took only the real fix — key callbacks by request type (id + feature name) so a delayed/timed-out response can't dequeue & type-assert against the wrong request's callback (interface-conversion panic); empty-queue returns `(nil,false)` instead of panicking; the 4 endpoint callers pass the feature name. **Excluded** the bundled scope creep: the ocpp1.6 SampledValue/MeterValue validation loosening (breaks 3 tests), the client dispatcher timeout-tick change (24h→2min), the `AddPendingRequest` signature change, and new `ocppj` panics. `internal/callbackqueue` is internal, so no exported-API impact. |
+| **#376** duplicate-connection behavior | **ADOPTED (opt-in, safety-adapted)** | `ba29636` | **trond nordheim** | `SetDuplicateConnectionBehavior(KeepCurrent\|KeepNew)`; default `KeepCurrent` keeps existing behavior. Adapted for safety: the displaced connection is captured under `connMutex` but **Closed after releasing the lock** and via the webSocket's concurrency-safe `Close` (not its raw connection); `handleDisconnect` now deletes map entries **by identity** so a stale disconnect can't evict the replacement. KeepNew integration test omitted (two same-ID auto-reconnecting clients = inherent reconnect ping-pong, unstable under `-race`); default path stays covered by `TestClientDuplicateConnection`. |
+| **#387** connection removal | **SKIPPED** | — | (xBlaz3kx-adjacent) | Redundant: current master already removes connections on disconnect (`handleDisconnect` `delete(s.connections, …)` under the lock). The PR's only net change is a redundant immediate-delete plus a `defer s.connMutex.Lock()` (should be `Unlock`) **deadlock bug**. Net value ≈ nil. |
+| **#191** UseNumber JSON decode | **SKIPPED / deferred** | — | — | Would prevent float64 rounding of integers **>2⁵³** in the generic parse — *theoretical* for OCPP (realistic meter Wh ~10⁹ ≪ 9×10¹⁵). Needs a real rebase of the hot `ParseMessage`/`ParseRawJsonMessage` path (`Unmarshal`→`Decoder.UseNumber`, `arr[0].(float64)`→`json.Number`); hot-path regression risk outweighs the theoretical payoff. Recorded as a deferred item. |
+
+## Phase 2b gate — final state
+
+`scripts/gate.sh` (`GATE_PROJECT_DIRS` = both consumers): **GATE: ALL GREEN** — library build/vet/`-race`
+(`ocpp1.6_test`/`ocpp2.0.1_test`/`ocppj`/`ws`) and **both consumer projects build/vet/test/`-race`** against the
+fork. #406 changed the `internal/callbackqueue` API used by the endpoints; the consumers compile + pass against
+it. `go test ./ws/ -race` is reliably green at `-count=1`.
+
+### Residual (pre-existing, not introduced by Phase 2)
+- `go test ./ws/ -race -count=2+` can **intermittently** fail with "connection refused" (0 data races) — the
+  pre-existing sleep-based-startup + shared-port harness fragility. The OS-assigned port (2a.6) removed the csms
+  collision but each test still reuses one port with a 100ms sleep before dialing. **Proper fix (deferred):** give
+  each test its own ephemeral port and wait on `server.Addr()` instead of sleeping (~25 call sites). Does not
+  affect the `-count=1` gate.
+
+**Phase 2 complete: 2a (`-race` cleanup) + 2b (#406 selective, #376 opt-in; #387/#191 skipped with rationale).
+Not pushed. Phase 3 (breaking #373/#343) not started.**
