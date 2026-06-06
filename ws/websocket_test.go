@@ -596,6 +596,53 @@ func (s *WebSocketSuite) TestClientDuplicateConnection() {
 	s.True(ok)
 }
 
+func (s *WebSocketSuite) TestClientDuplicateConnectionWithKeepNewConnectionBehavior() {
+	s.server = newWebsocketServer(s.T(), nil)
+	s.server.SetNewClientHandler(func(ws Channel) {
+	})
+	s.server.SetDuplicateConnectionBehavior(DuplicateConnectionBehaviorKeepNew)
+	// Start server
+	go s.server.Start(serverPort, serverPath)
+	time.Sleep(100 * time.Millisecond)
+	// Connect client 1 (a real ws.Client). Buffered channel + non-blocking send so
+	// the handler never wedges if the kicked client auto-reconnects.
+	disconnectC := make(chan *websocket.CloseError, 4)
+	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
+		return nil, nil
+	})
+	s.client.SetDisconnectedHandler(func(err error) {
+		var wsErr *websocket.CloseError
+		if errors.As(err, &wsErr) && wsErr != nil {
+			select {
+			case disconnectC <- wsErr:
+			default:
+			}
+		}
+	})
+	host := fmt.Sprintf("localhost:%v", serverPort)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+	err := s.client.Start(u.String())
+	s.NoError(err)
+	time.Sleep(100 * time.Millisecond) // let client 1 register on the server
+	// Connect a second client with the SAME ID using a raw gorilla dialer (which
+	// does NOT auto-reconnect), so there is no reconnect ping-pong between two
+	// same-ID ws.Clients. With KeepNew the server must kick the existing client 1.
+	dialer := websocket.Dialer{Subprotocols: []string{defaultSubProtocol}}
+	rawConn, _, err := dialer.Dial(u.String(), nil)
+	s.NoError(err)
+	defer rawConn.Close()
+	// Expect client 1 to be kicked with a PolicyViolation "reconnected" close.
+	select {
+	case wsErr := <-disconnectC:
+		s.Equal(websocket.ClosePolicyViolation, wsErr.Code)
+		s.Equal("a connection with this ID has reconnected", wsErr.Text)
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for the existing client to be disconnected")
+	}
+	// Stop client 1 to halt its auto-reconnect before teardown.
+	s.client.Stop()
+}
+
 func (s *WebSocketSuite) TestServerStopConnection() {
 	triggerC := make(chan struct{}, 1)
 	disconnectedClientC := make(chan struct{}, 1)

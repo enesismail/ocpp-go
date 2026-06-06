@@ -500,9 +500,9 @@ out:
 		// the existing connection's read/write pumps). handleDisconnect deletes map
 		// entries by identity, so the stale connection's later disconnect won't evict
 		// the new entry registered below. (See SetDuplicateConnectionBehavior for the
-		// security implications.)
+		// security implications.) NOTE: do not call s.error() here — it takes
+		// connMutex.RLock(), which would self-deadlock against this write lock.
 		if currentConn, exists := s.connections[id]; exists {
-			s.error(fmt.Errorf("client %s already exists, closing existing client", id))
 			staleConn = currentConn
 		}
 	default:
@@ -536,9 +536,11 @@ out:
 	// Add new client
 	s.connections[ws.id] = ws
 	s.connMutex.Unlock()
-	// Close any displaced connection (KeepNew) outside the lock, so a blocking
-	// close can never stall connMutex for other handlers.
+	// Close any displaced connection (KeepNew) outside the lock, so neither a
+	// blocking close nor s.error() (which takes connMutex.RLock) can stall
+	// connMutex for other handlers.
 	if staleConn != nil {
+		s.error(fmt.Errorf("client %s already exists, closing existing client", id))
 		_ = staleConn.Close(websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "a connection with this ID has reconnected"})
 	}
 	// Start reader and write routine
