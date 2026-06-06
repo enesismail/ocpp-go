@@ -221,15 +221,25 @@ Gate cadence: library `go build`/`go vet`/non-race `go test`/`-race` after each 
 # Phase 2b — rework PRs (selective adoption)
 
 These four PRs were flagged in the plan as needing rework (selective cherry-pick / rebase / rewrite /
-optional). After inspecting each against current master, the outcome was **adopt 2, skip 2** — the two skips
-are justified, not deferrals of value. **Branch `fork-main`, local commits only — not pushed.**
+optional). Final outcome after external review (below): **adopt 1 (#406), revert 1 (#376), skip 2
+(#387/#191).** **Branch `fork-main`, local commits only — not pushed.**
 
 | PR | Decision | Commit | Author | Notes |
 |---|---|---|---|---|
-| **#406** callback-queue panic | **ADOPTED (selective core)** | `3a39a23` | **acv (qosmotec)** | Took only the real fix — key callbacks by request type (id + feature name) so a delayed/timed-out response can't dequeue & type-assert against the wrong request's callback (interface-conversion panic); empty-queue returns `(nil,false)` instead of panicking; the 4 endpoint callers pass the feature name. **Excluded** the bundled scope creep: the ocpp1.6 SampledValue/MeterValue validation loosening (breaks 3 tests), the client dispatcher timeout-tick change (24h→2min), the `AddPendingRequest` signature change, and new `ocppj` panics. `internal/callbackqueue` is internal, so no exported-API impact. |
-| **#376** duplicate-connection behavior | **ADOPTED (opt-in, safety-adapted)** | `ba29636` | **trond nordheim** | `SetDuplicateConnectionBehavior(KeepCurrent\|KeepNew)`; default `KeepCurrent` keeps existing behavior. Adapted for safety: the displaced connection is captured under `connMutex` but **Closed after releasing the lock** and via the webSocket's concurrency-safe `Close` (not its raw connection); `handleDisconnect` now deletes map entries **by identity** so a stale disconnect can't evict the replacement. KeepNew integration test omitted (two same-ID auto-reconnecting clients = inherent reconnect ping-pong, unstable under `-race`); default path stays covered by `TestClientDuplicateConnection`. |
+| **#406** callback-queue panic | **ADOPTED (selective core, review-hardened)** | `3a39a23` + fixes `d8c6d76`, `5b4bdd6`, `2c1de8a` | **acv (qosmotec)** + fork fixes | Took only the real fix — route a response to the callback registered for its feature so it can't dequeue & type-assert against the wrong request (interface-conversion panic). **Excluded** the PR's bundled scope creep (ocpp1.6 validation loosening that breaks 3 tests, the 24h→2min client timeout-tick, the `AddPendingRequest` signature change, new `ocppj` panics). Review then found three queue bugs in the adopted code, all fixed: rollback over-deleted the whole type bucket (now pops only the appended entry); `Dequeue` leaked empty per-client entries (now removed); and `Dequeue("")` picked an arbitrary type bucket → CALL_ERROR could hit the wrong callback (**redesigned as a per-client ordered slice**: typed dequeue = oldest-of-type, untyped = oldest overall/FIFO). Added the queue's first unit tests. `internal/callbackqueue` is internal — no exported-API impact. |
+| **#376** duplicate-connection behavior | **REVERTED** (`d46e411`; was adopted `ba29636`) | — | trond nordheim (not used) | `SetDuplicateConnectionBehavior(KeepNew)` was adopted opt-in, but four external-review rounds peeled back **four cross-layer state-coordination gaps**: (1) the KeepNew branch called `s.error()` under `connMutex.Lock` → self-deadlock (this was the true cause of the KeepNew test hangs); (2) the stale displaced-disconnect tore down the replacement's dispatcher state (fixed via identity-aware `handleDisconnect`); (3) the displaced connection's callbacks were never drained (fixed via connect-drain); (4) its **dispatcher pending-state** was still never reset, so a displaced request's timeout fired the replacement's callback. Correct KeepNew needs an atomic per-client reset across ws-map + callbackQueue + dispatcher — a re-architecture upstream never attempted. Per owner decision, **fully reverted**; the default reject-duplicate behavior (= upstream) is unchanged. |
 | **#387** connection removal | **SKIPPED** | — | (xBlaz3kx-adjacent) | Redundant: current master already removes connections on disconnect (`handleDisconnect` `delete(s.connections, …)` under the lock). The PR's only net change is a redundant immediate-delete plus a `defer s.connMutex.Lock()` (should be `Unlock`) **deadlock bug**. Net value ≈ nil. |
 | **#191** UseNumber JSON decode | **SKIPPED / deferred** | — | — | Would prevent float64 rounding of integers **>2⁵³** in the generic parse — *theoretical* for OCPP (realistic meter Wh ~10⁹ ≪ 9×10¹⁵). Needs a real rebase of the hot `ParseMessage`/`ParseRawJsonMessage` path (`Unmarshal`→`Decoder.UseNumber`, `arr[0].(float64)`→`json.Number`); hot-path regression risk outweighs the theoretical payoff. Recorded as a deferred item. |
+
+## Phase 2b external review (gemini + codex CLIs, read-only, 5 rounds)
+
+Both CLIs reviewed the Phase-2b diff in parallel each round. They found **5 real, introduced defects** that
+the gate and `-race` could not (none are exercised by the default-path tests or the consumer projects):
+KeepNew self-deadlock; callbackqueue rollback over-delete; callbackqueue per-client leak; client-dispatcher
+concurrent-`Stop()` double-close; and `Dequeue("")` CALL_ERROR misrouting. The three callbackqueue/dispatcher
+defects were fixed and **kept** (#406); the KeepNew defects kept cascading across layers (4 distinct gaps over
+4 rounds) → **#376 reverted**. Final round (round 5) on the reverted state: **gemini SAFE, codex
+SAFE-WITH-NOTES ("no code defects found")**. The review process is the reason these latent bugs didn't ship.
 
 ## Phase 2b gate — final state
 
@@ -245,5 +255,6 @@ it. `go test ./ws/ -race` is reliably green at `-count=1`.
   each test its own ephemeral port and wait on `server.Addr()` instead of sleeping (~25 call sites). Does not
   affect the `-count=1` gate.
 
-**Phase 2 complete: 2a (`-race` cleanup) + 2b (#406 selective, #376 opt-in; #387/#191 skipped with rationale).
+**Phase 2 complete: 2a (`-race` cleanup) + 2b (#406 selective + review-hardened; #376 reverted; #387/#191
+skipped with rationale). Final external review: gemini SAFE, codex SAFE-WITH-NOTES (no code defects).
 Not pushed. Phase 3 (breaking #373/#343) not started.**
