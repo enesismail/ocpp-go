@@ -28,9 +28,14 @@ func (cq *CallbackQueue) TryQueue(id string, requestType RequestType, try func()
 	cq.callbacks[id][requestType] = append(cq.callbacks[id][requestType], callback)
 
 	if err := try(); err != nil {
-		// pop off our element
-		if callbacks, ok := cq.callbacks[id]; ok {
-			delete(callbacks, requestType)
+		// Roll back ONLY the callback we just appended — not the whole
+		// request-type bucket, which may already hold earlier valid callbacks.
+		cbs := cq.callbacks[id][requestType]
+		if len(cbs) > 0 {
+			cq.callbacks[id][requestType] = cbs[:len(cbs)-1]
+		}
+		if len(cq.callbacks[id][requestType]) == 0 {
+			delete(cq.callbacks[id], requestType)
 		}
 		if len(cq.callbacks[id]) == 0 {
 			delete(cq.callbacks, id)
@@ -72,6 +77,11 @@ func (cq *CallbackQueue) Dequeue(id string, requestType RequestType) (func(confi
 
 	if len(requestTypeCallbacks) == 1 {
 		delete(cq.callbacks[id], requestType)
+		// Clean up the per-client entry once its last callback is gone, so the
+		// outer map doesn't accumulate empty entries for every client ID seen.
+		if len(cq.callbacks[id]) == 0 {
+			delete(cq.callbacks, id)
+		}
 	} else {
 		cq.callbacks[id][requestType] = requestTypeCallbacks[1:]
 	}
