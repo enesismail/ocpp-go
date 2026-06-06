@@ -562,15 +562,19 @@ func (s *server) handleMessage(w Channel, data []byte) error {
 func (s *server) handleDisconnect(w Channel, _ error) {
 	// server never attempts to auto-reconnect to client. Resources are simply freed up
 	s.connMutex.Lock()
-	// Only remove the entry if it still points to THIS connection: with
+	// Only act if the map still points to THIS connection. With
 	// DuplicateConnectionBehaviorKeepNew a replacement may already be registered
-	// under the same ID, and a stale disconnect must not evict it.
+	// under the same ID; a stale disconnect must neither evict the replacement nor
+	// notify the upper layer (which would tear down dispatcher/pending state for an
+	// ID that is currently connected via the new socket).
+	current := false
 	if existing, ok := s.connections[w.ID()]; ok && Channel(existing) == w {
 		delete(s.connections, w.ID())
+		current = true
 	}
 	s.connMutex.Unlock()
 	log.Infof("closed connection to %s", w.ID())
-	if s.disconnectedHandler != nil {
+	if current && s.disconnectedHandler != nil {
 		s.disconnectedHandler(w)
 	}
 }

@@ -65,7 +65,15 @@ func (cq *CallbackQueue) Dequeue(id string, requestType RequestType) (func(confi
 		if requestType != "" { /* requestType known and not available... */
 			return nil, false
 		}
-		/* requestType any, take first one... */
+		// requestType is "" — used by the CALL_ERROR and disconnect-drain paths,
+		// where the caller has no feature name. Pick an arbitrary bucket. This is
+		// benign in practice: the ocppj dispatcher keeps at most one in-flight
+		// request per client (it waits for a response/error/timeout before sending
+		// the next), so there is normally a single bucket to choose from. If the
+		// dispatcher ever allowed concurrent multi-feature requests per client, a
+		// CALL_ERROR could be delivered to a different feature's callback (no panic,
+		// since the error path passes no typed confirmation) — that would need
+		// insertion-order tracking to make fully deterministic.
 		for reqType, cb := range clientCallbacks {
 			requestType = reqType
 			requestTypeCallbacks = append(requestTypeCallbacks, cb...)
