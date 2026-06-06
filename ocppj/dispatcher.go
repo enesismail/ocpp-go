@@ -90,6 +90,7 @@ type DefaultClientDispatcher struct {
 	requestChannel      chan bool
 	readyForDispatch    chan bool
 	doneC               chan struct{}
+	running             bool
 	pendingRequestState ClientState
 	network             ws.Client
 	mutex               sync.RWMutex
@@ -128,6 +129,7 @@ func (d *DefaultClientDispatcher) Start() {
 	defer d.mutex.Unlock()
 	d.requestChannel = make(chan bool, 1)
 	d.doneC = make(chan struct{})
+	d.running = true
 	d.timer = time.NewTimer(defaultTimeoutTick) // Default to 24 hours tick
 	go d.messagePump()
 }
@@ -151,10 +153,14 @@ func (d *DefaultClientDispatcher) IsPaused() bool {
 // would wait for the pump to exit from the pump itself.
 func (d *DefaultClientDispatcher) Stop() {
 	d.mutex.Lock()
-	if d.requestChannel == nil {
+	// Guard on `running` (set synchronously in Start/Stop) rather than on
+	// requestChannel, which the pump only nils on exit — otherwise two concurrent
+	// Stop() calls could both pass the check and double-close the channel.
+	if !d.running {
 		d.mutex.Unlock()
 		return
 	}
+	d.running = false
 	close(d.requestChannel)
 	done := d.doneC
 	d.mutex.Unlock()
