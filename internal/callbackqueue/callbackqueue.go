@@ -6,15 +6,31 @@ import (
 	"github.com/lorenzodonini/ocpp-go/ocpp"
 )
 
+// RequestType identifies the kind of request a callback is waiting on (the OCPP
+// feature name). It lets a response be routed to the callback registered for the
+// same feature, instead of blindly to the oldest pending callback (which could be
+// for a different type and trigger an interface-conversion panic on the response).
 type RequestType string
+
+type callbackEntry struct {
+	requestType RequestType
+	callback    func(confirmation ocpp.Response, err error)
+}
+
+// CallbackQueue stores, per client id, the pending response callbacks in
+// insertion order. Ordering matters: the typed path (Dequeue with a request type)
+// returns the oldest callback of that type (FIFO within a type), while the
+// untyped path (Dequeue with "") returns the single oldest callback regardless of
+// type — used by CALL_ERROR handling (a protocol error carries no feature name)
+// and by disconnect draining.
 type CallbackQueue struct {
 	callbacksMutex sync.RWMutex
-	callbacks      map[string]map[RequestType][]func(confirmation ocpp.Response, err error)
+	callbacks      map[string][]callbackEntry
 }
 
 func New() CallbackQueue {
 	return CallbackQueue{
-		callbacks: make(map[string]map[RequestType][]func(confirmation ocpp.Response, err error)),
+		callbacks: make(map[string][]callbackEntry),
 	}
 }
 
@@ -22,23 +38,17 @@ func (cq *CallbackQueue) TryQueue(id string, requestType RequestType, try func()
 	cq.callbacksMutex.Lock()
 	defer cq.callbacksMutex.Unlock()
 
-	if _, ok := cq.callbacks[id]; !ok {
-		cq.callbacks[id] = make(map[RequestType][]func(confirmation ocpp.Response, err error))
-	}
-	cq.callbacks[id][requestType] = append(cq.callbacks[id][requestType], callback)
+	cq.callbacks[id] = append(cq.callbacks[id], callbackEntry{requestType: requestType, callback: callback})
 
 	if err := try(); err != nil {
-		// Roll back ONLY the callback we just appended — not the whole
-		// request-type bucket, which may already hold earlier valid callbacks.
-		cbs := cq.callbacks[id][requestType]
-		if len(cbs) > 0 {
-			cq.callbacks[id][requestType] = cbs[:len(cbs)-1]
-		}
-		if len(cq.callbacks[id][requestType]) == 0 {
-			delete(cq.callbacks[id], requestType)
-		}
-		if len(cq.callbacks[id]) == 0 {
+		// Roll back ONLY the entry we just appended (it is the last one), leaving
+		// any earlier pending callbacks for this client intact.
+		entries := cq.callbacks[id]
+		entries = entries[:len(entries)-1]
+		if len(entries) == 0 {
 			delete(cq.callbacks, id)
+		} else {
+			cq.callbacks[id] = entries
 		}
 		return err
 	}
@@ -46,53 +56,44 @@ func (cq *CallbackQueue) TryQueue(id string, requestType RequestType, try func()
 	return nil
 }
 
+// Dequeue removes and returns the next pending callback for the given client id.
+// If requestType is non-empty, it returns the oldest callback registered for that
+// type (or false if none). If requestType is "", it returns the single oldest
+// callback regardless of type (FIFO), which the CALL_ERROR and disconnect-drain
+// paths rely on since they have no feature name. Returns false if no callback is
+// pending.
 func (cq *CallbackQueue) Dequeue(id string, requestType RequestType) (func(confirmation ocpp.Response, err error), bool) {
 	cq.callbacksMutex.Lock()
 	defer cq.callbacksMutex.Unlock()
 
-	clientCallbacks, ok := cq.callbacks[id]
-	if !ok {
+	entries, ok := cq.callbacks[id]
+	if !ok || len(entries) == 0 {
 		return nil, false
 	}
 
-	if len(clientCallbacks) == 0 {
-		//panic("Internal CallbackQueue inconsistency")
-		return nil, false
-	}
-
-	requestTypeCallbacks, ok := clientCallbacks[requestType]
-	if !ok {
-		if requestType != "" { /* requestType known and not available... */
+	idx := -1
+	if requestType == "" {
+		// Oldest pending callback, any type.
+		idx = 0
+	} else {
+		// Oldest pending callback of the requested type.
+		for i := range entries {
+			if entries[i].requestType == requestType {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
 			return nil, false
 		}
-		// requestType is "" — used by the CALL_ERROR and disconnect-drain paths,
-		// where the caller has no feature name. Pick an arbitrary bucket. This is
-		// benign in practice: the ocppj dispatcher keeps at most one in-flight
-		// request per client (it waits for a response/error/timeout before sending
-		// the next), so there is normally a single bucket to choose from. If the
-		// dispatcher ever allowed concurrent multi-feature requests per client, a
-		// CALL_ERROR could be delivered to a different feature's callback (no panic,
-		// since the error path passes no typed confirmation) — that would need
-		// insertion-order tracking to make fully deterministic.
-		for reqType, cb := range clientCallbacks {
-			requestType = reqType
-			requestTypeCallbacks = append(requestTypeCallbacks, cb...)
-			break // only first one
-		}
 	}
 
-	callback := requestTypeCallbacks[0]
-
-	if len(requestTypeCallbacks) == 1 {
-		delete(cq.callbacks[id], requestType)
-		// Clean up the per-client entry once its last callback is gone, so the
-		// outer map doesn't accumulate empty entries for every client ID seen.
-		if len(cq.callbacks[id]) == 0 {
-			delete(cq.callbacks, id)
-		}
+	cb := entries[idx].callback
+	entries = append(entries[:idx], entries[idx+1:]...)
+	if len(entries) == 0 {
+		delete(cq.callbacks, id)
 	} else {
-		cq.callbacks[id][requestType] = requestTypeCallbacks[1:]
+		cq.callbacks[id] = entries
 	}
-
-	return callback, true
+	return cb, true
 }
