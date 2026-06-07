@@ -99,6 +99,16 @@ type Client interface {
 	//
 	// If set, the DisconnectedHandler will always be invoked before the Reconnected callback is invoked.
 	SetReconnectedHandler(handler func())
+	// SetAutoReconnect enables or disables the built-in automatic reconnection mechanism.
+	//
+	// When enabled (the default), a forced disconnect triggers an internal retry loop with the
+	// Backoff strategy from TimeoutConfig. When disabled, a forced disconnect invokes the
+	// DisconnectedHandler but the client does NOT attempt to reconnect on its own, leaving the
+	// embedder free to own the reconnection policy (e.g. a bounded retry count, a give-up policy,
+	// or a deterministic, externally-seeded backoff). The DisconnectedHandler fires regardless.
+	//
+	// This function must be called before connecting to the server.
+	SetAutoReconnect(enabled bool)
 	// IsConnected Returns information about the current connection status.
 	// If the client is currently attempting to auto-reconnect to the server, the function returns false.
 	IsConnected() bool
@@ -138,6 +148,7 @@ type client struct {
 	errC           chan error
 	errClosed      bool          // true once errC has been closed, to prevent double-close and sends on a closed channel
 	reconnectC     chan struct{} // used for signaling, that a reconnection attempt should be interrupted
+	autoReconnect  bool          // when false, a forced disconnect does not trigger the built-in retry loop
 }
 
 // ClientOpt is a function that can be used to set options on a client during creation.
@@ -188,6 +199,7 @@ func NewClient(opts ...ClientOpt) Client {
 		reconnectC:    make(chan struct{}, 1),
 		errC:          make(chan error, 1),
 		header:        http.Header{},
+		autoReconnect: true,
 	}
 	for _, o := range opts {
 		o(c)
@@ -209,6 +221,10 @@ func (c *client) SetDisconnectedHandler(handler func(err error)) {
 
 func (c *client) SetReconnectedHandler(handler func()) {
 	c.onReconnected = handler
+}
+
+func (c *client) SetAutoReconnect(enabled bool) {
+	c.autoReconnect = enabled
 }
 
 func (c *client) AddOption(option interface{}) {
@@ -435,8 +451,10 @@ func (c *client) handleDisconnect(_ Channel, err error) {
 		// Notify upper layer of disconnect
 		c.onDisconnected(err)
 	}
-	if err != nil {
-		// Disconnect was forced, do reconnect
+	if err != nil && c.autoReconnect {
+		// Disconnect was forced and auto-reconnect is enabled, do reconnect.
+		// When auto-reconnect is disabled the embedder owns the reconnection
+		// policy and is notified via the onDisconnected handler above.
 		c.handleReconnection()
 	}
 }
