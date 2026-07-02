@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/lorenzodonini/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ocppj"
 )
 
 type ClientStateTestSuite struct {

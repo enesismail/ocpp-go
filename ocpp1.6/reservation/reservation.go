@@ -1,7 +1,7 @@
 // Contains support for reservation of a Charge Point.
 package reservation
 
-import "github.com/lorenzodonini/ocpp-go/ocpp"
+import "github.com/enesismail/ocpp-go/ocpp"
 
 // Needs to be implemented by Central systems for handling messages part of the OCPP 1.6 Reservation profile.
 type CentralSystemHandler interface {

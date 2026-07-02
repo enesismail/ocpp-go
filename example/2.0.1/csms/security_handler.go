@@ -1,9 +1,9 @@
 package main
 
 import (
-	"github.com/lorenzodonini/ocpp-go/ocpp"
-	"github.com/lorenzodonini/ocpp-go/ocpp2.0.1/security"
-	"github.com/lorenzodonini/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/security"
+	"github.com/enesismail/ocpp-go/ocppj"
 )
 
 func (c *CSMSHandler) OnSecurityEventNotification(chargingStationID string, request *security.SecurityEventNotificationRequest) (response *security.SecurityEventNotificationResponse, err error) {

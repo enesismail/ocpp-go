@@ -3,8 +3,8 @@ package ocpp16_test
 import (
 	"fmt"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/security"
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6_test/mocks"
+	"github.com/enesismail/ocpp-go/ocpp1.6/security"
+	"github.com/enesismail/ocpp-go/ocpp1.6_test/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"

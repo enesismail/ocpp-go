@@ -1,7 +1,7 @@
 // The diagnostics functional block contains OCPP 1.6J extension features than enable remote firmware updates on charging stations.
 package securefirmware
 
-import "github.com/lorenzodonini/ocpp-go/ocpp"
+import "github.com/enesismail/ocpp-go/ocpp"
 
 type CentralSystemHandler interface {
 	OnSignedFirmwareStatusNotification(chargingStationID string, request *SignedFirmwareStatusNotificationRequest) (response *SignedFirmwareStatusNotificationResponse, err error)

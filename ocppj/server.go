@@ -6,8 +6,8 @@ import (
 
 	"gopkg.in/go-playground/validator.v9"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
-	"github.com/lorenzodonini/ocpp-go/ws"
+	"github.com/enesismail/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ws"
 )
 
 // The endpoint waiting for incoming connections from OCPP clients, in an OCPP-J topology.

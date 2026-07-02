@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	ws "github.com/lorenzodonini/ocpp-go/ws"
+	ws "github.com/enesismail/ocpp-go/ws"
 	mock "github.com/stretchr/testify/mock"
 )
 

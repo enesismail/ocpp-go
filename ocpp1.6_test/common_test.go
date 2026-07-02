@@ -7,7 +7,7 @@ import (
 
 	"github.com/relvacode/iso8601"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/types"
+	"github.com/enesismail/ocpp-go/ocpp1.6/types"
 )
 
 // Utility functions

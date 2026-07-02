@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	reservation "github.com/lorenzodonini/ocpp-go/ocpp1.6/reservation"
+	reservation "github.com/enesismail/ocpp-go/ocpp1.6/reservation"
 	mock "github.com/stretchr/testify/mock"
 )
 

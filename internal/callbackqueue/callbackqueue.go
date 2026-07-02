@@ -3,7 +3,7 @@ package callbackqueue
 import (
 	"sync"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocpp"
 )
 
 // RequestType identifies the kind of request a callback is waiting on (the OCPP

@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	firmware "github.com/lorenzodonini/ocpp-go/ocpp1.6/firmware"
+	firmware "github.com/enesismail/ocpp-go/ocpp1.6/firmware"
 	mock "github.com/stretchr/testify/mock"
 )
 

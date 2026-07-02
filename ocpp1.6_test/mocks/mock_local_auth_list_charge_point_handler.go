@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	localauth "github.com/lorenzodonini/ocpp-go/ocpp1.6/localauth"
+	localauth "github.com/enesismail/ocpp-go/ocpp1.6/localauth"
 	mock "github.com/stretchr/testify/mock"
 )
 

@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	logging "github.com/lorenzodonini/ocpp-go/ocpp1.6/logging"
+	logging "github.com/enesismail/ocpp-go/ocpp1.6/logging"
 	mock "github.com/stretchr/testify/mock"
 )
 

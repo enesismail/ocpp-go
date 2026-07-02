@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
-	"github.com/lorenzodonini/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocppj"
 )
 
 // ----------------- Start tests -----------------

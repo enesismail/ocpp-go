@@ -10,11 +10,11 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/lorenzodonini/ocpp-go/logging"
+	"github.com/enesismail/ocpp-go/logging"
 
 	"gopkg.in/go-playground/validator.v9"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocpp"
 )
 
 // requestTimeoutMarker tags the local request-timeout error so it is distinguishable from a server

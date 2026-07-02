@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp2.0.1/reservation"
-	"github.com/lorenzodonini/ocpp-go/ocpp2.0.1/types"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/reservation"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

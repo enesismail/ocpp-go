@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	extendedtriggermessage "github.com/lorenzodonini/ocpp-go/ocpp1.6/extendedtriggermessage"
+	extendedtriggermessage "github.com/enesismail/ocpp-go/ocpp1.6/extendedtriggermessage"
 	mock "github.com/stretchr/testify/mock"
 )
 

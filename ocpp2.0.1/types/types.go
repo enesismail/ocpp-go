@@ -4,7 +4,7 @@ package types
 import (
 	"gopkg.in/go-playground/validator.v9"
 
-	"github.com/lorenzodonini/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ocppj"
 )
 
 const (

@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
-	"github.com/lorenzodonini/ocpp-go/ws"
+	"github.com/enesismail/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ws"
 )
 
 // ClientDispatcher contains the state and logic for handling outgoing messages on a client endpoint.
@@ -96,8 +97,13 @@ type DefaultClientDispatcher struct {
 	mutex               sync.RWMutex
 	onRequestCancel     func(requestID string, request ocpp.Request, err *ocpp.Error)
 	timer               *time.Timer
-	paused              bool
-	timeout             time.Duration
+	// paused is accessed atomically (0 = running, 1 = paused) so the message
+	// pump can check it every loop iteration without acquiring d.mutex. Reading
+	// it under d.mutex would let a pending Stop() (write Lock) starve the pump's
+	// RLock, deadlocking against SendRequest calls that hold RLock while blocked
+	// on the buffered channel send.
+	paused  int32
+	timeout time.Duration
 }
 
 const (
@@ -141,9 +147,7 @@ func (d *DefaultClientDispatcher) IsRunning() bool {
 }
 
 func (d *DefaultClientDispatcher) IsPaused() bool {
-	d.mutex.RLock()
-	defer d.mutex.RUnlock()
-	return d.paused
+	return atomic.LoadInt32(&d.paused) != 0
 }
 
 // Stop signals the dispatcher to stop and blocks until its messagePump goroutine
@@ -185,8 +189,11 @@ func (d *DefaultClientDispatcher) SendRequest(req RequestBundle) error {
 		return err
 	}
 	d.mutex.RLock()
+	defer d.mutex.RUnlock()
+	if !d.running {
+		return fmt.Errorf("cannot send request %v, dispatcher not running", req.Call.UniqueId)
+	}
 	d.requestChannel <- true
-	d.mutex.RUnlock()
 	return nil
 }
 
@@ -194,15 +201,20 @@ func (d *DefaultClientDispatcher) messagePump() {
 	defer close(d.doneC)
 	rdy := true // Ready to transmit at the beginning
 
-	reqChan := func() chan bool {
-		d.mutex.RLock()
-		defer d.mutex.RUnlock()
-		return d.requestChannel
-	}
+	// Capture the request channel once, WITHOUT taking d.mutex. It is assigned
+	// in Start before this goroutine is launched (the `go` statement establishes
+	// a happens-before edge, so the read is data-race-free) and is only ever
+	// reassigned to nil by this goroutine itself on exit. The pump must not take
+	// d.mutex anywhere in its loop: doing so (even once) would deadlock against a
+	// concurrent Stop(). Stop holds the write Lock while a SendRequest, having
+	// passed the running check under RLock, blocks on the buffered channel send;
+	// once Stop's Lock is pending Go blocks all new RLock acquisitions (writer
+	// preference), so a pump that needed RLock could never drain that send.
+	reqCh := d.requestChannel
 
 	for {
 		select {
-		case _, ok := <-reqChan():
+		case _, ok := <-reqCh:
 			// New request was posted
 			if !ok {
 				d.requestQueue.Init()
@@ -281,13 +293,11 @@ func (d *DefaultClientDispatcher) Pause() {
 		<-d.timer.C
 	}
 	d.timer.Reset(defaultTimeoutTick)
-	d.paused = true
+	atomic.StoreInt32(&d.paused, 1)
 }
 
 func (d *DefaultClientDispatcher) Resume() {
-	d.mutex.Lock()
-	d.paused = false
-	d.mutex.Unlock()
+	atomic.StoreInt32(&d.paused, 0)
 	if d.pendingRequestState.HasPendingRequest() {
 		// There is a pending request already. Awaiting response, before dispatching new requests.
 		d.timer.Reset(d.timeout)
@@ -473,11 +483,11 @@ func (d *DefaultServerDispatcher) CreateClient(clientID string) {
 
 func (d *DefaultServerDispatcher) DeleteClient(clientID string) {
 	d.queueMap.Remove(clientID)
-	if d.IsRunning() {
-		d.mutex.RLock()
+	d.mutex.RLock()
+	if d.running {
 		d.requestChannel <- clientID
-		d.mutex.RUnlock()
 	}
+	d.mutex.RUnlock()
 }
 
 func (d *DefaultServerDispatcher) SetNetworkServer(server ws.Server) {
@@ -504,8 +514,11 @@ func (d *DefaultServerDispatcher) SendRequest(clientID string, req RequestBundle
 		return err
 	}
 	d.mutex.RLock()
+	defer d.mutex.RUnlock()
+	if !d.running {
+		return fmt.Errorf("cannot send request %v, dispatcher not running", req.Call.UniqueId)
+	}
 	d.requestChannel <- clientID
-	d.mutex.RUnlock()
 	return nil
 }
 
@@ -520,11 +533,16 @@ func (d *DefaultServerDispatcher) messagePump() {
 	var clientQueue RequestQueue
 	clientContextMap := map[string]clientTimeoutContext{} // Empty at the beginning
 
-	reqChan := func() chan string {
-		d.mutex.RLock()
-		defer d.mutex.RUnlock()
-		return d.requestChannel
-	}
+	// Capture the request channel once, WITHOUT taking d.mutex. It is assigned in
+	// Start before this goroutine is launched (the `go` statement establishes a
+	// happens-before edge, so the read is data-race-free) and is never reassigned
+	// during the pump's lifetime. The pump must not take d.mutex anywhere in its
+	// loop: doing so (even once) would deadlock against a concurrent Stop(). Stop
+	// holds the write Lock while a SendRequest/DeleteClient, having passed the
+	// running check under RLock, blocks on the buffered channel send; once Stop's
+	// Lock is pending Go blocks all new RLock acquisitions (writer preference), so
+	// a pump that needed RLock could never drain that send.
+	reqCh := d.requestChannel
 
 	// Dispatcher Loop
 	for {
@@ -534,7 +552,7 @@ func (d *DefaultServerDispatcher) messagePump() {
 			d.queueMap.Init()
 			log.Info("stopped processing requests")
 			return
-		case clientID = <-reqChan():
+		case clientID = <-reqCh:
 			// Check whether there is a request queue for the specified client
 			clientQueue, ok = d.queueMap.Get(clientID)
 			if !ok {

@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	securefirmware "github.com/lorenzodonini/ocpp-go/ocpp1.6/securefirmware"
+	securefirmware "github.com/enesismail/ocpp-go/ocpp1.6/securefirmware"
 	mock "github.com/stretchr/testify/mock"
 )
 

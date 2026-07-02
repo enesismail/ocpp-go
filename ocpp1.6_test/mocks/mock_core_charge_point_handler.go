@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	core "github.com/lorenzodonini/ocpp-go/ocpp1.6/core"
+	core "github.com/enesismail/ocpp-go/ocpp1.6/core"
 	mock "github.com/stretchr/testify/mock"
 )
 

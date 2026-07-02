@@ -3,8 +3,8 @@ package ocppj_test
 import (
 	"testing"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
-	"github.com/lorenzodonini/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocppj"
 	"github.com/stretchr/testify/suite"
 )
 

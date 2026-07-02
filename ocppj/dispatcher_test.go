@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
-	"github.com/lorenzodonini/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocppj"
 )
 
 type ServerDispatcherTestSuite struct {
@@ -549,4 +549,172 @@ func TestServerDispatcherConcurrentTimeoutDeadlock(t *testing.T) {
 
 	// Only stop if we got here without deadlocking
 	dispatcher.Stop()
+}
+
+// TestClientDispatcherConcurrentSendRequestStopRace exercises the race between
+// SendRequest and Stop on DefaultClientDispatcher.
+//
+// Before the fix, SendRequest sent on d.requestChannel while holding only a
+// read lock, without checking whether the dispatcher was still running. Since
+// Stop() flips running=false and closes requestChannel under the write lock,
+// and the messagePump goroutine nils the channel out after Stop closes it, a
+// SendRequest racing Stop could either panic (send on a closed channel) or
+// block forever holding the read lock (send on a nil channel), which in turn
+// would deadlock any later call needing the write lock (e.g. Start or Stop).
+//
+// Run with -race: the test must complete without panicking or hanging.
+func TestClientDispatcherConcurrentSendRequestStopRace(t *testing.T) {
+	queue := ocppj.NewFIFOClientQueue(0) // unbounded, so Push never fails here
+	dispatcher := ocppj.NewDefaultClientDispatcher(queue)
+	state := ocppj.NewClientState()
+	dispatcher.SetPendingRequestState(state)
+	mockClient := &MockWebsocketClient{}
+	mockClient.On("Write", mock.Anything).Return(nil)
+	dispatcher.SetNetworkClient(mockClient)
+
+	endpoint := ocppj.Client{Id: "client1"}
+	mockProfile := ocpp.NewProfile("mock", &MockFeature{})
+	endpoint.AddProfile(mockProfile)
+
+	dispatcher.Start()
+	require.True(t, dispatcher.IsRunning())
+
+	const numGoroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+	results := make(chan error, numGoroutines)
+	panics := make(chan interface{}, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					panics <- r
+				}
+			}()
+			req := newMockRequest("somevalue")
+			call, err := endpoint.CreateCall(req)
+			if err != nil {
+				results <- err
+				return
+			}
+			data, err := call.MarshalJSON()
+			if err != nil {
+				results <- err
+				return
+			}
+			bundle := ocppj.RequestBundle{Call: call, Data: data}
+			results <- dispatcher.SendRequest(bundle)
+		}()
+	}
+
+	// Race Stop() against the concurrent SendRequest calls above.
+	dispatcher.Stop()
+
+	wg.Wait()
+	close(results)
+	close(panics)
+
+	for p := range panics {
+		t.Fatalf("SendRequest panicked: %v", p)
+	}
+	for err := range results {
+		if err != nil {
+			assert.Contains(t, err.Error(), "not running")
+		}
+	}
+}
+
+// TestServerDispatcherConcurrentSendRequestStopRace exercises the race between
+// SendRequest, DeleteClient and Stop on DefaultServerDispatcher.
+//
+// Before the fix, SendRequest sent on d.requestChannel while holding only a
+// read lock (without checking `running` inside that critical section), and
+// DeleteClient checked IsRunning() (which acquires and releases the read lock
+// on its own) before separately re-acquiring the read lock to send - a
+// classic TOCTOU gap. Stop() sets running=false under the write lock but does
+// NOT close requestChannel (it's buffered), so a racing send could either be
+// silently dropped (request never processed) or block forever holding the
+// read lock if the buffer was full, deadlocking any later call needing the
+// write lock.
+//
+// Run with -race: the test must complete without panicking or hanging.
+func TestServerDispatcherConcurrentSendRequestStopRace(t *testing.T) {
+	queueMap := ocppj.NewFIFOQueueMap(0) // unbounded, so Push never fails here
+	dispatcher := ocppj.NewDefaultServerDispatcher(queueMap)
+	var stateMutex sync.RWMutex
+	state := ocppj.NewServerState(&stateMutex)
+	dispatcher.SetPendingRequestState(state)
+	mockServer := &MockWebsocketServer{}
+	mockServer.On("Write", mock.AnythingOfType("string"), mock.Anything).Return(nil)
+	dispatcher.SetNetworkServer(mockServer)
+
+	endpoint := ocppj.Server{}
+	mockProfile := ocpp.NewProfile("mock", &MockFeature{})
+	endpoint.AddProfile(mockProfile)
+
+	clientID := "client1"
+	dispatcher.Start()
+	require.True(t, dispatcher.IsRunning())
+	dispatcher.CreateClient(clientID)
+
+	const numGoroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines * 2)
+	results := make(chan error, numGoroutines)
+	panics := make(chan interface{}, numGoroutines*2)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					panics <- r
+				}
+			}()
+			req := newMockRequest("somevalue")
+			call, err := endpoint.CreateCall(req)
+			if err != nil {
+				results <- err
+				return
+			}
+			data, err := call.MarshalJSON()
+			if err != nil {
+				results <- err
+				return
+			}
+			bundle := ocppj.RequestBundle{Call: call, Data: data}
+			results <- dispatcher.SendRequest(clientID, bundle)
+		}()
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					panics <- r
+				}
+			}()
+			dispatcher.DeleteClient(clientID)
+		}()
+	}
+
+	// Race Stop() against the concurrent SendRequest/DeleteClient calls above.
+	dispatcher.Stop()
+
+	wg.Wait()
+	close(results)
+	close(panics)
+
+	for p := range panics {
+		t.Fatalf("dispatcher call panicked: %v", p)
+	}
+	for err := range results {
+		// SendRequest may legitimately fail here for two reasons: the
+		// dispatcher was stopped, or a concurrent DeleteClient removed the
+		// client's queue first. Either is a valid, non-panicking outcome -
+		// the point of this test is the absence of a panic/deadlock.
+		if err != nil {
+			t.Logf("SendRequest returned error (expected under this race): %v", err)
+		}
+	}
 }

@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/lorenzodonini/ocpp-go/ocpp2.0.1/data"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/data"
 )
 
 type DataSample struct {

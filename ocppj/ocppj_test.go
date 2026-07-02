@@ -9,11 +9,11 @@ import (
 
 	ut "github.com/go-playground/universal-translator"
 
-	"github.com/lorenzodonini/ocpp-go/logging"
+	"github.com/enesismail/ocpp-go/logging"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
-	"github.com/lorenzodonini/ocpp-go/ocppj"
-	"github.com/lorenzodonini/ocpp-go/ws"
+	"github.com/enesismail/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ws"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"

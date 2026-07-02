@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocpp"
 	"github.com/stretchr/testify/assert"
 )
 

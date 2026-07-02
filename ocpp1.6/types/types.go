@@ -2,7 +2,7 @@
 package types
 
 import (
-	"github.com/lorenzodonini/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ocppj"
 	"gopkg.in/go-playground/validator.v9"
 )
 

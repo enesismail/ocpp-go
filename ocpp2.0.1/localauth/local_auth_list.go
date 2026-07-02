@@ -2,7 +2,7 @@
 // Local lists are used for offline and generally optimized authorization.
 package localauth
 
-import "github.com/lorenzodonini/ocpp-go/ocpp"
+import "github.com/enesismail/ocpp-go/ocpp"
 
 // Needs to be implemented by a CSMS for handling messages part of the OCPP 2.0 Local Authorization List profile.
 type CSMSHandler interface {

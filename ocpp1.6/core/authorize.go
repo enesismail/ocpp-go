@@ -1,7 +1,7 @@
 package core
 
 import (
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/types"
+	"github.com/enesismail/ocpp-go/ocpp1.6/types"
 	"reflect"
 )
 

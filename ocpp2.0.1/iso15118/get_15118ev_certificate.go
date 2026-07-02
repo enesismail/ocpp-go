@@ -5,7 +5,7 @@ import (
 
 	"gopkg.in/go-playground/validator.v9"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp2.0.1/types"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/types"
 )
 
 // -------------------- Get 15118EV Certificate (CS -> CSMS) --------------------

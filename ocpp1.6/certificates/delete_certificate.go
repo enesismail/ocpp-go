@@ -5,7 +5,7 @@ import (
 
 	"gopkg.in/go-playground/validator.v9"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/types"
+	"github.com/enesismail/ocpp-go/ocpp1.6/types"
 )
 
 // -------------------- Delete Certificate (CSMS -> CS) --------------------

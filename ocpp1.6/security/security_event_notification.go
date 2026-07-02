@@ -3,7 +3,7 @@ package security
 import (
 	"reflect"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/types"
+	"github.com/enesismail/ocpp-go/ocpp1.6/types"
 )
 
 // -------------------- Security Event Notification Status (CS -> CSMS) --------------------

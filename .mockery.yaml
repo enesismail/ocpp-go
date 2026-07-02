@@ -6,7 +6,7 @@ mockname: "Mock{{.InterfaceName}}"
 all: true
 
 packages:
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/core:
+  github.com/enesismail/ocpp-go/ocpp1.6/core:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_core_{{.InterfaceName|snakecase}}.go"
@@ -15,7 +15,7 @@ packages:
       CentralSystemHandler:
       ChargePointHandler:
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/certificates:
+  github.com/enesismail/ocpp-go/ocpp1.6/certificates:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_certificates_{{.InterfaceName|snakecase}}.go"
@@ -24,7 +24,7 @@ packages:
     interfaces:
       ChargePointHandler:
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/logging:
+  github.com/enesismail/ocpp-go/ocpp1.6/logging:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_logging_{{.InterfaceName|snakecase}}.go"
@@ -34,7 +34,7 @@ packages:
       CentralSystemHandler:
       ChargePointHandler:
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/extendedtriggermessage:
+  github.com/enesismail/ocpp-go/ocpp1.6/extendedtriggermessage:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_extended_trigger_message_{{.InterfaceName|snakecase}}.go"
@@ -43,7 +43,7 @@ packages:
     interfaces:
       ChargePointHandler:
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/firmware:
+  github.com/enesismail/ocpp-go/ocpp1.6/firmware:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_firmware_{{.InterfaceName|snakecase}}.go"
@@ -53,7 +53,7 @@ packages:
       CentralSystemHandler:
       ChargePointHandler:
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/localauth:
+  github.com/enesismail/ocpp-go/ocpp1.6/localauth:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_local_auth_list_{{.InterfaceName|snakecase}}.go"
@@ -64,7 +64,7 @@ packages:
       ChargePointHandler:
 
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/remotetrigger:
+  github.com/enesismail/ocpp-go/ocpp1.6/remotetrigger:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_remote_trigger_{{.InterfaceName|snakecase}}.go"
@@ -74,7 +74,7 @@ packages:
       CentralSystemHandler:
       ChargePointHandler:
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/reservation:
+  github.com/enesismail/ocpp-go/ocpp1.6/reservation:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_reservation_{{.InterfaceName|snakecase}}.go"
@@ -84,7 +84,7 @@ packages:
       CentralSystemHandler:
       ChargePointHandler:
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/securefirmware:
+  github.com/enesismail/ocpp-go/ocpp1.6/securefirmware:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_secure_firmware_{{.InterfaceName}}.go"
@@ -95,7 +95,7 @@ packages:
       ChargePointHandler:
 
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/security:
+  github.com/enesismail/ocpp-go/ocpp1.6/security:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_security_{{.InterfaceName|snakecase}}.go"
@@ -106,7 +106,7 @@ packages:
       ChargePointHandler:
 
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6/smartcharging:
+  github.com/enesismail/ocpp-go/ocpp1.6/smartcharging:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_smart_charging_{{.InterfaceName|snakecase}}.go"
@@ -117,7 +117,7 @@ packages:
       ChargePointHandler:
 
 
-  github.com/lorenzodonini/ocpp-go/ocpp1.6:
+  github.com/enesismail/ocpp-go/ocpp1.6:
     config:
       dir: "ocpp1.6_test/mocks"
       filename: "mock_ocpp16.go"
@@ -127,7 +127,7 @@ packages:
       ChargePoint:
       CentralSystem:
 
-  github.com/lorenzodonini/ocpp-go/ocppj:
+  github.com/enesismail/ocpp-go/ocppj:
     # all: false + an explicit list (exclude-regex is ignored when all is true).
     # Message is intentionally omitted: its generated expecter declares a
     # MarshalJSON method that trips `go vet` (stdmethods) and the mock is unused.
@@ -148,7 +148,7 @@ packages:
       ServerState:
       dialector:
 
-  github.com/lorenzodonini/ocpp-go/ws:
+  github.com/enesismail/ocpp-go/ws:
     # all: false + an explicit list. ClientOpt/ServerOpt are intentionally
     # omitted: they are func types over the unexported *client/*server, so
     # mockery emits references to ws.client without importing ws and the

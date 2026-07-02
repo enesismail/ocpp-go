@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/lorenzodonini/ocpp-go/logging"
+	"github.com/enesismail/ocpp-go/logging"
 )
 
 const (
@@ -41,8 +41,44 @@ const (
 	defaultRetryBackOffWaitMinimum = 10 * time.Second
 )
 
-// The internal verbose logger
-var log logging.Logger
+// The internal verbose logger. It is a stable wrapper whose underlying delegate
+// is swapped atomically by SetLogger, so concurrent log calls from connection
+// goroutines never race with SetLogger.
+var log = &atomicLogger{}
+
+var defaultLogger logging.Logger = &logging.VoidLogger{}
+
+// atomicLogger is a concurrency-safe logging.Logger whose delegate can be
+// replaced at runtime via SetLogger. A RWMutex (rather than a generic
+// atomic.Pointer) is used so the package keeps compiling under the go 1.16
+// module directive; log calls are not on a hot path.
+type atomicLogger struct {
+	mu    sync.RWMutex
+	inner logging.Logger
+}
+
+func (a *atomicLogger) set(l logging.Logger) {
+	a.mu.Lock()
+	a.inner = l
+	a.mu.Unlock()
+}
+
+func (a *atomicLogger) delegate() logging.Logger {
+	a.mu.RLock()
+	l := a.inner
+	a.mu.RUnlock()
+	if l == nil {
+		return defaultLogger
+	}
+	return l
+}
+
+func (a *atomicLogger) Debug(args ...interface{})                 { a.delegate().Debug(args...) }
+func (a *atomicLogger) Debugf(format string, args ...interface{}) { a.delegate().Debugf(format, args...) }
+func (a *atomicLogger) Info(args ...interface{})                  { a.delegate().Info(args...) }
+func (a *atomicLogger) Infof(format string, args ...interface{})  { a.delegate().Infof(format, args...) }
+func (a *atomicLogger) Error(args ...interface{})                 { a.delegate().Error(args...) }
+func (a *atomicLogger) Errorf(format string, args ...interface{}) { a.delegate().Errorf(format, args...) }
 
 // Sets a custom Logger implementation, allowing the package to log events.
 // By default, a VoidLogger is used, so no logs will be sent to any output.
@@ -52,7 +88,7 @@ func SetLogger(logger logging.Logger) {
 	if logger == nil {
 		panic("cannot set a nil logger")
 	}
-	log = logger
+	log.set(logger)
 }
 
 // ServerTimeoutConfig contains optional configuration parameters for a websocket server.
@@ -562,6 +598,3 @@ func (e HttpConnectionError) Error() string {
 	return fmt.Sprintf("%v, http status: %v", e.Message, e.HttpStatus)
 }
 
-func init() {
-	log = &logging.VoidLogger{}
-}

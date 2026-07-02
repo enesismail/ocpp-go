@@ -9,15 +9,15 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	ocpp16 "github.com/lorenzodonini/ocpp-go/ocpp1.6"
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/core"
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/firmware"
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/localauth"
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/remotetrigger"
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/reservation"
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/types"
-	"github.com/lorenzodonini/ocpp-go/ocppj"
-	"github.com/lorenzodonini/ocpp-go/ws"
+	ocpp16 "github.com/enesismail/ocpp-go/ocpp1.6"
+	"github.com/enesismail/ocpp-go/ocpp1.6/core"
+	"github.com/enesismail/ocpp-go/ocpp1.6/firmware"
+	"github.com/enesismail/ocpp-go/ocpp1.6/localauth"
+	"github.com/enesismail/ocpp-go/ocpp1.6/remotetrigger"
+	"github.com/enesismail/ocpp-go/ocpp1.6/reservation"
+	"github.com/enesismail/ocpp-go/ocpp1.6/types"
+	"github.com/enesismail/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ws"
 )
 
 const (

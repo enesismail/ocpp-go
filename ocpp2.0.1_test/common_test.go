@@ -7,8 +7,8 @@ import (
 
 	"github.com/relvacode/iso8601"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp2.0.1/display"
-	"github.com/lorenzodonini/ocpp-go/ocpp2.0.1/types"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/display"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/types"
 )
 
 // Utility functions

@@ -1,10 +1,10 @@
 package main
 
 import (
-	"github.com/lorenzodonini/ocpp-go/ocpp"
-	"github.com/lorenzodonini/ocpp-go/ocpp2.0.1/firmware"
-	"github.com/lorenzodonini/ocpp-go/ocpp2.0.1/types"
-	"github.com/lorenzodonini/ocpp-go/ocppj"
+	"github.com/enesismail/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/firmware"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/types"
+	"github.com/enesismail/ocpp-go/ocppj"
 	"io"
 	"net/http"
 	"os"

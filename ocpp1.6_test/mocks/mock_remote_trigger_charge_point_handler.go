@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	remotetrigger "github.com/lorenzodonini/ocpp-go/ocpp1.6/remotetrigger"
+	remotetrigger "github.com/enesismail/ocpp-go/ocpp1.6/remotetrigger"
 	mock "github.com/stretchr/testify/mock"
 )
 

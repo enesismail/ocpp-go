@@ -3,7 +3,7 @@
 package mocks
 
 import (
-	smartcharging "github.com/lorenzodonini/ocpp-go/ocpp1.6/smartcharging"
+	smartcharging "github.com/enesismail/ocpp-go/ocpp1.6/smartcharging"
 	mock "github.com/stretchr/testify/mock"
 )
 

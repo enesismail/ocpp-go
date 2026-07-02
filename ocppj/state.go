@@ -3,7 +3,7 @@ package ocppj
 import (
 	"sync"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocpp"
 )
 
 // Contains the pending request state for messages, associated to a single client-server channel.

@@ -3,9 +3,9 @@ package remotetrigger
 import (
 	"reflect"
 
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/core"
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/firmware"
-	"github.com/lorenzodonini/ocpp-go/ocpp1.6/types"
+	"github.com/enesismail/ocpp-go/ocpp1.6/core"
+	"github.com/enesismail/ocpp-go/ocpp1.6/firmware"
+	"github.com/enesismail/ocpp-go/ocpp1.6/types"
 	"gopkg.in/go-playground/validator.v9"
 )
 
