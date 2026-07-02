@@ -38,6 +38,7 @@ type Error struct {
 	Code        ErrorCode
 	Description string
 	MessageId   string
+	Marker      string
 }
 
 // Creates a new OCPP Error.
@@ -52,6 +53,14 @@ func NewHandlerError(errorCode ErrorCode, description string) *Error {
 
 func (err Error) Error() string {
 	return fmt.Sprintf("ocpp message (%s): %v - %v", err.MessageId, err.Code, err.Description)
+}
+
+// Is supports errors.Is matching on an internal Marker — used to tag a local request-timeout error so it
+// is distinguishable from a server CALLERROR that carries the SAME GenericError code. A nil/empty marker
+// never matches, so ordinary CALLERRORs are unaffected.
+func (err Error) Is(target error) bool {
+	t, ok := target.(*Error)
+	return ok && t.Marker != "" && err.Marker == t.Marker
 }
 
 // -------------------- Profile --------------------

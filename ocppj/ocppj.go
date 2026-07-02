@@ -17,6 +17,19 @@ import (
 	"github.com/lorenzodonini/ocpp-go/ocpp"
 )
 
+// requestTimeoutMarker tags the local request-timeout error so it is distinguishable from a server
+// CALLERROR that carries the same GenericError code (which is not, on its own, a discriminator).
+const requestTimeoutMarker = "ocppj/request-timeout"
+
+// ErrRequestTimeout is the sentinel a caller matches with errors.Is to classify a dispatcher timeout.
+var ErrRequestTimeout = &ocpp.Error{Marker: requestTimeoutMarker}
+
+func newRequestTimeoutError(messageID string) *ocpp.Error {
+	err := ocpp.NewError(GenericError, "Request timed out", messageID)
+	err.Marker = requestTimeoutMarker
+	return err
+}
+
 // The internal verbose logger. It is a stable wrapper whose underlying delegate
 // is swapped atomically by SetLogger, so concurrent log calls from dispatcher
 // goroutines never race with SetLogger.

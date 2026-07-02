@@ -225,7 +225,7 @@ func (d *DefaultClientDispatcher) messagePump() {
 					d.CompleteRequest(bundle.Call.UniqueId)
 					if d.onRequestCancel != nil {
 						d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload,
-							ocpp.NewError(GenericError, "Request timed out", bundle.Call.UniqueId))
+							newRequestTimeoutError(bundle.Call.UniqueId))
 					}
 				}
 			}
