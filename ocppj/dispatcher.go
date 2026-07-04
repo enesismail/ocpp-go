@@ -269,7 +269,17 @@ func (d *DefaultClientDispatcher) messagePump() {
 func (d *DefaultClientDispatcher) dispatchNextRequest() {
 	// Get first element in queue
 	el := d.requestQueue.Peek()
-	bundle, _ := el.(RequestBundle)
+	bundle, ok := el.(RequestBundle)
+	if !ok || bundle.Call == nil {
+		log.Errorf("failed to dispatch next request; nil Call attribute")
+		return
+	}
+
+	if bundle.Data == nil {
+		log.Errorf("failed to dispatch next request; nil Data attribute")
+		return
+	}
+
 	jsonMessage := bundle.Data
 	d.pendingRequestState.AddPendingRequest(bundle.Call.UniqueId, bundle.Call.Payload)
 	// Attempt to send over network
