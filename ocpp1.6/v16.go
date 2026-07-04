@@ -103,6 +103,8 @@ type ChargePoint interface {
 	SetSecureFirmwareHandler(handler securefirmware.ChargePointHandler)
 	// Registers a handler for incoming certificate profile messages (Extension of OCPP 1.6j).
 	SetCertificateHandler(handler certificates.ChargePointHandler)
+	// Registers a callback invoked when a user-provided OCPP-J handler panics.
+	SetOnHandlerPanic(handler func(ocppj.HandlerPanic))
 
 	// Sends a request to the central system.
 	// The central system will respond with a confirmation, or with an error if the request was invalid or could not be processed.
@@ -304,6 +306,8 @@ type CentralSystem interface {
 	SetLogHandler(handler logging.CentralSystemHandler)
 	// Registers a handler for incoming secure firmware profile messages (Extension of OCPP 1.6j).
 	SetSecureFirmwareHandler(handler securefirmware.CentralSystemHandler)
+	// Registers a callback invoked when a user-provided OCPP-J handler panics.
+	SetOnHandlerPanic(handler func(ocppj.HandlerPanic))
 
 	// Registers a handler for new incoming Charging station connections.
 	SetNewChargingStationValidationHandler(handler ws.CheckClientHandler)
@@ -370,7 +374,7 @@ func NewCentralSystem(endpoint *ocppj.Server, server ws.Server) CentralSystem {
 		cs.handleIncomingError(client, err, details)
 	})
 	cs.server.SetCanceledRequestHandler(func(clientID string, requestID string, request ocpp.Request, err *ocpp.Error) {
-		cs.handleCanceledRequest(clientID, request, err)
+		cs.handleCanceledRequest(clientID, requestID, request, err)
 	})
 	return &cs
 }

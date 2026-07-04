@@ -464,6 +464,10 @@ func (cs *centralSystem) SetSecureFirmwareHandler(handler securefirmware.Central
 	cs.secureFirmwareHandler = handler
 }
 
+func (cs *centralSystem) SetOnHandlerPanic(handler func(ocppj.HandlerPanic)) {
+	cs.server.SetOnHandlerPanic(handler)
+}
+
 func (cs *centralSystem) SetCoreHandler(handler core.CentralSystemHandler) {
 	cs.coreHandler = handler
 }
@@ -657,6 +661,7 @@ func (cs *centralSystem) handleIncomingRequest(chargePoint ChargePointConnection
 	var err error
 	// Execute in separate goroutine, so the caller goroutine is available
 	go func() {
+		defer cs.server.RecoverPanicGoroutine(ocppj.RequestHandlerKind, chargePoint.ID(), action, requestId, true)
 		switch action {
 		case core.BootNotificationFeatureName:
 			confirmation, err = cs.coreHandler.OnBootNotification(chargePoint.ID(), request.(*core.BootNotificationRequest))
@@ -697,7 +702,10 @@ func (cs *centralSystem) handleIncomingRequest(chargePoint ChargePointConnection
 func (cs *centralSystem) handleIncomingConfirmation(chargePoint ChargePointConnection, confirmation ocpp.Response, requestId string) {
 	if callback, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), callbackqueue.RequestType(confirmation.GetFeatureName())); ok {
 		// Execute in separate goroutine, so the caller goroutine is available
-		go callback(confirmation, nil)
+		go func() {
+			defer cs.server.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, chargePoint.ID(), confirmation.GetFeatureName(), requestId, false)
+			callback(confirmation, nil)
+		}()
 	} else {
 		err := fmt.Errorf("no handler available for call of type %v from client %s for request %s", confirmation.GetFeatureName(), chargePoint.ID(), requestId)
 		cs.error(err)
@@ -707,17 +715,23 @@ func (cs *centralSystem) handleIncomingConfirmation(chargePoint ChargePointConne
 func (cs *centralSystem) handleIncomingError(chargePoint ChargePointConnection, err *ocpp.Error, details interface{}) {
 	if callback, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), ""); ok {
 		// Execute in separate goroutine, so the caller goroutine is available
-		go callback(nil, err)
+		go func() {
+			defer cs.server.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, chargePoint.ID(), "", err.MessageId, false)
+			callback(nil, err)
+		}()
 	} else {
 		err := fmt.Errorf("no handler available for call error %w from client %s", err, chargePoint.ID())
 		cs.error(err)
 	}
 }
 
-func (cs *centralSystem) handleCanceledRequest(chargePointID string, request ocpp.Request, err *ocpp.Error) {
+func (cs *centralSystem) handleCanceledRequest(chargePointID string, requestID string, request ocpp.Request, err *ocpp.Error) {
 	if callback, ok := cs.callbackQueue.Dequeue(chargePointID, callbackqueue.RequestType(request.GetFeatureName())); ok {
 		// Execute in separate goroutine, so the caller goroutine is available
-		go callback(nil, err)
+		go func() {
+			defer cs.server.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, chargePointID, request.GetFeatureName(), requestID, false)
+			callback(nil, err)
+		}()
 	} else {
 		err := fmt.Errorf("no handler available for canceled request %s for client %s: %w",
 			request.GetFeatureName(), chargePointID, err)

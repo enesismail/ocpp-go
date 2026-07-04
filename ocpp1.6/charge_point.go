@@ -283,6 +283,10 @@ func (cp *chargePoint) SetCertificateHandler(handler certificates.ChargePointHan
 	cp.certificateHandler = handler
 }
 
+func (cp *chargePoint) SetOnHandlerPanic(handler func(ocppj.HandlerPanic)) {
+	cp.client.SetOnHandlerPanic(handler)
+}
+
 func (cp *chargePoint) SendRequest(request ocpp.Request) (ocpp.Response, error) {
 	featureName := request.GetFeatureName()
 	if _, found := cp.client.GetProfileForFeature(featureName); !found {
@@ -345,7 +349,10 @@ func (cp *chargePoint) asyncCallbackHandler() {
 		case confirmation := <-cp.confirmationHandler:
 			// Get and invoke callback
 			if callback, ok := cp.callbacks.Dequeue("main", callbackqueue.RequestType(confirmation.GetFeatureName())); ok {
-				callback(confirmation, nil)
+				func() {
+					defer cp.client.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, confirmation.GetFeatureName(), "", false)
+					callback(confirmation, nil)
+				}()
 			} else {
 				err := fmt.Errorf("no handler available for incoming response %v", confirmation.GetFeatureName())
 				cp.error(err)
@@ -353,7 +360,14 @@ func (cp *chargePoint) asyncCallbackHandler() {
 		case protoError := <-cp.errorHandler:
 			// Get and invoke callback
 			if callback, ok := cp.callbacks.Dequeue("main", ""); ok {
-				callback(nil, protoError)
+				requestID := ""
+				if ocppError, ok := protoError.(*ocpp.Error); ok {
+					requestID = ocppError.MessageId
+				}
+				func() {
+					defer cp.client.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, "", requestID, false)
+					callback(nil, protoError)
+				}()
 			} else {
 				err := fmt.Errorf("no handler available for error %v", protoError.Error())
 				cp.error(err)
