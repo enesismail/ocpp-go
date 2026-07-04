@@ -247,7 +247,16 @@ func (s *Server) ocppMessageHandler(wsChannel ws.Channel, data []byte) error {
 		messageID := ocppErr.MessageId
 		// Support ad-hoc callback for invalid message handling
 		if s.invalidMessageHook != nil {
-			err2 := s.invalidMessageHook(wsChannel, ocppErr, string(data), parsedJson)
+			original := *ocppErr
+			err2 := func() (result *ocpp.Error) {
+				defer func() {
+					if v := recover(); v != nil {
+						reportHandlerPanic(v, InvalidMessageHandlerKind, wsChannel.ID(), "", messageID, s.onHandlerPanic, nil)
+						*ocppErr = original
+					}
+				}()
+				return s.invalidMessageHook(wsChannel, ocppErr, string(data), parsedJson)
+			}()
 			// If the hook returns an error, use it as output error. If not, use the original error.
 			if err2 != nil {
 				ocppErr = err2
