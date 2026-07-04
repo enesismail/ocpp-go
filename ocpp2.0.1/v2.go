@@ -145,6 +145,7 @@ type ChargingStation interface {
 	SetDisplayHandler(handler display.ChargingStationHandler)
 	// Registers a handler for incoming data transfer messages
 	SetDataHandler(handler data.ChargingStationHandler)
+	SetOnHandlerPanic(handler func(ocppj.HandlerPanic))
 	// Sends a request to the CSMS.
 	// The CSMS will respond with a confirmation, or with an error if the request was invalid or could not be processed.
 	// In case of network issues (i.e. the remote host couldn't be reached), the function also returns an error.
@@ -381,6 +382,7 @@ type CSMS interface {
 	SetDisplayHandler(handler display.CSMSHandler)
 	// Registers a handler for incoming data transfer messages
 	SetDataHandler(handler data.CSMSHandler)
+	SetOnHandlerPanic(handler func(ocppj.HandlerPanic))
 	// Registers a handler for new incoming Charging station connections.
 	SetNewChargingStationValidationHandler(handler ws.CheckClientHandler)
 	// Registers a handler for new incoming Charging station connections.
@@ -451,7 +453,7 @@ func NewCSMS(endpoint *ocppj.Server, server ws.Server) CSMS {
 		cs.handleIncomingError(client, err, details)
 	})
 	cs.server.SetCanceledRequestHandler(func(clientID string, requestID string, request ocpp.Request, err *ocpp.Error) {
-		cs.handleCanceledRequest(clientID, request, err)
+		cs.handleCanceledRequest(clientID, requestID, request, err)
 	})
 	return &cs
 }
