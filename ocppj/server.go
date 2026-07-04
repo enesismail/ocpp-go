@@ -21,6 +21,7 @@ type Server struct {
 	requestHandler            RequestHandler
 	responseHandler           ResponseHandler
 	errorHandler              ErrorHandler
+	onHandlerPanic            func(HandlerPanic)
 	invalidMessageHook        InvalidMessageHook
 	dispatcher                ServerDispatcher
 	RequestState              ServerState
@@ -270,21 +271,37 @@ func (s *Server) ocppMessageHandler(wsChannel ws.Channel, data []byte) error {
 			call := message.(*Call)
 			log.Debugf("handling incoming CALL [%s, %s] from %s", call.UniqueId, call.Action, wsChannel.ID())
 			if s.requestHandler != nil {
-				s.requestHandler(wsChannel, call.Payload, call.UniqueId, call.Action)
+				clientID := wsChannel.ID()
+				requestID := call.UniqueId
+				func() {
+					defer recoverHandler(RequestHandlerKind, clientID, call.Action, requestID, s.onHandlerPanic, func() {
+						// The request handler panicked before producing a response;
+						// reply with a CALL ERROR so the peer is not left awaiting one.
+						_ = s.SendError(clientID, requestID, InternalError, "internal error while handling request", nil)
+					})
+					s.requestHandler(wsChannel, call.Payload, call.UniqueId, call.Action)
+				}()
 			}
 		case CALL_RESULT:
 			callResult := message.(*CallResult)
 			log.Debugf("handling incoming CALL RESULT [%s] from %s", callResult.UniqueId, wsChannel.ID())
 			s.dispatcher.CompleteRequest(wsChannel.ID(), callResult.GetUniqueId())
 			if s.responseHandler != nil {
-				s.responseHandler(wsChannel, callResult.Payload, callResult.UniqueId)
+				func() {
+					defer recoverHandler(ResponseHandlerKind, wsChannel.ID(), "", callResult.UniqueId, s.onHandlerPanic, nil)
+					s.responseHandler(wsChannel, callResult.Payload, callResult.UniqueId)
+				}()
 			}
 		case CALL_ERROR:
 			callError := message.(*CallError)
-			log.Debugf("handling incoming CALL RESULT [%s] from %s", callError.UniqueId, wsChannel.ID())
+			log.Debugf("handling incoming CALL ERROR [%s] from %s", callError.UniqueId, wsChannel.ID())
 			s.dispatcher.CompleteRequest(wsChannel.ID(), callError.GetUniqueId())
 			if s.errorHandler != nil {
-				s.errorHandler(wsChannel, ocpp.NewError(callError.ErrorCode, callError.ErrorDescription, callError.UniqueId), callError.ErrorDetails)
+				ocppErr := ocpp.NewError(callError.ErrorCode, callError.ErrorDescription, callError.UniqueId)
+				func() {
+					defer recoverHandler(ErrorHandlerKind, wsChannel.ID(), "", callError.UniqueId, s.onHandlerPanic, nil)
+					s.errorHandler(wsChannel, ocppErr, callError.ErrorDetails)
+				}()
 			}
 		}
 	}
@@ -324,7 +341,10 @@ func (s *Server) onClientConnected(ws ws.Channel) {
 	s.dispatcher.CreateClient(ws.ID())
 	// Invoke callback
 	if s.newClientHandler != nil {
-		s.newClientHandler(ws)
+		func() {
+			defer recoverHandler(ConnectHandlerKind, ws.ID(), "", "", s.onHandlerPanic, nil)
+			s.newClientHandler(ws)
+		}()
 	}
 }
 
@@ -334,6 +354,9 @@ func (s *Server) onClientDisconnected(ws ws.Channel) {
 	s.RequestState.ClearClientPendingRequest(ws.ID())
 	// Invoke callback
 	if s.disconnectedClientHandler != nil {
-		s.disconnectedClientHandler(ws)
+		func() {
+			defer recoverHandler(DisconnectHandlerKind, ws.ID(), "", "", s.onHandlerPanic, nil)
+			s.disconnectedClientHandler(ws)
+		}()
 	}
 }

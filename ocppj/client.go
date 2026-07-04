@@ -19,6 +19,7 @@ type Client struct {
 	requestHandler        func(request ocpp.Request, requestId string, action string)
 	responseHandler       func(response ocpp.Response, requestId string)
 	errorHandler          func(err *ocpp.Error, details interface{})
+	onHandlerPanic        func(HandlerPanic)
 	onDisconnectedHandler func(err error)
 	onReconnectedHandler  func()
 	invalidMessageHook    func(err *ocpp.Error, rawMessage string, parsedFields []interface{}) *ocpp.Error
@@ -298,20 +299,37 @@ func (c *Client) ocppMessageHandler(data []byte) error {
 		case CALL:
 			call := message.(*Call)
 			log.Debugf("handling incoming CALL [%s, %s]", call.UniqueId, call.Action)
-			c.requestHandler(call.Payload, call.UniqueId, call.Action)
+			if c.requestHandler != nil {
+				requestID := call.UniqueId
+				func() {
+					defer recoverHandler(RequestHandlerKind, "", call.Action, requestID, c.onHandlerPanic, func() {
+						// The request handler panicked before producing a response;
+						// reply with a CALL ERROR so the peer is not left awaiting one.
+						_ = c.SendError(requestID, InternalError, "internal error while handling request", nil)
+					})
+					c.requestHandler(call.Payload, call.UniqueId, call.Action)
+				}()
+			}
 		case CALL_RESULT:
 			callResult := message.(*CallResult)
 			log.Debugf("handling incoming CALL RESULT [%s]", callResult.UniqueId)
 			c.dispatcher.CompleteRequest(callResult.GetUniqueId()) // Remove current request from queue and send next one
 			if c.responseHandler != nil {
-				c.responseHandler(callResult.Payload, callResult.UniqueId)
+				func() {
+					defer recoverHandler(ResponseHandlerKind, "", "", callResult.UniqueId, c.onHandlerPanic, nil)
+					c.responseHandler(callResult.Payload, callResult.UniqueId)
+				}()
 			}
 		case CALL_ERROR:
 			callError := message.(*CallError)
 			log.Debugf("handling incoming CALL ERROR [%s]", callError.UniqueId)
 			c.dispatcher.CompleteRequest(callError.GetUniqueId()) // Remove current request from queue and send next one
 			if c.errorHandler != nil {
-				c.errorHandler(ocpp.NewError(callError.ErrorCode, callError.ErrorDescription, callError.UniqueId), callError.ErrorDetails)
+				ocppErr := ocpp.NewError(callError.ErrorCode, callError.ErrorDescription, callError.UniqueId)
+				func() {
+					defer recoverHandler(ErrorHandlerKind, "", "", callError.UniqueId, c.onHandlerPanic, nil)
+					c.errorHandler(ocppErr, callError.ErrorDetails)
+				}()
 			}
 		}
 	}
