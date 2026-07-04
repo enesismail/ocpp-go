@@ -24,8 +24,10 @@
 set -uo pipefail
 
 FORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FORK_MODULE="github.com/lorenzodonini/ocpp-go"
+UPSTREAM_MODULE="github.com/lorenzodonini/ocpp-go"
+FORK_MODULE="$(cd "$FORK_DIR" && { go list -m 2>/dev/null || awk 'NR==1 && $1=="module"{print $2}' go.mod; })"
 fail=0
+skipped=0
 
 hr() { printf '================= %s =================\n' "$1"; }
 
@@ -59,6 +61,22 @@ gate_project() {
     # vendor dir (disposable copy — the real project is untouched) and resolve via
     # the local `replace` in module mode.
     rm -rf vendor
+    # The live fork tree declares $FORK_MODULE and self-imports under that path,
+    # so a consumer can only be gated against it if the consumer imports the fork
+    # under $FORK_MODULE too. A consumer still importing the pre-rename upstream
+    # path cannot be served from this tree (one directory cannot satisfy two
+    # module paths), and pointing the old path elsewhere would silently test
+    # against the wrong tree — so flag it for migration instead. Grep runs after
+    # the vendor drop so only the consumer's own source is inspected.
+    if [ "$UPSTREAM_MODULE" != "$FORK_MODULE" ] && \
+       grep -rqE "\"${UPSTREAM_MODULE}[/\"]" --include='*.go' .; then
+      echo "!! $name imports the fork under the pre-rename path $UPSTREAM_MODULE;"
+      echo "!! migrate its imports to $FORK_MODULE to gate it against this tree."
+      exit 3
+    fi
+    # Point the fork dependency at THIS working tree. go mod edit -replace
+    # overwrites any pre-existing directive (relative path or version) for the
+    # same left-hand path, neutralizing a consumer's own local/pinned replace.
     go mod edit -replace "$FORK_MODULE=$FORK_DIR"
     go mod tidy   || exit 1
     echo "--- go build ./... ---";      go build ./...      || exit 1
@@ -67,8 +85,11 @@ gate_project() {
   )
   local rc=$?
   rm -rf "$scratch"
-  if [ "$rc" -ne 0 ]; then echo "== project $name GATE FAILED =="; return 1; fi
-  echo "== project $name OK =="
+  case "$rc" in
+    0) echo "== project $name OK =="; return 0 ;;
+    3) echo "== project $name SKIPPED (imports pre-rename path $UPSTREAM_MODULE — migrate to $FORK_MODULE) =="; return 3 ;;
+    *) echo "== project $name GATE FAILED =="; return 1 ;;
+  esac
 }
 
 if [ "${GATE_SKIP_PROJECTS:-0}" = "1" ]; then
@@ -77,11 +98,22 @@ elif [ -n "${GATE_PROJECT_DIRS:-}" ]; then
   IFS=':' read -ra _gate_dirs <<< "$GATE_PROJECT_DIRS"
   for _dir in "${_gate_dirs[@]}"; do
     [ -n "$_dir" ] || continue
-    gate_project "$(basename "$_dir")" "$_dir" || fail=1
+    gate_project "$(basename "$_dir")" "$_dir"
+    case $? in
+      0) : ;;
+      3) skipped=$((skipped + 1)) ;;
+      *) fail=1 ;;
+    esac
   done
 else
   echo "== no consumer projects configured (set GATE_PROJECT_DIRS=/a:/b) — library gate only =="
 fi
 
-if [ "$fail" -eq 0 ]; then echo "GATE: ALL GREEN"; else echo "GATE: FAILURES (see above)"; fi
+if [ "$fail" -ne 0 ]; then
+  echo "GATE: FAILURES (see above)"
+elif [ "$skipped" -gt 0 ]; then
+  echo "GATE: GREEN — but $skipped project(s) SKIPPED (see !! warnings above)"
+else
+  echo "GATE: ALL GREEN"
+fi
 exit "$fail"
