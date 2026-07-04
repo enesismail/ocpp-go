@@ -6,11 +6,14 @@ import "runtime/debug"
 type HandlerKind string
 
 const (
-	RequestHandlerKind    HandlerKind = "request"
-	ResponseHandlerKind   HandlerKind = "response"
-	ErrorHandlerKind      HandlerKind = "error"
-	ConnectHandlerKind    HandlerKind = "connect"
-	DisconnectHandlerKind HandlerKind = "disconnect"
+	RequestHandlerKind        HandlerKind = "request"
+	ResponseHandlerKind       HandlerKind = "response"
+	ErrorHandlerKind          HandlerKind = "error"
+	ConnectHandlerKind        HandlerKind = "connect"
+	DisconnectHandlerKind     HandlerKind = "disconnect"
+	CancelHandlerKind         HandlerKind = "cancel"
+	ReconnectHandlerKind      HandlerKind = "reconnect"
+	InvalidMessageHandlerKind HandlerKind = "invalid-message"
 )
 
 // HandlerPanic describes a panic recovered from a user-provided handler.
@@ -24,13 +27,31 @@ type HandlerPanic struct {
 }
 
 // SetOnHandlerPanic registers a callback invoked when a user handler panics.
+//
+// The callback runs synchronously on whichever goroutine recovered the panic:
+// the read loop for message handlers, and — for a canceled-request handler
+// panic — the dispatcher's messagePump goroutine. As with an onRequestCanceled
+// callback, it therefore must NOT call Stop() or block on a full SendRequest,
+// or it may deadlock the pump. It should also not panic. Set it before Start.
 func (c *Client) SetOnHandlerPanic(handler func(HandlerPanic)) {
 	c.onHandlerPanic = handler
+	if d, ok := c.dispatcher.(*DefaultClientDispatcher); ok {
+		d.onHandlerPanic = handler
+	}
 }
 
 // SetOnHandlerPanic registers a callback invoked when a user handler panics.
+//
+// The callback runs synchronously on whichever goroutine recovered the panic:
+// the read loop for message handlers, and — for a canceled-request handler
+// panic — the dispatcher's messagePump goroutine. As with an onRequestCanceled
+// callback, it therefore must NOT call Stop() or block on a full SendRequest,
+// or it may deadlock the pump. It should also not panic. Set it before Start.
 func (s *Server) SetOnHandlerPanic(handler func(HandlerPanic)) {
 	s.onHandlerPanic = handler
+	if d, ok := s.dispatcher.(*DefaultServerDispatcher); ok {
+		d.onHandlerPanic = handler
+	}
 }
 
 // recoverHandler is deferred around a user-provided handler invocation. When the

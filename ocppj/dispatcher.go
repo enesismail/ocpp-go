@@ -96,6 +96,7 @@ type DefaultClientDispatcher struct {
 	network             ws.Client
 	mutex               sync.RWMutex
 	onRequestCancel     func(requestID string, request ocpp.Request, err *ocpp.Error)
+	onHandlerPanic      func(HandlerPanic)
 	timer               *time.Timer
 	// paused is accessed atomically (0 = running, 1 = paused) so the message
 	// pump can check it every loop iteration without acquiring d.mutex. Reading
@@ -124,6 +125,12 @@ func NewDefaultClientDispatcher(queue RequestQueue) *DefaultClientDispatcher {
 
 func (d *DefaultClientDispatcher) SetOnRequestCanceled(cb func(requestID string, request ocpp.Request, err *ocpp.Error)) {
 	d.onRequestCancel = cb
+}
+
+func (d *DefaultClientDispatcher) recoverCancelCallback(action, requestID string) {
+	if v := recover(); v != nil {
+		reportHandlerPanic(v, CancelHandlerKind, "", action, requestID, d.onHandlerPanic, nil)
+	}
 }
 
 func (d *DefaultClientDispatcher) SetTimeout(timeout time.Duration) {
@@ -236,8 +243,11 @@ func (d *DefaultClientDispatcher) messagePump() {
 				if bundle, ok := el.(RequestBundle); ok && bundle.Call != nil {
 					d.CompleteRequest(bundle.Call.UniqueId)
 					if d.onRequestCancel != nil {
-						d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload,
-							newRequestTimeoutError(bundle.Call.UniqueId))
+						func() {
+							defer d.recoverCancelCallback(bundle.Call.Action, bundle.Call.UniqueId)
+							d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload,
+								newRequestTimeoutError(bundle.Call.UniqueId))
+						}()
 					}
 				}
 			}
@@ -289,8 +299,11 @@ func (d *DefaultClientDispatcher) dispatchNextRequest() bool {
 		// TODO: handle retransmission instead of skipping request altogether
 		d.CompleteRequest(bundle.Call.GetUniqueId())
 		if d.onRequestCancel != nil {
-			d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload,
-				ocpp.NewError(InternalError, err.Error(), bundle.Call.UniqueId))
+			func() {
+				defer d.recoverCancelCallback(bundle.Call.Action, bundle.Call.GetUniqueId())
+				d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload,
+					ocpp.NewError(InternalError, err.Error(), bundle.Call.UniqueId))
+			}()
 		}
 	}
 	log.Infof("dispatched request %s to server", bundle.Call.UniqueId)
@@ -418,6 +431,7 @@ type DefaultServerDispatcher struct {
 	stoppedC            chan struct{}
 	doneC               chan struct{}
 	onRequestCancel     CanceledRequestHandler
+	onHandlerPanic      func(HandlerPanic)
 	network             ws.Server
 	mutex               sync.RWMutex
 }
@@ -508,6 +522,12 @@ func (d *DefaultServerDispatcher) SetNetworkServer(server ws.Server) {
 
 func (d *DefaultServerDispatcher) SetOnRequestCanceled(cb CanceledRequestHandler) {
 	d.onRequestCancel = cb
+}
+
+func (d *DefaultServerDispatcher) recoverCancelCallback(clientID, action, requestID string) {
+	if v := recover(); v != nil {
+		reportHandlerPanic(v, CancelHandlerKind, clientID, action, requestID, d.onHandlerPanic, nil)
+	}
 }
 
 func (d *DefaultServerDispatcher) SetPendingRequestState(state ServerState) {
@@ -636,8 +656,11 @@ func (d *DefaultServerDispatcher) messagePump() {
 				rdy = true
 				log.Infof("request %v for %v timed out", bundle.Call.GetUniqueId(), clientID)
 				if d.onRequestCancel != nil {
-					d.onRequestCancel(clientID, bundle.Call.GetUniqueId(), bundle.Call.Payload,
-						ocpp.NewError(GenericError, "Request timed out", bundle.Call.GetUniqueId()))
+					func() {
+						defer d.recoverCancelCallback(clientID, bundle.Call.Action, bundle.Call.GetUniqueId())
+						d.onRequestCancel(clientID, bundle.Call.GetUniqueId(), bundle.Call.Payload,
+							ocpp.NewError(GenericError, "Request timed out", bundle.Call.GetUniqueId()))
+					}()
 				}
 			}
 		case clientID = <-d.readyForDispatch:
@@ -698,8 +721,11 @@ func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCt
 		// TODO: handle retransmission instead of removing pending request
 		d.CompleteRequest(clientID, callID)
 		if d.onRequestCancel != nil {
-			d.onRequestCancel(clientID, bundle.Call.UniqueId, bundle.Call.Payload,
-				ocpp.NewError(InternalError, err.Error(), bundle.Call.UniqueId))
+			func() {
+				defer d.recoverCancelCallback(clientID, bundle.Call.Action, bundle.Call.GetUniqueId())
+				d.onRequestCancel(clientID, bundle.Call.UniqueId, bundle.Call.Payload,
+					ocpp.NewError(InternalError, err.Error(), bundle.Call.UniqueId))
+			}()
 		}
 		return
 	}

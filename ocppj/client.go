@@ -276,7 +276,16 @@ func (c *Client) ocppMessageHandler(data []byte) error {
 		messageID := ocppErr.MessageId
 		// Support ad-hoc callback for invalid message handling
 		if c.invalidMessageHook != nil {
-			err2 := c.invalidMessageHook(ocppErr, string(data), parsedJson)
+			original := *ocppErr
+			err2 := func() (result *ocpp.Error) {
+				defer func() {
+					if v := recover(); v != nil {
+						reportHandlerPanic(v, InvalidMessageHandlerKind, "", "", messageID, c.onHandlerPanic, nil)
+						*ocppErr = original
+					}
+				}()
+				return c.invalidMessageHook(ocppErr, string(data), parsedJson)
+			}()
 			// If the hook returns an error, use it as output error. If not, use the original error.
 			if err2 != nil {
 				ocppErr = err2
@@ -368,13 +377,19 @@ func (c *Client) onDisconnected(err error) {
 	log.Error("disconnected from server", err)
 	c.dispatcher.Pause()
 	if c.onDisconnectedHandler != nil {
-		c.onDisconnectedHandler(err)
+		func() {
+			defer c.RecoverPanicGoroutine(DisconnectHandlerKind, "", "", false)
+			c.onDisconnectedHandler(err)
+		}()
 	}
 }
 
 func (c *Client) onReconnected() {
 	if c.onReconnectedHandler != nil {
-		c.onReconnectedHandler()
+		func() {
+			defer c.RecoverPanicGoroutine(ReconnectHandlerKind, "", "", false)
+			c.onReconnectedHandler()
+		}()
 	}
 	c.dispatcher.Resume()
 }
