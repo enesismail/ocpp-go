@@ -460,6 +460,10 @@ func (cs *chargingStation) SetDataHandler(handler data.ChargingStationHandler) {
 	cs.dataHandler = handler
 }
 
+func (cs *chargingStation) SetOnHandlerPanic(handler func(ocppj.HandlerPanic)) {
+	cs.client.SetOnHandlerPanic(handler)
+}
+
 func (cs *chargingStation) SendRequest(request ocpp.Request) (ocpp.Response, error) {
 	featureName := request.GetFeatureName()
 	if _, found := cs.client.GetProfileForFeature(featureName); !found {
@@ -538,14 +542,24 @@ func (cs *chargingStation) asyncCallbackHandler() {
 		case confirmation := <-cs.responseHandler:
 			// Get and invoke callback
 			if callback, ok := cs.callbacks.Dequeue("main", callbackqueue.RequestType(confirmation.GetFeatureName())); ok {
-				callback(confirmation, nil)
+				func() {
+					defer cs.client.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, confirmation.GetFeatureName(), "", false)
+					callback(confirmation, nil)
+				}()
 			} else {
 				cs.error(fmt.Errorf("no callback available for incoming response %v", confirmation.GetFeatureName()))
 			}
 		case protoError := <-cs.errorHandler:
 			// Get and invoke callback
 			if callback, ok := cs.callbacks.Dequeue("main", ""); ok {
-				callback(nil, protoError)
+				requestID := ""
+				if ocppErr, ok := protoError.(*ocpp.Error); ok {
+					requestID = ocppErr.MessageId
+				}
+				func() {
+					defer cs.client.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, "", requestID, false)
+					callback(nil, protoError)
+				}()
 			} else {
 				cs.error(fmt.Errorf("no callback available for incoming error %w", protoError))
 			}
