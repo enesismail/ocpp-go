@@ -255,29 +255,30 @@ func (d *DefaultClientDispatcher) messagePump() {
 
 		// Only dispatch request if able to send and request queue isn't empty
 		if rdy && !d.requestQueue.IsEmpty() {
-			d.dispatchNextRequest()
-			rdy = false
-			// Set timer
-			if !d.timer.Stop() {
-				<-d.timer.C
+			if d.dispatchNextRequest() {
+				rdy = false
+				// Set timer
+				if !d.timer.Stop() {
+					<-d.timer.C
+				}
+				d.timer.Reset(d.timeout)
 			}
-			d.timer.Reset(d.timeout)
 		}
 	}
 }
 
-func (d *DefaultClientDispatcher) dispatchNextRequest() {
+func (d *DefaultClientDispatcher) dispatchNextRequest() bool {
 	// Get first element in queue
 	el := d.requestQueue.Peek()
 	bundle, ok := el.(RequestBundle)
 	if !ok || bundle.Call == nil {
 		log.Errorf("failed to dispatch next request; nil Call attribute")
-		return
+		return false
 	}
 
 	if bundle.Data == nil {
 		log.Errorf("failed to dispatch next request; nil Data attribute")
-		return
+		return false
 	}
 
 	jsonMessage := bundle.Data
@@ -294,6 +295,7 @@ func (d *DefaultClientDispatcher) dispatchNextRequest() {
 	}
 	log.Infof("dispatched request %s to server", bundle.Call.UniqueId)
 	log.Debugf("sent JSON message to server: %s", string(jsonMessage))
+	return true
 }
 
 func (d *DefaultClientDispatcher) Pause() {
