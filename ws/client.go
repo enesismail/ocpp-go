@@ -371,16 +371,18 @@ func (c *client) Start(urlStr string) error {
 	id := path.Base(u.Path)
 
 	// Create web socket, state is automatically set to connected
+	wsCfg := NewDefaultWebSocketConfig(
+		c.timeoutConfig.WriteWait,
+		0,
+		c.timeoutConfig.PingPeriod,
+		c.timeoutConfig.PongWait,
+	)
+	wsCfg.ReadLimit = c.timeoutConfig.ReadLimit
 	newWs := newWebSocket(
 		id,
 		ws,
 		resp.TLS,
-		NewDefaultWebSocketConfig(
-			c.timeoutConfig.WriteWait,
-			0,
-			c.timeoutConfig.PingPeriod,
-			c.timeoutConfig.PongWait,
-		),
+		wsCfg,
 		c.handleMessage,
 		c.handleDisconnect,
 		func(_ Channel, err error) {
