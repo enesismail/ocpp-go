@@ -21,6 +21,23 @@ import (
 	"github.com/enesismail/ocpp-go/ocppj"
 )
 
+type incomingKind int
+
+const (
+	incomingResponse incomingKind = iota
+	incomingError
+	incomingRequest
+)
+
+type incomingMessage struct {
+	kind         incomingKind
+	confirmation ocpp.Response
+	err          error
+	request      ocpp.Request
+	requestID    string
+	action       string
+}
+
 type chargePoint struct {
 	client                        *ocppj.Client
 	coreHandler                   core.ChargePointHandler
@@ -34,8 +51,7 @@ type chargePoint struct {
 	extendedTriggerMessageHandler extendedtriggermessage.ChargePointHandler
 	secureFirmwareHandler         securefirmware.ChargePointHandler
 	certificateHandler            certificates.ChargePointHandler
-	confirmationHandler           chan ocpp.Response
-	errorHandler                  chan error
+	incoming                      chan incomingMessage
 	callbacks                     callbackqueue.CallbackQueue
 	stopC                         chan struct{}
 	errC                          chan error // external error channel
@@ -50,7 +66,7 @@ func (cp *chargePoint) error(err error) {
 // Callback invoked whenever a queued request is canceled, due to timeout.
 // By default, the callback returns a GenericError to the caller, who sent the original request.
 func (cp *chargePoint) onRequestTimeout(_ string, _ ocpp.Request, err *ocpp.Error) {
-	cp.errorHandler <- err
+	cp.incoming <- incomingMessage{kind: incomingError, err: err}
 }
 
 // Errors returns a channel for error messages. If it doesn't exist it es created.
@@ -344,37 +360,58 @@ func (cp *chargePoint) SendRequestAsync(request ocpp.Request, callback func(conf
 }
 
 func (cp *chargePoint) asyncCallbackHandler() {
+	// asyncCallbackHandler is the only consumer of cp.incoming. Keeping one FIFO
+	// drain preserves wire-order dispatch; do not add another consumer or split
+	// this channel.
+	//
+	// Handlers run here, not on the read goroutine. If a handler calls
+	// SendRequestAsync while a dispatcher request-timeout is being delivered, the
+	// callback queue lock, dispatcher's cap-1 request channel, and this sole
+	// cp.incoming consumer can form a lock cycle. This pre-existing response
+	// callback caveat also applies to inbound request handlers.
+	//
+	// A blocking cp.error() wedges all response, error, and request handling in
+	// this loop, for example when Errors() is obtained but never drained.
 	for {
 		select {
-		case confirmation := <-cp.confirmationHandler:
-			// Get and invoke callback
-			if callback, ok := cp.callbacks.Dequeue("main", callbackqueue.RequestType(confirmation.GetFeatureName())); ok {
-				func() {
-					defer cp.client.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, confirmation.GetFeatureName(), "", false)
-					callback(confirmation, nil)
-				}()
-			} else {
-				err := fmt.Errorf("no handler available for incoming response %v", confirmation.GetFeatureName())
-				cp.error(err)
-			}
-		case protoError := <-cp.errorHandler:
-			// Get and invoke callback
-			if callback, ok := cp.callbacks.Dequeue("main", ""); ok {
-				requestID := ""
-				if ocppError, ok := protoError.(*ocpp.Error); ok {
-					requestID = ocppError.MessageId
+		case incoming := <-cp.incoming:
+			switch incoming.kind {
+			case incomingResponse:
+				// Get and invoke callback
+				if callback, ok := cp.callbacks.Dequeue("main", callbackqueue.RequestType(incoming.confirmation.GetFeatureName())); ok {
+					func() {
+						defer cp.client.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, incoming.confirmation.GetFeatureName(), "", false)
+						callback(incoming.confirmation, nil)
+					}()
+				} else {
+					err := fmt.Errorf("no handler available for incoming response %v", incoming.confirmation.GetFeatureName())
+					cp.error(err)
 				}
+			case incomingError:
+				// Get and invoke callback
+				if callback, ok := cp.callbacks.Dequeue("main", ""); ok {
+					requestID := ""
+					if ocppError, ok := incoming.err.(*ocpp.Error); ok {
+						requestID = ocppError.MessageId
+					}
+					func() {
+						defer cp.client.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, "", requestID, false)
+						callback(nil, incoming.err)
+					}()
+				} else {
+					err := fmt.Errorf("no handler available for error %v", incoming.err.Error())
+					cp.error(err)
+				}
+			case incomingRequest:
 				func() {
-					defer cp.client.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, "", requestID, false)
-					callback(nil, protoError)
+					defer cp.client.RecoverPanicGoroutine(ocppj.RequestHandlerKind, incoming.action, incoming.requestID, true)
+					cp.handleIncomingRequest(incoming.request, incoming.requestID, incoming.action)
 				}()
-			} else {
-				err := fmt.Errorf("no handler available for error %v", protoError.Error())
-				cp.error(err)
 			}
 		case <-cp.stopC:
 			// Handler stopped, cleanup callbacks.
 			// No callback invocation, since the user manually stopped the client.
+			// A buffered inbound CALL may be dropped without a CALLERROR.
 			cp.clearCallbacks(false)
 			return
 		}

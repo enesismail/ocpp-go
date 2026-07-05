@@ -115,9 +115,9 @@ func (s *Server) RecoverPanicGoroutine(kind HandlerKind, clientID, action, reque
 }
 
 // RecoverPanicGoroutine is the client-side analogue (the client SendError takes
-// no clientID). Included for symmetry / raw-ocppj embedders that dispatch
-// handlers to their own goroutines; the ocpp1.6 client facade runs inline and
-// does not need it.
+// no clientID). Recover is per-goroutine; ocpp1.6 facade callbacks and handlers
+// run on a dedicated goroutine and use this guard for response, error, and
+// inbound request dispatch.
 func (c *Client) RecoverPanicGoroutine(kind HandlerKind, action, requestID string, sendCallError bool) {
 	value := recover()
 	if value == nil {
