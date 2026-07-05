@@ -43,6 +43,29 @@ func newDispatcherStoppedError(messageID string) *ocpp.Error {
 	return err
 }
 
+// localTransportMarker tags a locally-synthesized transport/send failure so it is distinguishable
+// from a server CALLERROR that carries the same code (which is not, on its own, a discriminator).
+const localTransportMarker = "ocppj/local-transport"
+
+// ErrLocalTransport is the sentinel a caller matches with errors.Is to classify a local
+// transport/send failure (a failed network write, or a peer disconnect while a request was
+// outstanding) as opposed to a genuine server CALLERROR, a timeout, or a dispatcher stop.
+//
+// It carries NO delivery guarantee: the request may or may not have reached the peer. A failed
+// write means it did not; a disconnect-drain tags every still-outstanding request for the peer,
+// including ones already written (and possibly processed) as well as ones still queued and never
+// transmitted. Do not build "was/was-not sent" retry or idempotency logic on this marker alone.
+var ErrLocalTransport = &ocpp.Error{Marker: localTransportMarker}
+
+// NewLocalTransportError builds a tagged local transport/send failure. The parameter order
+// deliberately matches ocpp.NewError(code, description, messageID) — do NOT transpose the two
+// string arguments (both are strings; a swap silently puts the description into MessageId).
+func NewLocalTransportError(code ocpp.ErrorCode, description, messageID string) *ocpp.Error {
+	err := ocpp.NewError(code, description, messageID)
+	err.Marker = localTransportMarker
+	return err
+}
+
 // The internal verbose logger. It is a stable wrapper whose underlying delegate
 // is swapped atomically by SetLogger, so concurrent log calls from dispatcher
 // goroutines never race with SetLogger.

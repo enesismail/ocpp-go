@@ -130,10 +130,32 @@ func (d *DefaultClientDispatcher) SetOnRequestCanceled(cb func(requestID string,
 	d.onRequestCancel = cb
 }
 
+// markLocalTransportError is the fail-safe backstop for the fireRequestCancel choke-point: it
+// stamps the local-transport marker onto an otherwise-unmarked cancel error, so any (current or
+// future) dispatcher cancel path classifies as local rather than masquerading as a server
+// CALLERROR. It MUTATES err in place; callers must pass a uniquely-owned, freshly-constructed
+// error (never a shared/package-level sentinel). It is a no-op on an already-marked error.
+func markLocalTransportError(err *ocpp.Error) *ocpp.Error {
+	if err != nil && err.Marker == "" {
+		err.Marker = localTransportMarker
+	}
+	return err
+}
+
 func (d *DefaultClientDispatcher) recoverCancelCallback(action, requestID string) {
 	if v := recover(); v != nil {
 		reportHandlerPanic(v, CancelHandlerKind, "", action, requestID, d.onHandlerPanic, nil)
 	}
+}
+
+func (d *DefaultClientDispatcher) fireRequestCancel(action, requestID string, request ocpp.Request, err *ocpp.Error) {
+	if d.onRequestCancel == nil {
+		return
+	}
+	func() {
+		defer d.recoverCancelCallback(action, requestID)
+		d.onRequestCancel(requestID, request, markLocalTransportError(err))
+	}()
 }
 
 func (d *DefaultClientDispatcher) SetTimeout(timeout time.Duration) {
@@ -251,12 +273,8 @@ func (d *DefaultClientDispatcher) messagePump() {
 					if !ok || bundle.Call == nil {
 						continue
 					}
-					if d.onRequestCancel != nil {
-						func() {
-							defer d.recoverCancelCallback(bundle.Call.Action, bundle.Call.UniqueId)
-							d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload, newDispatcherStoppedError(bundle.Call.UniqueId))
-						}()
-					}
+					d.fireRequestCancel(bundle.Call.Action, bundle.Call.UniqueId, bundle.Call.Payload,
+						newDispatcherStoppedError(bundle.Call.UniqueId))
 				}
 				d.pendingRequestState.ClearPendingRequests()
 				d.requestQueue.Init()
@@ -277,13 +295,8 @@ func (d *DefaultClientDispatcher) messagePump() {
 				el := d.requestQueue.Peek()
 				if bundle, ok := el.(RequestBundle); ok && bundle.Call != nil {
 					d.CompleteRequest(bundle.Call.UniqueId)
-					if d.onRequestCancel != nil {
-						func() {
-							defer d.recoverCancelCallback(bundle.Call.Action, bundle.Call.UniqueId)
-							d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload,
-								newRequestTimeoutError(bundle.Call.UniqueId))
-						}()
-					}
+					d.fireRequestCancel(bundle.Call.Action, bundle.Call.UniqueId, bundle.Call.Payload,
+						newRequestTimeoutError(bundle.Call.UniqueId))
 				}
 			}
 			// No request is currently pending -> set timer to high number
@@ -341,13 +354,8 @@ func (d *DefaultClientDispatcher) dispatchNextRequest() bool {
 	if err != nil {
 		// TODO: handle retransmission instead of skipping request altogether
 		d.CompleteRequest(bundle.Call.GetUniqueId())
-		if d.onRequestCancel != nil {
-			func() {
-				defer d.recoverCancelCallback(bundle.Call.Action, bundle.Call.GetUniqueId())
-				d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload,
-					ocpp.NewError(InternalError, err.Error(), bundle.Call.UniqueId))
-			}()
-		}
+		d.fireRequestCancel(bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
+			NewLocalTransportError(InternalError, err.Error(), bundle.Call.UniqueId))
 	}
 	log.Infof("dispatched request %s to server", bundle.Call.UniqueId)
 	log.Debugf("sent JSON message to server: %s", string(jsonMessage))
@@ -601,6 +609,16 @@ func (d *DefaultServerDispatcher) recoverCancelCallback(clientID, action, reques
 	}
 }
 
+func (d *DefaultServerDispatcher) fireRequestCancel(clientID, action, requestID string, request ocpp.Request, err *ocpp.Error) {
+	if d.onRequestCancel == nil {
+		return
+	}
+	func() {
+		defer d.recoverCancelCallback(clientID, action, requestID)
+		d.onRequestCancel(clientID, requestID, request, markLocalTransportError(err))
+	}()
+}
+
 func (d *DefaultServerDispatcher) SetPendingRequestState(state ServerState) {
 	d.pendingRequestState = state
 }
@@ -726,13 +744,8 @@ func (d *DefaultServerDispatcher) messagePump() {
 				clientQueue = q
 				rdy = true
 				log.Infof("request %v for %v timed out", bundle.Call.GetUniqueId(), clientID)
-				if d.onRequestCancel != nil {
-					func() {
-						defer d.recoverCancelCallback(clientID, bundle.Call.Action, bundle.Call.GetUniqueId())
-						d.onRequestCancel(clientID, bundle.Call.GetUniqueId(), bundle.Call.Payload,
-							ocpp.NewError(GenericError, "Request timed out", bundle.Call.GetUniqueId()))
-					}()
-				}
+				d.fireRequestCancel(clientID, bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
+					newRequestTimeoutError(bundle.Call.GetUniqueId()))
 			}
 		case clientID = <-d.readyForDispatch:
 			// Cancel previous timeout (if any)
@@ -791,13 +804,8 @@ func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCt
 		log.Errorf("error while sending message: %v", err)
 		// TODO: handle retransmission instead of removing pending request
 		d.CompleteRequest(clientID, callID)
-		if d.onRequestCancel != nil {
-			func() {
-				defer d.recoverCancelCallback(clientID, bundle.Call.Action, bundle.Call.GetUniqueId())
-				d.onRequestCancel(clientID, bundle.Call.UniqueId, bundle.Call.Payload,
-					ocpp.NewError(InternalError, err.Error(), bundle.Call.UniqueId))
-			}()
-		}
+		d.fireRequestCancel(clientID, bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
+			NewLocalTransportError(InternalError, err.Error(), bundle.Call.UniqueId))
 		return
 	}
 	// Create and return context (only if timeout is set)

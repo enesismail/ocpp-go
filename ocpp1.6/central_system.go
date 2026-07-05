@@ -505,7 +505,7 @@ func (cs *centralSystem) SetNewChargePointHandler(handler ChargePointConnectionH
 func (cs *centralSystem) SetChargePointDisconnectedHandler(handler ChargePointConnectionHandler) {
 	cs.server.SetDisconnectedClientHandler(func(chargePoint ws.Channel) {
 		for cb, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), ""); ok; cb, ok = cs.callbackQueue.Dequeue(chargePoint.ID(), "") {
-			err := ocpp.NewError(ocppj.GenericError, "client disconnected, no response received from client", "")
+			err := ocppj.NewLocalTransportError(ocppj.GenericError, "client disconnected, no response received from client", "")
 			cb(nil, err)
 		}
 		handler(chargePoint)

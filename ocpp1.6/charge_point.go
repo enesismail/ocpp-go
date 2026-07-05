@@ -412,18 +412,14 @@ func (cp *chargePoint) asyncCallbackHandler() {
 			// Handler stopped, cleanup callbacks.
 			// No callback invocation, since the user manually stopped the client.
 			// A buffered inbound CALL may be dropped without a CALLERROR.
-			cp.clearCallbacks(false)
+			cp.clearCallbacks()
 			return
 		}
 	}
 }
 
-func (cp *chargePoint) clearCallbacks(invokeCallback bool) {
-	for cb, ok := cp.callbacks.Dequeue("main", ""); ok; cb, ok = cp.callbacks.Dequeue("main", "") {
-		if invokeCallback {
-			err := ocpp.NewError(ocppj.GenericError, "client stopped, no response received from server", "")
-			cb(nil, err)
-		}
+func (cp *chargePoint) clearCallbacks() {
+	for _, ok := cp.callbacks.Dequeue("main", ""); ok; _, ok = cp.callbacks.Dequeue("main", "") {
 	}
 }
 
