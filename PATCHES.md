@@ -106,3 +106,34 @@ the `-race` gate.
 > Line numbers are current as of the entries above; if the API moves, update this table
 > and the guard tests together. The guard tests are the real backstop — the line numbers
 > are only a navigation aid.
+
+## Server connection-lifecycle hygiene
+
+`ws.server.handleDisconnect` used to `delete(s.connections, id)` **unconditionally** and fire
+the disconnected-callback with no check that the entry was still this socket, so a stale socket
+could emit a `disconnected` event observed *after* a newer `connected` event for the same ID —
+making a live client look gone (the **reorder** class of upstream **#292**, evcc). This makes
+removal + the callback **identity-guarded** ("delete-if-me"). Scope split, stated honestly:
+- The **map-clobber** hazard (a stale socket deleting a newer same-ID entry) is **not reachable
+  under the current reject-new policy** — the only deleter of an entry is `handleDisconnect`
+  itself, once per socket, and a newer same-ID entry can only register after the old one is
+  already gone. `delete-if-me` and the `!isCurrent` branch pin the invariant a future evict-old
+  duplicate policy (**D2**, the reverted #376) requires; they are substrate, not a live fix.
+- The **re-check before firing** is the branch with live value today: a reconnector that has
+  finished its handshake can be parked at `connMutex.Lock` and insert between this socket's
+  `delete` and its callback, so without the re-check the stale `disconnected` could still land
+  after the newer `connected`.
+- The duplicate-connection *policy* (reject-vs-evict, i.e. #314's half-open-reconnect case) is
+  deliberately **unchanged** here — that user-visible symptom is D2, not S4.
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `ws/server.go:530-534` | `current, ok := s.connections[w.ID()]; isCurrent := ok && current == w` → `delete` only if `isCurrent` | delete-if-me: a stale/superseded socket must never remove a newer entry for the same ID. Unreachable under reject-new; the invariant an evict-old policy (D2) needs |
+| `ws/server.go:536-542` | early `return` (+ `Debugf`) when `!isCurrent` | suppress the `disconnected` event for a socket already superseded/removed. Also substrate for D2 (unreachable under reject-new) |
+| `ws/server.go:547-551` | re-check `_, superseded := s.connections[w.ID()]` before firing (outside `connMutex`) | the live-value branch: closes the delete→fire window where a lock-parked reconnector registers mid-`handleDisconnect`; the callback stays outside the lock so a handler may call `Write`/`GetChannel`/`StopConnection` without self-deadlock |
+
+**Guard:** `ws/server_reconnect_test.go` — `TestHandleDisconnectSupersededSuppressed` + `TestHandleDisconnectDeleteIfMeNoClobber` deterministically cover the `!isCurrent` path (no clobber, no spurious event for a superseded socket); `TestHandleDisconnectNormalFiresOnce` guards against over-suppression (a normal disconnect still fires exactly once and drains the map). The second re-check branch (`:547-551`) is a documented, accepted belt-and-suspenders guard: it fires only when a reconnector already parked at `connMutex.Lock` inserts inside the small delete→re-check window, which is **not deterministically reproducible without a production test-seam** (the D2-time event-loop is the zero-window replacement). **Note for D2:** suppression means a consumer observes `connected(id)` without an intervening `disconnected(id)` — correct for the ID-keyed OCPP facades, but a consumer that *counts* connect/disconnect events would drift; inherent to any suppression design.
+
+> Line numbers are current as of the entries above; if the API moves, update this table
+> and the guard tests together. The guard tests are the real backstop — the line numbers
+> are only a navigation aid.
