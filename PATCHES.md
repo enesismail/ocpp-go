@@ -63,6 +63,21 @@ asymmetry fix.
 > and the guard tests together. The property test is the real backstop — the line numbers
 > are only a navigation aid.
 
+## Sentinel version-parity guards (2.0.1 client facade)
+
+Both sentinels above live in shared `ocppj` and are set on the shared client dispatcher
+cancel path, so they are **version-agnostic** — a 2.0.1 `chargingStation` uses the same
+dispatcher as a 1.6 charge point. There is no production line to keep here; this is a
+**test-surface** guard that the 2.0.1 CLIENT facade preserves the markers end-to-end (a
+future 2.0.1-facade refactor that reconstructs or strips the `*ocpp.Error` would otherwise
+go uncaught).
+
+**Guard:** `ocpp2.0.1_test/request_timeout_test.go` drives a `chargingStation.SendRequestAsync`
+and asserts the callback error rides through unchanged — a dispatcher timeout matches
+`ErrRequestTimeout` (and not `ErrLocalTransport`), and a local write failure matches
+`ErrLocalTransport`. The 1.6 client facade is guarded by `ocpp1.6_test/local_transport_test.go`;
+the server timeout is guarded at the ocppj layer (`ocppj/local_transport_test.go`).
+
 ## Inbound read limit
 
 The `ws` layer exposes per-endpoint timeouts/auth/TLS but never bounded inbound message
