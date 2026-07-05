@@ -30,6 +30,19 @@ func newRequestTimeoutError(messageID string) *ocpp.Error {
 	return err
 }
 
+// dispatcherStoppedMarker tags the local dispatcher-stopped error so it is distinguishable from a server
+// CALLERROR that carries the same GenericError code (which is not, on its own, a discriminator).
+const dispatcherStoppedMarker = "ocppj/dispatcher-stopped"
+
+// ErrDispatcherStopped is the sentinel a caller matches with errors.Is to classify a dispatcher stop.
+var ErrDispatcherStopped = &ocpp.Error{Marker: dispatcherStoppedMarker}
+
+func newDispatcherStoppedError(messageID string) *ocpp.Error {
+	err := ocpp.NewError(GenericError, "Dispatcher stopped", messageID)
+	err.Marker = dispatcherStoppedMarker
+	return err
+}
+
 // The internal verbose logger. It is a stable wrapper whose underlying delegate
 // is swapped atomically by SetLogger, so concurrent log calls from dispatcher
 // goroutines never race with SetLogger.

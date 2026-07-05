@@ -48,7 +48,8 @@ type ClientDispatcher interface {
 	// Sets a callback to be invoked when a request gets canceled, due to network timeouts or internal errors.
 	// The callback passes the original message ID and request struct of the failed request, along with an error.
 	//
-	// Calling Stop on the dispatcher will not trigger this callback.
+	// Calling Stop on the dispatcher triggers this callback for every request still outstanding
+	// at that point, with an error matching ErrDispatcherStopped.
 	//
 	// If no callback is set, a request will still be removed from the dispatcher when a timeout occurs.
 	SetOnRequestCanceled(cb func(requestID string, request ocpp.Request, err *ocpp.Error))
@@ -62,7 +63,8 @@ type ClientDispatcher interface {
 	SetPendingRequestState(stateHandler ClientState)
 	// Stops a running dispatcher. This will clear all state and empty the internal queues.
 	//
-	// If an onRequestCanceled callback is set, it won't be triggered by stopping the dispatcher.
+	// If an onRequestCanceled callback is set, it is triggered for every request still
+	// outstanding at Stop time, with an error matching ErrDispatcherStopped.
 	Stop()
 	// Notifies that an external event (typically network-related) should pause
 	// the dispatcher. Internal timers will be stopped an no further requests
@@ -103,8 +105,9 @@ type DefaultClientDispatcher struct {
 	// it under d.mutex would let a pending Stop() (write Lock) starve the pump's
 	// RLock, deadlocking against SendRequest calls that hold RLock while blocked
 	// on the buffered channel send.
-	paused  int32
-	timeout time.Duration
+	paused         int32
+	timeout        time.Duration
+	timeoutOnPause bool
 }
 
 const (
@@ -135,6 +138,16 @@ func (d *DefaultClientDispatcher) recoverCancelCallback(action, requestID string
 
 func (d *DefaultClientDispatcher) SetTimeout(timeout time.Duration) {
 	d.timeout = timeout
+}
+
+// SetTimeoutOnPause enables or disables timeout behavior while the dispatcher is paused.
+// It is opt-in and defaults to false. When enabled, a request that is pending
+// when the dispatcher is paused still times out after the real SetTimeout value
+// instead of being parked at the internal 24h tick. This method is deliberately
+// not part of the ClientDispatcher interface to avoid a breaking interface change.
+// This function must be called before starting the dispatcher, otherwise it may lead to unexpected behavior.
+func (d *DefaultClientDispatcher) SetTimeoutOnPause(enabled bool) {
+	d.timeoutOnPause = enabled
 }
 
 func (d *DefaultClientDispatcher) Start() {
@@ -177,7 +190,6 @@ func (d *DefaultClientDispatcher) Stop() {
 	d.mutex.Unlock()
 	// Wait for messagePump to actually exit so no goroutine outlives Stop().
 	<-done
-	// TODO: clear pending requests?
 }
 
 func (d *DefaultClientDispatcher) SetNetworkClient(client ws.Client) {
@@ -224,6 +236,29 @@ func (d *DefaultClientDispatcher) messagePump() {
 		case _, ok := <-reqCh:
 			// New request was posted
 			if !ok {
+				var outstanding []interface{}
+				if drainer, dok := d.requestQueue.(interface{ DrainAll() []interface{} }); dok {
+					// Atomic detach so a concurrent CompleteRequest can't mis-pop an
+					// intermediate front (see FIFOClientQueue.DrainAll).
+					outstanding = drainer.DrainAll()
+				} else {
+					for !d.requestQueue.IsEmpty() {
+						outstanding = append(outstanding, d.requestQueue.Pop())
+					}
+				}
+				for _, el := range outstanding {
+					bundle, ok := el.(RequestBundle)
+					if !ok || bundle.Call == nil {
+						continue
+					}
+					if d.onRequestCancel != nil {
+						func() {
+							defer d.recoverCancelCallback(bundle.Call.Action, bundle.Call.UniqueId)
+							d.onRequestCancel(bundle.Call.UniqueId, bundle.Call.Payload, newDispatcherStoppedError(bundle.Call.UniqueId))
+						}()
+					}
+				}
+				d.pendingRequestState.ClearPendingRequests()
 				d.requestQueue.Init()
 				d.mutex.Lock()
 				d.requestChannel = nil
@@ -267,9 +302,17 @@ func (d *DefaultClientDispatcher) messagePump() {
 		if rdy && !d.requestQueue.IsEmpty() {
 			if d.dispatchNextRequest() {
 				rdy = false
-				// Set timer
+				// Set timer. Non-blocking drain: d.timer.C has other receivers
+				// (Pause and Resume), so a fire from the previous request can be
+				// stolen by a concurrent Pause/Resume between Stop() returning
+				// false and the receive here — a blocking <-d.timer.C would then
+				// freeze the pump until the next fire (up to 24h), hanging Stop().
+				// Matches the Pause()/Resume() drains.
 				if !d.timer.Stop() {
-					<-d.timer.C
+					select {
+					case <-d.timer.C:
+					default:
+					}
 				}
 				d.timer.Reset(d.timeout)
 			}
@@ -314,10 +357,23 @@ func (d *DefaultClientDispatcher) dispatchNextRequest() bool {
 func (d *DefaultClientDispatcher) Pause() {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
+	// Non-blocking drain: the pump goroutine is also a consumer of d.timer.C, so
+	// if the request-timeout timer fired and the pump already received the tick
+	// (e.g. a request times out at the same instant a disconnect triggers Pause),
+	// Stop() returns false but the channel is empty — a blocking <-d.timer.C would
+	// then hang here while holding d.mutex, wedging the dispatcher. Same reasoning
+	// as Resume().
 	if !d.timer.Stop() {
-		<-d.timer.C
+		select {
+		case <-d.timer.C:
+		default:
+		}
 	}
-	d.timer.Reset(defaultTimeoutTick)
+	tick := defaultTimeoutTick
+	if d.timeoutOnPause && d.timeout > 0 {
+		tick = d.timeout
+	}
+	d.timer.Reset(tick)
 	atomic.StoreInt32(&d.paused, 1)
 }
 
@@ -325,6 +381,21 @@ func (d *DefaultClientDispatcher) Resume() {
 	atomic.StoreInt32(&d.paused, 0)
 	if d.pendingRequestState.HasPendingRequest() {
 		// There is a pending request already. Awaiting response, before dispatching new requests.
+		// Stop-and-drain before Reset: with SetTimeoutOnPause the paused timer runs at the real
+		// (short) d.timeout and may have already fired while paused, leaving a stale tick buffered
+		// in d.timer.C. A bare Reset would not clear it, so the pump would read the stale fire and
+		// cancel this request instead of granting a fresh window. Non-blocking drain because the
+		// pump is also a consumer of d.timer.C (a blocking receive could hang if the pump won the read).
+		// Per the Resume contract ("a response/timeout shall be awaited anew"), an opt-in pause
+		// timeout that elapsed but was not yet delivered is intentionally superseded by this fresh
+		// window; whether the pump delivers that pending timeout first or Resume supersedes it is a
+		// benign ordering race (both outcomes honor the contract).
+		if !d.timer.Stop() {
+			select {
+			case <-d.timer.C:
+			default:
+			}
+		}
 		d.timer.Reset(d.timeout)
 	} else {
 		// Can dispatch a new request. Notifying message pump.
