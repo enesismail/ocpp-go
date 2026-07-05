@@ -64,6 +64,9 @@ jobs:
         with:
           name: coverage_${{ github.sha }}
       - name: Publish
+        # Coverage upload is best-effort: a transient coveralls.io outage
+        # (e.g. an HTTP 504) must not fail a PR whose tests all passed.
+        continue-on-error: true
         uses: shogo82148/actions-goveralls@v1
         with:
           path-to-profile: coverage.out
