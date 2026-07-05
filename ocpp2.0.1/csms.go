@@ -754,7 +754,7 @@ func (cs *csms) SetNewChargingStationHandler(handler ChargingStationConnectionHa
 func (cs *csms) SetChargingStationDisconnectedHandler(handler ChargingStationConnectionHandler) {
 	cs.server.SetDisconnectedClientHandler(func(chargingStation ws.Channel) {
 		for cb, ok := cs.callbackQueue.Dequeue(chargingStation.ID(), ""); ok; cb, ok = cs.callbackQueue.Dequeue(chargingStation.ID(), "") {
-			err := ocpp.NewError(ocppj.GenericError, "client disconnected, no response received from client", "")
+			err := ocppj.NewLocalTransportError(ocppj.GenericError, "client disconnected, no response received from client", "")
 			cb(nil, err)
 		}
 		handler(chargingStation)
