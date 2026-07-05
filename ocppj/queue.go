@@ -47,6 +47,17 @@ func (q *FIFOClientQueue) Init() {
 	q.elements = make([]interface{}, 0, q.capacity)
 }
 
+// DrainAll atomically removes and returns every queued element in one locked
+// operation, so a concurrent Peek/Pop observes either the full queue or an empty
+// one — never an intermediate front it could mis-pop.
+func (q *FIFOClientQueue) DrainAll() []interface{} {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	drained := q.elements
+	q.elements = make([]interface{}, 0, q.capacity)
+	return drained
+}
+
 func (q *FIFOClientQueue) Push(element interface{}) error {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
