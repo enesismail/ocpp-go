@@ -190,22 +190,23 @@ func NewChargePoint(id string, endpoint *ocppj.Client, client ws.Client) ChargeP
 	endpoint.SetDialect(ocpp.V16)
 
 	cp := chargePoint{
-		client:              endpoint,
-		confirmationHandler: make(chan ocpp.Response, 1),
-		errorHandler:        make(chan error, 1),
-		callbacks:           callbackqueue.New(),
+		client:    endpoint,
+		incoming:  make(chan incomingMessage, 1),
+		callbacks: callbackqueue.New(),
 	}
 
 	// Callback invoked by dispatcher, whenever a queued request is canceled, due to timeout.
 	endpoint.SetOnRequestCanceled(cp.onRequestTimeout)
 
 	cp.client.SetResponseHandler(func(confirmation ocpp.Response, requestId string) {
-		cp.confirmationHandler <- confirmation
+		cp.incoming <- incomingMessage{kind: incomingResponse, confirmation: confirmation}
 	})
 	cp.client.SetErrorHandler(func(err *ocpp.Error, details interface{}) {
-		cp.errorHandler <- err
+		cp.incoming <- incomingMessage{kind: incomingError, err: err}
 	})
-	cp.client.SetRequestHandler(cp.handleIncomingRequest)
+	cp.client.SetRequestHandler(func(request ocpp.Request, requestId string, action string) {
+		cp.incoming <- incomingMessage{kind: incomingRequest, request: request, requestID: requestId, action: action}
+	})
 	return &cp
 }
 
