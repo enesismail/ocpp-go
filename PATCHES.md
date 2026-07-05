@@ -62,3 +62,32 @@ asymmetry fix.
 > Line numbers are current as of the entries above; if the API moves, update this table
 > and the guard tests together. The property test is the real backstop — the line numbers
 > are only a navigation aid.
+
+## Inbound read limit
+
+The `ws` layer exposes per-endpoint timeouts/auth/TLS but never bounded inbound message
+size — nothing called gorilla's `conn.SetReadLimit`, so a single message was accepted at any
+size (gorilla's default of 0 = no limit). This adds an **opt-in** per-message read limit so a
+simulator/CSMS holding sockets to an untrusted peer can cap it. Default stays `0` (unlimited)
+so behavior is unchanged unless the operator opts in. This is a **fork-original** ws-hardening
+feature; upstream `ws` has no equivalent.
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `ws/websocket.go:131` | `ReadLimit int64` on `ServerTimeoutConfig` | public opt-in knob for inbound message size on server conns |
+| `ws/websocket.go:183` | `ReadLimit int64` on `ClientTimeoutConfig` | public opt-in knob for inbound message size on client conns |
+| `ws/websocket.go:272` | `ReadLimit int64` on internal `WebSocketConfig` | carries the limit from the timeout config to `newWebSocket`/`updateConfig` |
+| `ws/client.go:380` | `wsCfg.ReadLimit = c.timeoutConfig.ReadLimit` before `newWebSocket` | threads the client knob without changing `NewDefaultWebSocketConfig`'s signature |
+| `ws/server.go:483` | `wsCfg.ReadLimit = s.timeoutConfig.ReadLimit` before `newWebSocket` | threads the server knob without changing `NewDefaultWebSocketConfig`'s signature |
+| `ws/websocket.go:425` | `if cfg.ReadLimit > 0 { w.connection.SetReadLimit(cfg.ReadLimit) }` in `updateConfig` | applies the limit at the single cfg→conn choke point; `> 0` gate keeps `0`/negative unlimited |
+
+**Guard:** `ws/websocket_test.go` — `TestServerReadLimitExceeded` (server drops the over-limit
+connection: proves the server call site threads the limit), `TestClientReadLimitExceeded`
+(client surfaces `websocket.ErrReadLimit` on its disconnect handler), `TestServerReadLimitUnderLimitPasses`,
+`TestReadLimitDefaultUnlimited` (default 0 delivers a large message unchanged), and
+`TestClientReadLimitAppliesAfterReconnect` (a fresh dial re-applies the limit). All run under
+the `-race` gate.
+
+> Line numbers are current as of the entries above; if the API moves, update this table
+> and the guard tests together. The guard tests are the real backstop — the line numbers
+> are only a navigation aid.

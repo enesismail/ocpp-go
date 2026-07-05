@@ -475,15 +475,17 @@ out:
 		return
 	}
 	// Create web socket for client, state is automatically set to connected
+	wsCfg := NewDefaultWebSocketConfig(
+		s.timeoutConfig.WriteWait,
+		s.timeoutConfig.PingWait,
+		s.timeoutConfig.PingPeriod,
+		s.timeoutConfig.PongWait)
+	wsCfg.ReadLimit = s.timeoutConfig.ReadLimit
 	ws := newWebSocket(
 		id,
 		conn,
 		r.TLS,
-		NewDefaultWebSocketConfig(
-			s.timeoutConfig.WriteWait,
-			s.timeoutConfig.PingWait,
-			s.timeoutConfig.PingPeriod,
-			s.timeoutConfig.PongWait),
+		wsCfg,
 		s.handleMessage,
 		s.handleDisconnect,
 		func(_ Channel, err error) {

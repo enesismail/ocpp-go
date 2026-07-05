@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/enesismail/ocpp-go/logging"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -73,12 +73,16 @@ func (a *atomicLogger) delegate() logging.Logger {
 	return l
 }
 
-func (a *atomicLogger) Debug(args ...interface{})                 { a.delegate().Debug(args...) }
-func (a *atomicLogger) Debugf(format string, args ...interface{}) { a.delegate().Debugf(format, args...) }
-func (a *atomicLogger) Info(args ...interface{})                  { a.delegate().Info(args...) }
-func (a *atomicLogger) Infof(format string, args ...interface{})  { a.delegate().Infof(format, args...) }
-func (a *atomicLogger) Error(args ...interface{})                 { a.delegate().Error(args...) }
-func (a *atomicLogger) Errorf(format string, args ...interface{}) { a.delegate().Errorf(format, args...) }
+func (a *atomicLogger) Debug(args ...interface{}) { a.delegate().Debug(args...) }
+func (a *atomicLogger) Debugf(format string, args ...interface{}) {
+	a.delegate().Debugf(format, args...)
+}
+func (a *atomicLogger) Info(args ...interface{})                 { a.delegate().Info(args...) }
+func (a *atomicLogger) Infof(format string, args ...interface{}) { a.delegate().Infof(format, args...) }
+func (a *atomicLogger) Error(args ...interface{})                { a.delegate().Error(args...) }
+func (a *atomicLogger) Errorf(format string, args ...interface{}) {
+	a.delegate().Errorf(format, args...)
+}
 
 // Sets a custom Logger implementation, allowing the package to log events.
 // By default, a VoidLogger is used, so no logs will be sent to any output.
@@ -101,6 +105,30 @@ type ServerTimeoutConfig struct {
 	PingWait   time.Duration // The timeout for waiting for a ping from the client. After a timeout, the connection is closed.
 	PingPeriod time.Duration // The interval for sending ping messages to a client. If set to 0, no pings are sent.
 	PongWait   time.Duration // The timeout for waiting for a pong from the server. After a timeout, the connection is closed. Needs to be set, if server is configured to send ping messages.
+	// ReadLimit is the maximum size in bytes of a single inbound message accepted
+	// from a client. 0 = unlimited (default) — behavior is unchanged unless you opt in.
+	//
+	// Applies to connections established AFTER SetTimeoutConfig is called: existing
+	// (already-upgraded) server connections keep whatever limit was in effect when
+	// they were upgraded. The limit is bound at upgrade time.
+	//
+	// Exceeding the limit DROPS THE CONNECTION — it does not merely skip the
+	// oversized message. gorilla stops reading, sends a 1009 (message too big)
+	// close frame, and the read fails with websocket.ErrReadLimit, tearing the
+	// connection down. On the server the underlying error is not surfaced to
+	// SetDisconnectedClientHandler (it is discarded there), so an over-limit event
+	// is observable only as a plain disconnect. Set the limit high enough that
+	// legitimate large messages never trip it (see sizing guidance below).
+	//
+	// Negative values behave as unlimited: the apply gate only sets the gorilla
+	// read limit when ReadLimit > 0, so e.g. -1 is silently treated as no-limit
+	// (documented here, not clamped or rejected).
+	//
+	// Sizing guidance: typical OCPP messages are well under 32 KB; a large 2.0.1
+	// NotifyReport or SetChargingProfile can reach hundreds of KB, so a cap like
+	// 1 MB (1_048_576) is generous headroom for legitimate traffic while still
+	// bounding a single inbound message.
+	ReadLimit int64
 }
 
 // NewServerTimeoutConfig creates a default timeout configuration for a websocket endpoint.
@@ -129,6 +157,30 @@ type ClientTimeoutConfig struct {
 	RetryBackOffRepeatTimes int
 	RetryBackOffRandomRange int
 	RetryBackOffWaitMinimum time.Duration
+	// ReadLimit is the maximum size in bytes of a single inbound message accepted
+	// from the server. 0 = unlimited (default) — behavior is unchanged unless you opt in.
+	//
+	// Applies to connections established AFTER SetTimeoutConfig is called: a
+	// currently-open connection keeps whatever limit was in effect when it was
+	// dialed. The limit is bound at connect time; a reconnect dials a fresh
+	// connection and picks up the then-current ReadLimit.
+	//
+	// Exceeding the limit DROPS THE CONNECTION — it does not merely skip the
+	// oversized message. gorilla stops reading, sends a 1009 (message too big)
+	// close frame, and the read fails with websocket.ErrReadLimit, tearing the
+	// connection down; the client's disconnected handler receives that error. Set
+	// the limit high enough that legitimate large messages never trip it (see
+	// sizing guidance below).
+	//
+	// Negative values behave as unlimited: the apply gate only sets the gorilla
+	// read limit when ReadLimit > 0, so e.g. -1 is silently treated as no-limit
+	// (documented here, not clamped or rejected).
+	//
+	// Sizing guidance: typical OCPP messages are well under 32 KB; a large 2.0.1
+	// NotifyReport or SetChargingProfile can reach hundreds of KB, so a cap like
+	// 1 MB (1_048_576) is generous headroom for legitimate traffic while still
+	// bounding a single inbound message.
+	ReadLimit int64
 }
 
 // NewClientTimeoutConfig creates a default timeout configuration for a websocket endpoint.
@@ -214,6 +266,10 @@ type WebSocketConfig struct {
 	PingConfig *PingConfig
 	// Optional logger for the websocket. If omitted, the global logger is used.
 	Logger logging.Logger
+	// ReadLimit is the maximum size in bytes of a single inbound message.
+	// 0 = unlimited (default); exceeding it drops the connection. See
+	// ClientTimeoutConfig.ReadLimit / ServerTimeoutConfig.ReadLimit.
+	ReadLimit int64
 }
 
 // PingConfig contains optional configuration parameters for websockets sending ping operations.
@@ -360,6 +416,14 @@ func (w *webSocket) updateConfig(cfg WebSocketConfig) {
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 	w.cfg = cfg
+	// Apply the inbound read limit to the live connection. updateConfig is the
+	// single place that applies cfg to the connection, so a future live
+	// reconfiguration picks this up too (today it only runs at connect/upgrade).
+	// Gate strictly on > 0: 0 (default, unlimited) and any negative value are
+	// both left alone, so behavior is unchanged unless the caller opts in.
+	if cfg.ReadLimit > 0 {
+		w.connection.SetReadLimit(cfg.ReadLimit)
+	}
 	// Update logger
 	if cfg.Logger != nil {
 		w.log = cfg.Logger
@@ -597,4 +661,3 @@ type HttpConnectionError struct {
 func (e HttpConnectionError) Error() string {
 	return fmt.Sprintf("%v, http status: %v", e.Message, e.HttpStatus)
 }
-

@@ -1296,6 +1296,260 @@ func (s *WebSocketSuite) TestSetClientTimeoutConfig() {
 	}
 }
 
+// TestClientReadLimitExceeded sets a small inbound ReadLimit on the CLIENT
+// (via ClientTimeoutConfig, before Start) and has the server send a message
+// larger than the limit. The client's exported disconnect handler DOES carry
+// the raw read error (unlike the server's, which discards it — see
+// server.handleDisconnect), so this asserts the specific
+// websocket.ErrReadLimit sentinel, not just a bare disconnect.
+func (s *WebSocketSuite) TestClientReadLimitExceeded() {
+	const limit = 64
+	oversized := bytes.Repeat([]byte("a"), limit*4)
+
+	config := NewClientTimeoutConfig()
+	config.ReadLimit = limit
+	s.client.SetTimeoutConfig(config)
+
+	disconnectedC := make(chan error, 1)
+	s.client.SetDisconnectedHandler(func(err error) {
+		disconnectedC <- err
+	})
+	s.server.SetNewClientHandler(func(ws Channel) {
+		go func() {
+			err := s.server.Write(ws.ID(), oversized)
+			s.NoError(err)
+		}()
+	})
+
+	go s.server.Start(serverPort, serverPath)
+	time.Sleep(100 * time.Millisecond)
+
+	host := fmt.Sprintf("localhost:%v", serverPort)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+	err := s.client.Start(u.String())
+	s.NoError(err)
+
+	select {
+	case err := <-disconnectedC:
+		s.Error(err)
+		s.True(errors.Is(err, websocket.ErrReadLimit), "expected websocket.ErrReadLimit, got %v", err)
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for client disconnect due to read limit")
+	}
+}
+
+// TestServerReadLimitExceeded sets a small inbound ReadLimit on the SERVER and
+// has the client send a message larger than the limit. Unlike the client case,
+// the server's exported disconnect handler does NOT carry the read error
+// (server.handleDisconnect discards it), so this asserts the black-box
+// observable — the connection is dropped and SetDisconnectedClientHandler fires
+// — rather than the specific websocket.ErrReadLimit sentinel. This is the
+// coverage that proves the SERVER call site threads the limit: without
+// wsCfg.ReadLimit at the upgrade site (ws/server.go), the oversized message
+// would be delivered and no disconnect would fire, so both other server-path
+// tests (under-limit pass, default-unlimited) would stay green while this one
+// goes red.
+func (s *WebSocketSuite) TestServerReadLimitExceeded() {
+	const limit = 64
+	oversized := bytes.Repeat([]byte("a"), limit*4)
+
+	config := NewServerTimeoutConfig()
+	config.ReadLimit = limit
+	s.server.SetTimeoutConfig(config)
+
+	serverDisconnectedC := make(chan struct{}, 1)
+	s.server.SetDisconnectedClientHandler(func(ws Channel) {
+		serverDisconnectedC <- struct{}{}
+	})
+
+	go s.server.Start(serverPort, serverPath)
+	time.Sleep(100 * time.Millisecond)
+
+	host := fmt.Sprintf("localhost:%v", serverPort)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+	err := s.client.Start(u.String())
+	s.NoError(err)
+
+	err = s.client.Write(oversized)
+	s.NoError(err)
+
+	select {
+	case <-serverDisconnectedC:
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for server to drop the over-limit connection")
+	}
+}
+
+// TestServerReadLimitUnderLimitPasses sets a small inbound ReadLimit on the
+// SERVER and sends a message from the client that fits within it, asserting
+// the message is still delivered normally (the limit does not interfere with
+// in-bounds traffic).
+func (s *WebSocketSuite) TestServerReadLimitUnderLimitPasses() {
+	const limit = 4096
+	msg := []byte("a message comfortably within the read limit")
+	s.Require().Less(len(msg), limit)
+
+	config := NewServerTimeoutConfig()
+	config.ReadLimit = limit
+
+	received := make(chan []byte, 1)
+	s.server = newWebsocketServer(s.T(), func(data []byte) ([]byte, error) {
+		received <- data
+		return nil, nil
+	})
+	s.server.SetTimeoutConfig(config)
+
+	go s.server.Start(serverPort, serverPath)
+	time.Sleep(100 * time.Millisecond)
+
+	host := fmt.Sprintf("localhost:%v", serverPort)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+	err := s.client.Start(u.String())
+	s.NoError(err)
+
+	err = s.client.Write(msg)
+	s.NoError(err)
+
+	select {
+	case data := <-received:
+		s.True(bytes.Equal(msg, data))
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for under-limit message to be delivered")
+	}
+	s.True(s.client.IsConnected())
+}
+
+// TestReadLimitDefaultUnlimited verifies that, with no ReadLimit configured
+// (the zero value on both ClientTimeoutConfig and ServerTimeoutConfig), a
+// large message is still delivered normally — i.e. behavior is unchanged
+// from before this feature existed. The payload is capped at a few MB (not a
+// genuinely huge buffer) to keep the -race build fast.
+func (s *WebSocketSuite) TestReadLimitDefaultUnlimited() {
+	large := bytes.Repeat([]byte("x"), 4*1024*1024) // 4 MB, comfortably large but -race-friendly
+
+	received := make(chan int, 1)
+	s.server = newWebsocketServer(s.T(), func(data []byte) ([]byte, error) {
+		received <- len(data)
+		return nil, nil
+	})
+
+	go s.server.Start(serverPort, serverPath)
+	time.Sleep(100 * time.Millisecond)
+
+	host := fmt.Sprintf("localhost:%v", serverPort)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+	err := s.client.Start(u.String())
+	s.NoError(err)
+
+	err = s.client.Write(large)
+	s.NoError(err)
+
+	select {
+	case n := <-received:
+		s.Equal(len(large), n)
+	case <-time.After(5 * time.Second):
+		s.Fail("timeout waiting for large default-unlimited message to be delivered")
+	}
+	s.True(s.client.IsConnected())
+}
+
+// TestClientReadLimitAppliesAfterReconnect proves the ReadLimit re-applies on
+// a fresh connection: the client dial path builds a new WebSocketConfig (and
+// calls newWebSocket) on every Start(), so a manual reconnect must pick up the
+// then-current ReadLimit again, not just the first connection.
+//
+// autoReconnect is disabled here and the reconnect is driven manually (a
+// second explicit Start() after observing the first disconnect), to avoid
+// coupling this test to the backoff/jitter timing of the automatic
+// reconnection handler.
+func (s *WebSocketSuite) TestClientReadLimitAppliesAfterReconnect() {
+	const limit = 64
+	oversized := bytes.Repeat([]byte("b"), limit*4)
+
+	s.client.SetAutoReconnect(false)
+	config := NewClientTimeoutConfig()
+	config.ReadLimit = limit
+	s.client.SetTimeoutConfig(config)
+
+	connectedC := make(chan struct{}, 2)
+	s.server.SetNewClientHandler(func(ws Channel) {
+		connectedC <- struct{}{}
+	})
+	serverDisconnectedC := make(chan struct{}, 2)
+	s.server.SetDisconnectedClientHandler(func(ws Channel) {
+		serverDisconnectedC <- struct{}{}
+	})
+	disconnectedC := make(chan error, 2)
+	s.client.SetDisconnectedHandler(func(err error) {
+		disconnectedC <- err
+	})
+
+	go s.server.Start(serverPort, serverPath)
+	time.Sleep(100 * time.Millisecond)
+
+	host := fmt.Sprintf("localhost:%v", serverPort)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+
+	// First connection.
+	err := s.client.Start(u.String())
+	s.NoError(err)
+	select {
+	case <-connectedC:
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for first connect")
+	}
+
+	// Break the connection from the client side to simulate a connection loss
+	// (autoReconnect is disabled, so this only tears down the connection).
+	s.client.mutex.RLock()
+	clientWs := s.client.webSocket
+	s.client.mutex.RUnlock()
+	s.Require().NotNil(clientWs)
+	s.NoError(clientWs.connection.Close())
+	select {
+	case <-disconnectedC:
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for first disconnect")
+	}
+
+	// Wait for the SERVER to also observe the disconnect before re-dialing.
+	// server.handleDisconnect deletes the ID from s.connections *before*
+	// invoking this handler, so once it fires the duplicate-ID guard at upgrade
+	// (server.go:468) can no longer reject the fresh dial. Waiting only on the
+	// client-side disconnect above leaves a race where the re-dial (same ID)
+	// arrives before the server has cleaned up the old connection, which the
+	// guard would reject with a PolicyViolation — intermittently failing the
+	// second-connect wait below.
+	select {
+	case <-serverDisconnectedC:
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for server to observe first disconnect")
+	}
+
+	// Manually reconnect: a fresh dial, running the same threading path
+	// (NewDefaultWebSocketConfig + ReadLimit + newWebSocket) as the first connect.
+	err = s.client.Start(u.String())
+	s.NoError(err)
+	select {
+	case <-connectedC:
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for second connect")
+	}
+
+	// Server sends an oversized message on the NEW connection: the limit must
+	// still be in effect post-reconnect.
+	err = s.server.Write(path.Base(testPath), oversized)
+	s.NoError(err)
+
+	select {
+	case err := <-disconnectedC:
+		s.Error(err)
+		s.True(errors.Is(err, websocket.ErrReadLimit), "expected websocket.ErrReadLimit, got %v", err)
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for read-limit disconnect after reconnect")
+	}
+}
+
 func (s *WebSocketSuite) TestServerErrors() {
 	// Dedicated channels are used to communicate between the test goroutine and
 	// the asynchronous handlers/listener, avoiding shared mutable counters that
