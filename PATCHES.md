@@ -166,3 +166,34 @@ loopback networking and is run outside restricted sandboxes.
 CALL_RESULT/CALL_ERROR through the current same-ID websocket. That is benign wire noise
 unless a charger uses colliding message IDs; eliminating it would require threading
 connection identity through facade response paths and is out of scope for PR-D2.
+
+## OCPP 1.6 encoding/validation
+
+`ChangeConfigurationRequest.Value` carried `validate:"required"`, which rejects the Go zero
+value (empty string). OCPP 1.6 defines the config `value` as **mandatory-but-may-be-empty** —
+a key can legitimately be set to `""` — so `required` wrongly rejected a valid payload. The
+fork drops `required` (keeps `max=500`, keeps the field a plain `string`). Consequence,
+recorded honestly: with a plain `string`, an *omitted* `value` and an explicit `""` both decode
+to `""`, so validation can no longer distinguish them — the fix accepts empty **and** omitted.
+That trade is accepted (a breaking `*string` or a bespoke `UnmarshalJSON` would be the only ways
+to keep presence enforcement; neither is worth it for a config write).
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `ocpp1.6/core/change_configuration.go:36` | `Value string \`json:"value" validate:"max=500"\`` (no `required`) | accepts a valid empty-string config value; length bound preserved; `Key` stays `required` |
+
+**Guard:** `ocpp1.6_test/change_configuration_test.go` guards two *distinct* properties:
+- `TestChangeConfigurationRequestValidation` pins the **validation** divergence — an explicit
+  `Value:""` (and an omitted `Value`) validates while `Key` stays required and both `max` bounds
+  still reject. A future re-add of `validate:"required"` on `Value` turns **this** test red.
+- `TestChangeConfigurationRequestEmptyValueRoundTrip` pins the **encoding** property — an empty
+  value survives the wire as `"value":""` (present, not omitted, since the field is not
+  `omitempty`). It marshals/unmarshals directly and does **not** run validation, so it guards
+  against a future `omitempty` being added to the tag; it would **not** catch a `required` re-add
+  (that is the validation test's job).
+
+Upstream: **#246** (@sbindzau) — no upstream fix merged; this is a fork-local 1.6-correctness edit.
+
+> Line numbers are current as of the entries above; if the API moves, update this table
+> and the guard tests together. The guard tests are the real backstop — the line numbers
+> are only a navigation aid.
