@@ -501,11 +501,11 @@ type ServerDispatcher interface {
 // Access to pending requests is thread-safe.
 type DefaultServerDispatcher struct {
 	queueMap            ServerQueueMap
-	requestChannel      chan string
-	readyForDispatch    chan string
+	requestChannel      chan serverDispatchRequest
+	readyForDispatch    chan serverReadyToken
 	pendingRequestState ServerState
 	timeout             time.Duration
-	timerC              chan string
+	timerC              chan serverTimeoutToken
 	running             bool
 	stoppedC            chan struct{}
 	doneC               chan struct{}
@@ -513,6 +513,21 @@ type DefaultServerDispatcher struct {
 	onHandlerPanic      func(HandlerPanic)
 	network             ws.Server
 	mutex               sync.RWMutex
+}
+
+type serverDispatchRequest struct {
+	clientID  string
+	deleteAck chan struct{}
+}
+
+type serverReadyToken struct {
+	clientID  string
+	requestID string
+}
+
+type serverTimeoutToken struct {
+	clientID string
+	ctx      context.Context
 }
 
 // Handler function to be invoked when a request gets canceled (either due to timeout or to other external factors).
@@ -533,7 +548,7 @@ func NewDefaultServerDispatcher(queueMap ServerQueueMap) *DefaultServerDispatche
 	d := &DefaultServerDispatcher{
 		queueMap:         queueMap,
 		requestChannel:   nil,
-		readyForDispatch: make(chan string, 1),
+		readyForDispatch: make(chan serverReadyToken, 1),
 		timeout:          defaultMessageTimeout,
 	}
 	d.pendingRequestState = NewServerState(&sync.RWMutex{})
@@ -543,8 +558,8 @@ func NewDefaultServerDispatcher(queueMap ServerQueueMap) *DefaultServerDispatche
 func (d *DefaultServerDispatcher) Start() {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
-	d.requestChannel = make(chan string, 20)
-	d.timerC = make(chan string, 10)
+	d.requestChannel = make(chan serverDispatchRequest, 20)
+	d.timerC = make(chan serverTimeoutToken, 10)
 	d.stoppedC = make(chan struct{}, 1)
 	d.doneC = make(chan struct{})
 	d.running = true
@@ -590,9 +605,29 @@ func (d *DefaultServerDispatcher) DeleteClient(clientID string) {
 	d.queueMap.Remove(clientID)
 	d.mutex.RLock()
 	if d.running {
-		d.requestChannel <- clientID
+		d.requestChannel <- serverDispatchRequest{clientID: clientID}
 	}
 	d.mutex.RUnlock()
+}
+
+func (d *DefaultServerDispatcher) DeleteClientAndWait(clientID string) {
+	d.queueMap.Remove(clientID)
+	ack := make(chan struct{})
+	d.mutex.RLock()
+	if !d.running {
+		d.mutex.RUnlock()
+		return
+	}
+	requestChannel := d.requestChannel
+	doneC := d.doneC
+	requestChannel <- serverDispatchRequest{clientID: clientID, deleteAck: ack}
+	d.mutex.RUnlock()
+
+	select {
+	case <-ack:
+	case <-doneC:
+	case <-time.After(2 * time.Second):
+	}
 }
 
 func (d *DefaultServerDispatcher) SetNetworkServer(server ws.Server) {
@@ -639,7 +674,7 @@ func (d *DefaultServerDispatcher) SendRequest(clientID string, req RequestBundle
 	if !d.running {
 		return fmt.Errorf("cannot send request %v, dispatcher not running", req.Call.UniqueId)
 	}
-	d.requestChannel <- clientID
+	d.requestChannel <- serverDispatchRequest{clientID: clientID}
 	return nil
 }
 
@@ -650,9 +685,13 @@ func (d *DefaultServerDispatcher) messagePump() {
 	var clientID string
 	var ok bool
 	var rdy bool
+	var req serverDispatchRequest
+	var readyTok serverReadyToken
+	var timeoutTok serverTimeoutToken
 	var clientCtx clientTimeoutContext
 	var clientQueue RequestQueue
 	clientContextMap := map[string]clientTimeoutContext{} // Empty at the beginning
+	dispatchedRequestIDMap := map[string]string{}
 
 	// Capture the request channel once, WITHOUT taking d.mutex. It is assigned in
 	// Start before this goroutine is launched (the `go` statement establishes a
@@ -673,7 +712,8 @@ func (d *DefaultServerDispatcher) messagePump() {
 			d.queueMap.Init()
 			log.Info("stopped processing requests")
 			return
-		case clientID = <-reqCh:
+		case req = <-reqCh:
+			clientID = req.clientID
 			// Check whether there is a request queue for the specified client
 			clientQueue, ok = d.queueMap.Get(clientID)
 			if !ok {
@@ -681,10 +721,23 @@ func (d *DefaultServerDispatcher) messagePump() {
 				// Deleting and canceling the context
 				clientCtx = clientContextMap[clientID]
 				delete(clientContextMap, clientID)
+				delete(dispatchedRequestIDMap, clientID)
 				if clientCtx.ctx != nil {
 					clientCtx.cancel()
 				}
+				if req.deleteAck != nil {
+					close(req.deleteAck)
+				}
 				continue
+			}
+			if req.deleteAck != nil {
+				clientCtx = clientContextMap[clientID]
+				delete(clientContextMap, clientID)
+				delete(dispatchedRequestIDMap, clientID)
+				if clientCtx.ctx != nil {
+					clientCtx.cancel()
+				}
+				close(req.deleteAck)
 			}
 			// Check whether we can transmit to client
 			clientCtx, ok = clientContextMap[clientID]
@@ -695,18 +748,24 @@ func (d *DefaultServerDispatcher) messagePump() {
 				// If there is no active context, the client is ready to transmit
 				rdy = !clientCtx.isActive()
 			}
-		case clientID, ok = <-d.timerC:
+		case timeoutTok, ok = <-d.timerC:
 			// Timeout elapsed
 			if !ok {
 				continue
 			}
+			clientID = timeoutTok.clientID
+			clientCtx = clientContextMap[clientID]
+			if clientCtx.ctx != timeoutTok.ctx {
+				continue
+			}
+			timedOutRequestID := dispatchedRequestIDMap[clientID]
 			// Canceling timeout context
 			log.Debugf("timeout for client %v, canceling message", clientID)
-			clientCtx = clientContextMap[clientID]
 			if clientCtx.isActive() {
 				clientCtx.cancel()
-				clientContextMap[clientID] = clientTimeoutContext{}
 			}
+			clientContextMap[clientID] = clientTimeoutContext{}
+			delete(dispatchedRequestIDMap, clientID)
 			if d.pendingRequestState.HasPendingRequest(clientID) {
 				// Current request for client timed out. Removing request and triggering cancel callback
 				q, found := d.queueMap.Get(clientID)
@@ -727,6 +786,11 @@ func (d *DefaultServerDispatcher) messagePump() {
 					log.Errorf("dispatcher timeout for client %s failed; nil Call attribute", clientID)
 					continue
 				}
+				if bundle.Call.GetUniqueId() != timedOutRequestID {
+					clientQueue = nil
+					rdy = false
+					continue
+				}
 
 				if bundle.Data == nil {
 					log.Errorf("dispatcher timeout for client for %s; nil Data attribute", clientID)
@@ -739,6 +803,7 @@ func (d *DefaultServerDispatcher) messagePump() {
 				// if the buffer is already full from a previous iteration.
 				q.Pop()
 				d.pendingRequestState.DeletePendingRequest(clientID, bundle.Call.GetUniqueId())
+				delete(dispatchedRequestIDMap, clientID)
 				log.Debugf("completed request %s for %s", bundle.Call.GetUniqueId(), clientID)
 				// Mark this client as ready for its next queued request
 				clientQueue = q
@@ -746,14 +811,26 @@ func (d *DefaultServerDispatcher) messagePump() {
 				log.Infof("request %v for %v timed out", bundle.Call.GetUniqueId(), clientID)
 				d.fireRequestCancel(clientID, bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
 					newRequestTimeoutError(bundle.Call.GetUniqueId()))
+			} else {
+				q, found := d.queueMap.Get(clientID)
+				if found {
+					clientQueue = q
+					rdy = true
+				}
 			}
-		case clientID = <-d.readyForDispatch:
+		case readyTok = <-d.readyForDispatch:
+			clientID = readyTok.clientID
+			dispatchedRequestID := dispatchedRequestIDMap[clientID]
+			if dispatchedRequestID != "" && dispatchedRequestID != readyTok.requestID {
+				continue
+			}
 			// Cancel previous timeout (if any)
 			clientCtx, ok = clientContextMap[clientID]
 			if ok && clientCtx.isActive() {
 				clientCtx.cancel()
 				clientContextMap[clientID] = clientTimeoutContext{}
 			}
+			delete(dispatchedRequestIDMap, clientID)
 			// client can now transmit again
 			clientQueue, ok = d.queueMap.Get(clientID)
 			if ok {
@@ -766,8 +843,14 @@ func (d *DefaultServerDispatcher) messagePump() {
 		// Only dispatch request if able to send and request queue isn't empty
 		if rdy && clientQueue != nil && !clientQueue.IsEmpty() {
 			// Send request & set new context
-			clientCtx = d.dispatchNextRequest(clientID)
+			var requestID string
+			clientCtx, requestID = d.dispatchNextRequest(clientID)
 			clientContextMap[clientID] = clientCtx
+			if requestID != "" && d.pendingRequestState.HasPendingRequest(clientID) {
+				dispatchedRequestIDMap[clientID] = requestID
+			} else {
+				delete(dispatchedRequestIDMap, clientID)
+			}
 			if clientCtx.isActive() {
 				go d.waitForTimeout(clientID, clientCtx)
 			}
@@ -777,7 +860,7 @@ func (d *DefaultServerDispatcher) messagePump() {
 	}
 }
 
-func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCtx clientTimeoutContext) {
+func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCtx clientTimeoutContext, requestID string) {
 	// Get first element in queue
 	q, ok := d.queueMap.Get(clientID)
 	if !ok {
@@ -798,6 +881,7 @@ func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCt
 
 	jsonMessage := bundle.Data
 	callID := bundle.Call.GetUniqueId()
+	requestID = callID
 	d.pendingRequestState.AddPendingRequest(clientID, callID, bundle.Call.Payload)
 	err := d.network.Write(clientID, jsonMessage)
 	if err != nil {
@@ -834,7 +918,7 @@ func (d *DefaultServerDispatcher) waitForTimeout(clientID string, clientCtx clie
 			running := d.running
 			d.mutex.RUnlock()
 			if running {
-				d.timerC <- clientID
+				d.timerC <- serverTimeoutToken{clientID: clientID, ctx: clientCtx.ctx}
 			}
 		} else {
 			log.Debugf("timeout canceled for %s", clientID)
@@ -865,5 +949,5 @@ func (d *DefaultServerDispatcher) CompleteRequest(clientID string, requestID str
 	d.pendingRequestState.DeletePendingRequest(clientID, requestID)
 	log.Debugf("completed request %s for %s", callID, clientID)
 	// Signal that next message in queue may be sent
-	d.readyForDispatch <- clientID
+	d.readyForDispatch <- serverReadyToken{clientID: clientID, requestID: requestID}
 }
