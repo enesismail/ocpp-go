@@ -365,6 +365,7 @@ func NewCentralSystem(endpoint *ocppj.Server, server ws.Server) CentralSystem {
 		)
 	}
 	cs := newCentralSystem(endpoint)
+	cs.installDisconnectedHandler()
 	cs.server.SetRequestHandler(func(client ws.Channel, request ocpp.Request, requestId string, action string) {
 		cs.handleIncomingRequest(client, request, requestId, action)
 	})

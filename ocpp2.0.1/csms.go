@@ -46,6 +46,7 @@ type csms struct {
 	displayHandler       display.CSMSHandler
 	dataHandler          data.CSMSHandler
 	callbackQueue        callbackqueue.CallbackQueue
+	disconnectedHandler  ChargingStationConnectionHandler
 	errC                 chan error
 }
 
@@ -58,6 +59,18 @@ func newCSMS(server *ocppj.Server) csms {
 		server:        server,
 		callbackQueue: callbackqueue.New(),
 	}
+}
+
+func (cs *csms) installDisconnectedHandler() {
+	cs.server.SetDisconnectedClientHandler(func(chargingStation ws.Channel) {
+		for cb, ok := cs.callbackQueue.Dequeue(chargingStation.ID(), ""); ok; cb, ok = cs.callbackQueue.Dequeue(chargingStation.ID(), "") {
+			err := ocppj.NewLocalTransportError(ocppj.GenericError, "client disconnected, no response received from client", "")
+			cb(nil, err)
+		}
+		if cs.disconnectedHandler != nil {
+			cs.disconnectedHandler(chargingStation)
+		}
+	})
 }
 
 func (cs *csms) error(err error) {
@@ -752,13 +765,10 @@ func (cs *csms) SetNewChargingStationHandler(handler ChargingStationConnectionHa
 }
 
 func (cs *csms) SetChargingStationDisconnectedHandler(handler ChargingStationConnectionHandler) {
-	cs.server.SetDisconnectedClientHandler(func(chargingStation ws.Channel) {
-		for cb, ok := cs.callbackQueue.Dequeue(chargingStation.ID(), ""); ok; cb, ok = cs.callbackQueue.Dequeue(chargingStation.ID(), "") {
-			err := ocppj.NewLocalTransportError(ocppj.GenericError, "client disconnected, no response received from client", "")
-			cb(nil, err)
-		}
-		handler(chargingStation)
-	})
+	// Must be called before Start. The stored handler is read by the websocket
+	// disconnect goroutine without locking, matching the facade's other
+	// construction-time handler setters.
+	cs.disconnectedHandler = handler
 }
 
 func (cs *csms) SendRequestAsync(clientId string, request ocpp.Request, callback func(response ocpp.Response, err error)) error {

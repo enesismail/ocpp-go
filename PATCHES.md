@@ -137,3 +137,32 @@ removal + the callback **identity-guarded** ("delete-if-me"). Scope split, state
 > Line numbers are current as of the entries above; if the API moves, update this table
 > and the guard tests together. The guard tests are the real backstop — the line numbers
 > are only a navigation aid.
+
+## Duplicate-connection policy (evict-old)
+
+This fork adds an opt-in websocket duplicate policy for the half-open reconnect class
+tracked upstream as #314/#376: a new connection with the same charger ID may evict the
+old websocket, but only after the old disconnect teardown has completed. Default behavior
+remains reject-new (`KeepCurrent`). The evict-old policy depends on PR-0 dispatcher
+token identity and delete acknowledgements, plus the S4 identity-guarded disconnect path.
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `ws/server.go` | `DuplicateConnectionPolicy`, `KeepCurrent`, `KeepNew`, `WithDuplicateConnectionPolicy` | public construction-time policy knob; default keeps existing reject-new behavior. The option godoc carries the security caveat that a valid/guessable ID can evict an active charger unless an auth gate proves ownership |
+| `ws/server.go` | `WithDuplicateConnectionEvictionTimeout` and `duplicateEvictionTimeout` | construction-time latch timeout hook; production default is `WriteWait + 4s`, while tests can set a short bounded wait |
+| `ws/server.go` | `gate map[string]int`, `registerNewConnection`, and the `handleDisconnect` gate increment/decrement | unified refcounted transition gate: rejects arrivals while a same-ID disconnect/eviction transition is in progress, covers both policies, and deletes gate keys at zero to avoid wedges/leaks |
+| `ws/websocket.go` / `ws/server.go` | `webSocket.teardownDone`, `teardownOnce`, and the top-of-`handleDisconnect` latch close | per-socket teardown latch; the evictor waits outside `connMutex` until old disconnect cleanup, dispatcher delete, callback drain, and user disconnect handler have returned |
+| `ws/server.go` | `handleMessage` currentness guard (`s.connections[w.ID()] == w`) | drops late inbound frames from a superseded old socket so old CALL_RESULT/CALL_ERROR frames cannot drain callbacks that belong to the replacement |
+| `ocpp1.6/central_system.go` / `ocpp2.0.1/csms.go` | always-installed disconnect drain wrapper plus stored user handler field | facade callback queues drain on every disconnect even when the application did not register a disconnect handler; setters are still set-before-Start and now only store the user callback |
+
+**Guard:** `ws/duplicate_policy_test.go` covers default reject-new, KeepNew eviction,
+the natural-disconnect gate window, stale inbound drops, concurrent duplicate contenders,
+barrier timeout fallback, and no-deadlock load. `ocpp1.6_test/d2_duplicate_policy_test.go`
+covers facade callback drain behavior and dispatcher FIFO/token-identity invariants that
+the websocket eviction latch relies on. Full websocket/facade `-race` verification needs
+loopback networking and is run outside restricted sandboxes.
+
+**Residual:** request handlers already accepted on the old socket may still send a late
+CALL_RESULT/CALL_ERROR through the current same-ID websocket. That is benign wire noise
+unless a charger uses colliding message IDs; eliminating it would require threading
+connection identity through facade response paths and is out of scope for PR-D2.

@@ -443,6 +443,7 @@ func NewCSMS(endpoint *ocppj.Server, server ws.Server) CSMS {
 		)
 	}
 	cs := newCSMS(endpoint)
+	cs.installDisconnectedHandler()
 	cs.server.SetRequestHandler(func(client ws.Channel, request ocpp.Request, requestId string, action string) {
 		cs.handleIncomingRequest(client, request, requestId, action)
 	})
