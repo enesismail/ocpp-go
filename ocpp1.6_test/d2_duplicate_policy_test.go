@@ -3,6 +3,7 @@ package ocpp16_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -99,12 +100,50 @@ func (suite *OcppV16TestSuite) TestD2NoTimeoutCrossTalkOldTimeoutDoesNotFireNewC
 	wsID := "test_id"
 	oldChannel := NewMockWebSocket(wsID)
 	newChannel := NewMockWebSocket(wsID)
+
+	// Flake fix: SetTimeout (below) is a single dispatcher-wide timeout --
+	// there is no per-request override, and the field is read unlocked by the
+	// pump's waitForTimeout goroutine (ocppj/dispatcher.go), so it cannot be
+	// safely changed mid-run without tripping -race. That means the same
+	// clock old is meant to time out on also governs new's request, so new
+	// must be made robust against it instead of relying on a distinct value.
+	//
+	// Register a highly-specific, one-shot expectation for the (mock) Write
+	// call carrying new's request BEFORE setupDefaultCentralSystemHandlers
+	// installs its generic catch-all "Write" expectation below: testify's
+	// mock resolves a call to the first still-live expectation (in
+	// registration order) whose arguments match, so this one only intercepts
+	// the single Write whose payload is new's ("Inoperative"); old's
+	// ("Operative") payload never matches it and falls through to the
+	// generic expectation exactly as before. Once matched, it fires exactly
+	// once (.Once()) and signals newRequestWrittenC, giving us a barrier: new's
+	// request is only truly "pending" (dispatched) once this fires, so
+	// delivering the mocked success response after receiving from this
+	// channel means the response can never be dropped for arriving before
+	// new is pending -- the response-before-dispatch hazard from the old
+	// (immediately-call-MessageHandler-after-SendRequestAsync) version of
+	// this test.
+	newRequestWrittenC := make(chan struct{}, 1)
+	suite.mockWsServer.On("Write", mock.AnythingOfType("string"), mock.MatchedBy(func(data []byte) bool {
+		return strings.Contains(string(data), string(core.AvailabilityTypeInoperative))
+	})).Return(nil).Once().Run(func(args mock.Arguments) {
+		newRequestWrittenC <- struct{}{}
+	})
+
 	setupDefaultCentralSystemHandlers(suite, nil, expectedCentralSystemOptions{clientId: wsID})
 	suite.centralSystem.SetChargePointDisconnectedHandler(func(chargePoint ocpp16.ChargePointConnection) {})
 	// Must be set before Start so the dispatcher pump's waitForTimeout
 	// goroutine actually races old's request to a REAL timeout, rather than
 	// old's request being cleared by a disconnect drain.
-	suite.serverDispatcher.SetTimeout(150 * time.Millisecond)
+	//
+	// Raised from 150ms to 750ms as defense-in-depth on top of the write
+	// barrier above: with the barrier, the gap between new's request
+	// becoming pending and its response being delivered is negligible
+	// (microseconds of mock/channel overhead), so 750ms leaves enormous
+	// headroom against scheduler jitter on a loaded CI runner -- new should
+	// never come close to timing out. 750ms is still short enough that
+	// waiting for old's real timeout (below) keeps the test fast (< 1s).
+	suite.serverDispatcher.SetTimeout(750 * time.Millisecond)
 	suite.centralSystem.Start(8887, "somePath")
 	defer suite.centralSystem.Stop()
 	suite.mockWsServer.NewClientHandler(oldChannel)
@@ -131,6 +170,14 @@ func (suite *OcppV16TestSuite) TestD2NoTimeoutCrossTalkOldTimeoutDoesNotFireNewC
 	newResultC := make(chan d2AsyncResult, 1)
 	err = suite.centralSystem.SendRequestAsync(wsID, core.NewChangeAvailabilityRequest(1, core.AvailabilityTypeInoperative), d2ChangeAvailabilityCallback(newResultC))
 	require.NoError(t, err)
+	// Barrier: block until new's request has actually been dispatched/written
+	// (see the newRequestWrittenC setup above) before delivering the mocked
+	// response, so the response can never race ahead of new becoming pending.
+	select {
+	case <-newRequestWrittenC:
+	case <-time.After(inboundOrderingWaitTimeout):
+		t.Fatal("timed out waiting for new's request to be dispatched/written")
+	}
 	err = suite.mockWsServer.MessageHandler(newChannel, d2SuccessfulChangeAvailabilityResult(defaultMessageId))
 	require.NoError(t, err)
 	newResult := receiveD2AsyncResult(t, "new replacement response", newResultC)
