@@ -1,6 +1,7 @@
 package ocpp16_test
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/enesismail/ocpp-go/ocpp1.6/core"
@@ -14,13 +15,30 @@ func (suite *OcppV16TestSuite) TestChangeConfigurationRequestValidation() {
 	t := suite.T()
 	var requestTable = []GenericTestEntry{
 		{core.ChangeConfigurationRequest{Key: "someKey", Value: "someValue"}, true},
-		{core.ChangeConfigurationRequest{Key: "someKey"}, false},
+		{core.ChangeConfigurationRequest{Key: "someKey"}, true},            // Omitted value goes valid as an accepted side effect of dropping required, not the intended case.
+		{core.ChangeConfigurationRequest{Key: "someKey", Value: ""}, true}, // Intended #246 case: explicit empty string is valid.
 		{core.ChangeConfigurationRequest{Value: "someValue"}, false},
 		{core.ChangeConfigurationRequest{}, false},
 		{core.ChangeConfigurationRequest{Key: ">50................................................", Value: "someValue"}, false},
 		{core.ChangeConfigurationRequest{Key: "someKey", Value: ">500................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................."}, false},
 	}
 	ExecuteGenericTestTable(t, requestTable)
+}
+
+func (suite *OcppV16TestSuite) TestChangeConfigurationRequestEmptyValueRoundTrip() {
+	t := suite.T()
+	request := core.ChangeConfigurationRequest{Key: "k", Value: ""}
+
+	data, err := json.Marshal(request)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"key":"k"`)
+	assert.Contains(t, string(data), `"value":""`)
+
+	var decoded core.ChangeConfigurationRequest
+	err = json.Unmarshal(data, &decoded)
+	require.NoError(t, err)
+	assert.Equal(t, "k", decoded.Key)
+	assert.Equal(t, "", decoded.Value)
 }
 
 func (suite *OcppV16TestSuite) TestChangeConfigurationConfirmationValidation() {
