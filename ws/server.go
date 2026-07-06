@@ -512,10 +512,47 @@ func (s *server) handleMessage(w Channel, data []byte) error {
 }
 
 func (s *server) handleDisconnect(w Channel, _ error) {
-	// server never attempts to auto-reconnect to client. Resources are simply freed up
+	// server never attempts to auto-reconnect to client. Resources are simply freed up.
+	//
+	// Identity-guarded removal + ordered/guarded disconnect (S4, #292/#387):
+	// a stale/superseded socket (e.g. a slow disconnect racing a same-ID
+	// reconnect) must not clobber a newer entry in s.connections, nor emit a
+	// disconnected event after a newer connected event for the same ID.
+	//
+	// Under the current reject-new duplicate policy, isCurrent is in practice
+	// always true here (a newer same-ID entry can only register after this socket
+	// is already gone), so the delete-if-me guard and the !isCurrent branch are
+	// the invariant a future evict-old policy (D2) requires. The re-check below
+	// is the branch with live value today: a reconnector that already finished
+	// its handshake can be parked at connMutex.Lock and insert between this
+	// delete and the callback.
 	s.connMutex.Lock()
-	delete(s.connections, w.ID())
+	current, ok := s.connections[w.ID()]
+	isCurrent := ok && current == w // pointer identity: *webSocket vs Channel(holding *webSocket) is a valid, well-defined comparison
+	if isCurrent {
+		delete(s.connections, w.ID())
+	}
 	s.connMutex.Unlock()
+	if !isCurrent {
+		// We were already superseded/removed (a newer same-ID connection, or a
+		// server-initiated removal) — stay silent. Emitting a disconnect now would
+		// land *after* the newer connect and make a live client look gone (#292).
+		log.Debugf("suppressed stale disconnect for %s (superseded before removal)", w.ID())
+		return
+	}
+	// Re-check right before firing: a newer connection for this ID may have
+	// registered between the Unlock above and here (e.g. a reconnector parked at
+	// connMutex.Lock). If so, its newClientHandler has run (or is about to) and
+	// THIS disconnect must not be observed after it.
+	s.connMutex.RLock()
+	_, superseded := s.connections[w.ID()]
+	s.connMutex.RUnlock()
+	if superseded {
+		log.Debugf("suppressed stale disconnect for %s (superseded during removal)", w.ID())
+		return
+	}
+	// Log "closed" only when we actually emit the disconnect, so the log and the
+	// event stream agree (a suppressed disconnect above does not log a close).
 	log.Infof("closed connection to %s", w.ID())
 	if s.disconnectedHandler != nil {
 		s.disconnectedHandler(w)
