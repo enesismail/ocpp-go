@@ -34,6 +34,7 @@ type centralSystem struct {
 	securityHandler       security.CentralSystemHandler
 	secureFirmwareHandler securefirmware.CentralSystemHandler
 	callbackQueue         callbackqueue.CallbackQueue
+	disconnectedHandler   ChargePointConnectionHandler
 	errC                  chan error
 }
 
@@ -46,6 +47,18 @@ func newCentralSystem(server *ocppj.Server) centralSystem {
 		server:        server,
 		callbackQueue: callbackqueue.New(),
 	}
+}
+
+func (cs *centralSystem) installDisconnectedHandler() {
+	cs.server.SetDisconnectedClientHandler(func(chargePoint ws.Channel) {
+		for cb, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), ""); ok; cb, ok = cs.callbackQueue.Dequeue(chargePoint.ID(), "") {
+			err := ocppj.NewLocalTransportError(ocppj.GenericError, "client disconnected, no response received from client", "")
+			cb(nil, err)
+		}
+		if cs.disconnectedHandler != nil {
+			cs.disconnectedHandler(chargePoint)
+		}
+	})
 }
 
 func (cs *centralSystem) error(err error) {
@@ -503,13 +516,10 @@ func (cs *centralSystem) SetNewChargePointHandler(handler ChargePointConnectionH
 }
 
 func (cs *centralSystem) SetChargePointDisconnectedHandler(handler ChargePointConnectionHandler) {
-	cs.server.SetDisconnectedClientHandler(func(chargePoint ws.Channel) {
-		for cb, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), ""); ok; cb, ok = cs.callbackQueue.Dequeue(chargePoint.ID(), "") {
-			err := ocppj.NewLocalTransportError(ocppj.GenericError, "client disconnected, no response received from client", "")
-			cb(nil, err)
-		}
-		handler(chargePoint)
-	})
+	// Must be called before Start. The stored handler is read by the websocket
+	// disconnect goroutine without locking, matching the facade's other
+	// construction-time handler setters.
+	cs.disconnectedHandler = handler
 }
 
 func (cs *centralSystem) SendRequestAsync(clientId string, request ocpp.Request, callback func(confirmation ocpp.Response, err error)) error {

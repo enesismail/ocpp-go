@@ -325,6 +325,8 @@ type webSocket struct {
 	closeC             chan websocket.CloseError // used to gracefully close a websocket connection.
 	forceCloseC        chan error                // used by the readPump to notify a forcefully closed connection to the writePump.
 	done               chan struct{}             // closed when cleanup begins, unblocking pending writes.
+	teardownDone       chan struct{}             // closed after server disconnect teardown returns.
+	teardownOnce       sync.Once
 	tlsConnectionState *tls.ConnectionState
 	cfg                WebSocketConfig
 	log                logging.Logger
@@ -347,6 +349,7 @@ func newWebSocket(id string, conn *websocket.Conn, tlsState *tls.ConnectionState
 		closeC:             make(chan websocket.CloseError, 1),
 		forceCloseC:        make(chan error, 1),
 		done:               make(chan struct{}),
+		teardownDone:       make(chan struct{}),
 		onClosed:           onClosed,
 		onError:            onError,
 		onMessage:          onMessage,

@@ -135,7 +135,9 @@ type Server interface {
 // Use the NewServer function to create a new server.
 type server struct {
 	connections           map[string]*webSocket
+	gate                  map[string]int
 	httpServer            *http.Server
+	stopped               bool
 	messageHandler        func(ws Channel, data []byte) error
 	chargePointIdResolver func(*http.Request) (string, error)
 	checkClientHandler    CheckClientHandler
@@ -145,6 +147,8 @@ type server struct {
 	tlsCertificatePath    string
 	tlsCertificateKey     string
 	timeoutConfig         ServerTimeoutConfig
+	duplicatePolicy       DuplicateConnectionPolicy
+	evictionTimeout       time.Duration
 	upgrader              websocket.Upgrader
 	errC                  chan error
 	errClosed             bool // true once errC has been closed, to prevent double-close and sends on a closed channel
@@ -152,6 +156,19 @@ type server struct {
 	addr                  *net.TCPAddr
 	httpHandler           *mux.Router
 }
+
+// DuplicateConnectionPolicy controls how the server handles a new connection
+// attempt using an ID that already has an active websocket.
+type DuplicateConnectionPolicy int
+
+const (
+	// KeepCurrent preserves the existing behavior: reject the new duplicate
+	// connection and keep the current websocket active.
+	KeepCurrent DuplicateConnectionPolicy = iota
+	// KeepNew evicts the current websocket and accepts the new duplicate only
+	// after the old websocket's disconnect teardown has completed.
+	KeepNew
+)
 
 // ServerOpt is a function that can be used to set options on a server during creation.
 type ServerOpt func(s *server)
@@ -165,6 +182,28 @@ func WithServerTLSConfig(certificatePath string, certificateKey string, tlsConfi
 		if tlsConfig != nil {
 			s.httpServer.TLSConfig = tlsConfig
 		}
+	}
+}
+
+// WithDuplicateConnectionPolicy sets the duplicate-connection policy for the
+// server at construction time. The default is KeepCurrent.
+//
+// Security caveat: KeepNew lets any client that can authenticate and present
+// or guess an active charger ID evict that charger's current connection. Use
+// KeepNew only behind an authentication/authorization gate that proves the
+// connecting peer is allowed to claim the requested ID.
+func WithDuplicateConnectionPolicy(policy DuplicateConnectionPolicy) ServerOpt {
+	return func(s *server) {
+		s.duplicatePolicy = policy
+	}
+}
+
+// WithDuplicateConnectionEvictionTimeout sets the bounded wait for KeepNew
+// eviction teardown. It is a construction-time option; when unset, the server
+// uses a production default of WriteWait plus a dispatcher and handler budget.
+func WithDuplicateConnectionEvictionTimeout(d time.Duration) ServerOpt {
+	return func(s *server) {
+		s.evictionTimeout = d
 	}
 }
 
@@ -188,6 +227,8 @@ func WithServerTLSConfig(certificatePath string, certificateKey string, tlsConfi
 func NewServer(opts ...ServerOpt) Server {
 	router := mux.NewRouter()
 	s := &server{
+		connections:   make(map[string]*webSocket),
+		gate:          make(map[string]int),
 		httpServer:    &http.Server{},
 		timeoutConfig: NewServerTimeoutConfig(),
 		upgrader:      websocket.Upgrader{Subprotocols: []string{}},
@@ -290,6 +331,8 @@ func (s *server) Start(port int, listenPath string) {
 	// the blocking Serve call.
 	s.connMutex.Lock()
 	s.connections = make(map[string]*webSocket)
+	s.gate = make(map[string]int)
+	s.stopped = false
 	if s.httpServer == nil {
 		s.httpServer = &http.Server{}
 	}
@@ -374,8 +417,9 @@ func (s *server) GetChannel(websocketId string) (Channel, bool) {
 }
 
 func (s *server) stopConnections() {
-	s.connMutex.RLock()
-	defer s.connMutex.RUnlock()
+	s.connMutex.Lock()
+	defer s.connMutex.Unlock()
+	s.stopped = true
 	for _, conn := range s.connections {
 		_ = conn.Close(websocket.CloseError{Code: websocket.CloseNormalClosure, Text: ""})
 	}
@@ -462,18 +506,6 @@ out:
 		_ = conn.Close()
 		return
 	}
-	// Check whether client exists
-	s.connMutex.Lock()
-	// There is already a connection with the same ID. Close the new one immediately with a PolicyViolation.
-	if _, exists := s.connections[id]; exists {
-		s.connMutex.Unlock()
-		s.error(fmt.Errorf("client %s already exists, closing duplicate client", id))
-		_ = conn.WriteControl(websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "a connection with this ID already exists"),
-			time.Now().Add(s.timeoutConfig.WriteWait))
-		_ = conn.Close()
-		return
-	}
 	// Create web socket for client, state is automatically set to connected
 	wsCfg := NewDefaultWebSocketConfig(
 		s.timeoutConfig.WriteWait,
@@ -492,9 +524,9 @@ out:
 			s.error(err)
 		},
 	)
-	// Add new client
-	s.connections[ws.id] = ws
-	s.connMutex.Unlock()
+	if !s.registerNewConnection(ws) {
+		return
+	}
 	// Start reader and write routine
 	ws.run()
 	if s.newClientHandler != nil {
@@ -503,8 +535,102 @@ out:
 	}
 }
 
+func (s *server) duplicateEvictionTimeout() time.Duration {
+	if s.evictionTimeout > 0 {
+		return s.evictionTimeout
+	}
+	return s.timeoutConfig.WriteWait + 4*time.Second
+}
+
+func (s *server) rejectConnection(conn *websocket.Conn, code int, reason string) {
+	_ = conn.WriteControl(websocket.CloseMessage,
+		websocket.FormatCloseMessage(code, reason),
+		time.Now().Add(s.timeoutConfig.WriteWait))
+	_ = conn.Close()
+}
+
+func (s *server) decrementGate(id string) {
+	s.connMutex.Lock()
+	defer s.connMutex.Unlock()
+	s.gate[id]--
+	if s.gate[id] <= 0 {
+		delete(s.gate, id)
+	}
+}
+
+func (s *server) registerNewConnection(ws *webSocket) bool {
+	id := ws.ID()
+	s.connMutex.Lock()
+	if s.stopped {
+		s.connMutex.Unlock()
+		s.error(fmt.Errorf("server is stopping, closing new client %s", id))
+		s.rejectConnection(ws.connection, websocket.ClosePolicyViolation, "server shutting down")
+		return false
+	}
+	if s.gate[id] > 0 {
+		s.connMutex.Unlock()
+		s.error(fmt.Errorf("client %s connection transition in progress, closing duplicate client", id))
+		s.rejectConnection(ws.connection, websocket.ClosePolicyViolation, "connection transition in progress")
+		return false
+	}
+	old, exists := s.connections[id]
+	if !exists {
+		s.connections[id] = ws
+		s.connMutex.Unlock()
+		return true
+	}
+	if s.duplicatePolicy != KeepNew {
+		s.connMutex.Unlock()
+		s.error(fmt.Errorf("client %s already exists, closing duplicate client", id))
+		s.rejectConnection(ws.connection, websocket.ClosePolicyViolation, "a connection with this ID already exists")
+		return false
+	}
+	s.gate[id]++
+	defer s.decrementGate(id)
+	s.connMutex.Unlock()
+
+	if err := old.Close(websocket.CloseError{Code: websocket.ClosePolicyViolation, Text: "reconnected"}); err != nil {
+		log.Debugf("closing old duplicate connection for %s returned: %v", id, err)
+	}
+
+	timer := time.NewTimer(s.duplicateEvictionTimeout())
+	defer timer.Stop()
+	select {
+	case <-old.teardownDone:
+	case <-timer.C:
+		s.error(fmt.Errorf("timed out waiting for old duplicate connection %s to tear down", id))
+		s.rejectConnection(ws.connection, websocket.ClosePolicyViolation, "timed out waiting for old connection teardown")
+		return false
+	}
+
+	s.connMutex.Lock()
+	if s.stopped {
+		s.connMutex.Unlock()
+		s.error(fmt.Errorf("server is stopping, closing replacement client %s", id))
+		s.rejectConnection(ws.connection, websocket.ClosePolicyViolation, "server shutting down")
+		return false
+	}
+	if _, exists := s.connections[id]; exists {
+		s.connMutex.Unlock()
+		s.error(fmt.Errorf("client %s still exists after duplicate eviction, closing replacement", id))
+		s.rejectConnection(ws.connection, websocket.ClosePolicyViolation, "a connection with this ID already exists")
+		return false
+	}
+	s.connections[id] = ws
+	s.connMutex.Unlock()
+	return true
+}
+
 // --------- Internal callbacks webSocket -> server ---------
 func (s *server) handleMessage(w Channel, data []byte) error {
+	s.connMutex.RLock()
+	current, ok := s.connections[w.ID()]
+	isCurrent := ok && current == w
+	s.connMutex.RUnlock()
+	if !isCurrent {
+		log.Debugf("dropping inbound message from stale websocket %s", w.ID())
+		return nil
+	}
 	if s.messageHandler != nil {
 		return s.messageHandler(w, data)
 	}
@@ -512,6 +638,11 @@ func (s *server) handleMessage(w Channel, data []byte) error {
 }
 
 func (s *server) handleDisconnect(w Channel, _ error) {
+	if ws, ok := w.(*webSocket); ok && ws.teardownDone != nil {
+		defer ws.teardownOnce.Do(func() {
+			close(ws.teardownDone)
+		})
+	}
 	// server never attempts to auto-reconnect to client. Resources are simply freed up.
 	//
 	// Identity-guarded removal + ordered/guarded disconnect (S4, #292/#387):
@@ -519,25 +650,24 @@ func (s *server) handleDisconnect(w Channel, _ error) {
 	// reconnect) must not clobber a newer entry in s.connections, nor emit a
 	// disconnected event after a newer connected event for the same ID.
 	//
-	// Under the current reject-new duplicate policy, isCurrent is in practice
-	// always true here (a newer same-ID entry can only register after this socket
-	// is already gone), so the delete-if-me guard and the !isCurrent branch are
-	// the invariant a future evict-old policy (D2) requires. The re-check below
-	// is the branch with live value today: a reconnector that already finished
-	// its handshake can be parked at connMutex.Lock and insert between this
-	// delete and the callback.
+	// The transition gate below also prevents a reconnect from registering in
+	// the window after this socket is removed but before the disconnect callback
+	// chain has returned.
+	id := w.ID()
 	s.connMutex.Lock()
-	current, ok := s.connections[w.ID()]
+	s.gate[id]++
+	defer s.decrementGate(id)
+	current, ok := s.connections[id]
 	isCurrent := ok && current == w // pointer identity: *webSocket vs Channel(holding *webSocket) is a valid, well-defined comparison
 	if isCurrent {
-		delete(s.connections, w.ID())
+		delete(s.connections, id)
 	}
 	s.connMutex.Unlock()
 	if !isCurrent {
 		// We were already superseded/removed (a newer same-ID connection, or a
 		// server-initiated removal) — stay silent. Emitting a disconnect now would
 		// land *after* the newer connect and make a live client look gone (#292).
-		log.Debugf("suppressed stale disconnect for %s (superseded before removal)", w.ID())
+		log.Debugf("suppressed stale disconnect for %s (superseded before removal)", id)
 		return
 	}
 	// Re-check right before firing: a newer connection for this ID may have
@@ -545,15 +675,15 @@ func (s *server) handleDisconnect(w Channel, _ error) {
 	// connMutex.Lock). If so, its newClientHandler has run (or is about to) and
 	// THIS disconnect must not be observed after it.
 	s.connMutex.RLock()
-	_, superseded := s.connections[w.ID()]
+	_, superseded := s.connections[id]
 	s.connMutex.RUnlock()
 	if superseded {
-		log.Debugf("suppressed stale disconnect for %s (superseded during removal)", w.ID())
+		log.Debugf("suppressed stale disconnect for %s (superseded during removal)", id)
 		return
 	}
 	// Log "closed" only when we actually emit the disconnect, so the log and the
 	// event stream agree (a suppressed disconnect above does not log a close).
-	log.Infof("closed connection to %s", w.ID())
+	log.Infof("closed connection to %s", id)
 	if s.disconnectedHandler != nil {
 		s.disconnectedHandler(w)
 	}
