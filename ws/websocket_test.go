@@ -766,18 +766,26 @@ func (s *WebSocketSuite) TestWebsocketClientConnectionBreak() {
 
 func (s *WebSocketSuite) TestWebsocketServerConnectionBreak() {
 	disconnected := make(chan struct{}, 1)
+	type newClientObservation struct {
+		ws       Channel
+		conn     *webSocket
+		isWS     bool
+		closeErr error
+	}
+	newClientC := make(chan newClientObservation, 1)
+
 	s.server = newWebsocketServer(s.T(), nil)
 	s.server.SetNewClientHandler(func(ws Channel) {
-		s.NotNil(ws)
 		// The handler receives the Channel directly, so there is no need to look
 		// it up in the connections map (which would race with other handler and
 		// disconnect callbacks).
 		conn, ok := ws.(*webSocket)
-		s.True(ok)
-		s.NotNil(conn)
-		// Simulate connection closed as soon client is connected
-		err := conn.connection.Close()
-		s.NoError(err)
+		var closeErr error
+		if ok && conn != nil {
+			closeErr = conn.connection.Close() // simulate connection closed on connect
+		}
+		// No s.* here: relay to the test goroutine (buffered send never blocks).
+		newClientC <- newClientObservation{ws: ws, conn: conn, isWS: ok, closeErr: closeErr}
 	})
 	s.server.SetDisconnectedClientHandler(func(ws Channel) {
 		disconnected <- struct{}{}
@@ -792,9 +800,20 @@ func (s *WebSocketSuite) TestWebsocketServerConnectionBreak() {
 	err := s.client.Start(u.String())
 	s.NoError(err)
 
+	// Assert the handler's observations on the test goroutine, and consume the
+	// relay before returning so the handler is ordered before the next SetT.
 	select {
-	case result := <-disconnected:
-		s.NotNil(result)
+	case obs := <-newClientC:
+		s.NotNil(obs.ws)
+		s.True(obs.isWS)
+		s.NotNil(obs.conn)
+		s.NoError(obs.closeErr)
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for new client handler")
+	}
+
+	select {
+	case <-disconnected:
 	case <-time.After(1 * time.Second):
 		s.Fail("timeout waiting for server disconnect")
 	}
