@@ -39,6 +39,39 @@ type (
 	ChargingStationConnectionHandler func(chargePoint ChargingStationConnection)
 )
 
+// DefaultProfiles returns the full set of OCPP 2.0.1 profiles that NewChargingStation
+// and NewCSMS register by default. Pass it (spread) when constructing a custom
+// ocppj.Client/Server endpoint so the standard feature set is installed without
+// listing every profile by hand:
+//
+//	endpoint := ocppj.NewClient(id, client, dispatcher, nil, ocpp2.DefaultProfiles()...)
+//
+// A fresh slice is returned on each call; the caller may reorder or subset it
+// freely without affecting the library defaults. The elements are shared,
+// package-level singletons, so treat them as read-only — do not mutate a
+// returned Profile's Name or Features; the same pointers are installed in every
+// endpoint constructed from the defaults.
+func DefaultProfiles() []*ocpp.Profile {
+	return []*ocpp.Profile{
+		authorization.Profile,
+		availability.Profile,
+		data.Profile,
+		diagnostics.Profile,
+		display.Profile,
+		firmware.Profile,
+		iso15118.Profile,
+		localauth.Profile,
+		meter.Profile,
+		provisioning.Profile,
+		remotecontrol.Profile,
+		reservation.Profile,
+		security.Profile,
+		smartcharging.Profile,
+		tariffcost.Profile,
+		transactions.Profile,
+	}
+}
+
 // -------------------- v2.0 Charging Station --------------------
 
 // A Charging Station represents the physical system where an EV can be charged.
@@ -233,7 +266,7 @@ func NewChargingStation(id string, endpoint *ocppj.Client, client ws.Client) Cha
 
 	if endpoint == nil {
 		dispatcher := ocppj.NewDefaultClientDispatcher(ocppj.NewFIFOClientQueue(0))
-		endpoint = ocppj.NewClient(id, client, dispatcher, nil, authorization.Profile, availability.Profile, data.Profile, diagnostics.Profile, display.Profile, firmware.Profile, iso15118.Profile, localauth.Profile, meter.Profile, provisioning.Profile, remotecontrol.Profile, reservation.Profile, security.Profile, smartcharging.Profile, tariffcost.Profile, transactions.Profile)
+		endpoint = ocppj.NewClient(id, client, dispatcher, nil, DefaultProfiles()...)
 	}
 	endpoint.SetDialect(ocpp.V2)
 
@@ -439,24 +472,7 @@ func NewCSMS(endpoint *ocppj.Server, server ws.Server) CSMS {
 	}
 	server.AddSupportedSubprotocol(types.V201Subprotocol)
 	if endpoint == nil {
-		endpoint = ocppj.NewServer(server, nil, nil,
-			authorization.Profile,
-			availability.Profile,
-			data.Profile,
-			diagnostics.Profile,
-			display.Profile,
-			firmware.Profile,
-			iso15118.Profile,
-			localauth.Profile,
-			meter.Profile,
-			provisioning.Profile,
-			remotecontrol.Profile,
-			reservation.Profile,
-			security.Profile,
-			smartcharging.Profile,
-			tariffcost.Profile,
-			transactions.Profile,
-		)
+		endpoint = ocppj.NewServer(server, nil, nil, DefaultProfiles()...)
 	}
 	cs := newCSMS(endpoint)
 	cs.installDisconnectedHandler()
