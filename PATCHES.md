@@ -197,3 +197,34 @@ Upstream: **#246** (@sbindzau) — no upstream fix merged; this is a fork-local 
 > Line numbers are current as of the entries above; if the API moves, update this table
 > and the guard tests together. The guard tests are the real backstop — the line numbers
 > are only a navigation aid.
+
+## ChargePoint/ChargingStation disconnect & reconnect hooks
+
+The shared `ocppj.Client` already has disconnect/reconnect hooks, but the 1.6
+`ChargePoint` and 2.0.1 `ChargingStation` facades did not expose them. This adds
+the facade-level setters so embedders can observe unexpected drops and successful
+redials without hand-building the raw endpoint just to reach the existing client
+hooks. The setters are one-line delegations; the hook storage, sequencing, and
+panic isolation remain owned by `ocppj.Client`.
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `ocpp1.6/v16.go:108`; `ocpp1.6/charge_point.go:306` | `ChargePoint.SetOnDisconnectedHandler` + `chargePoint` delegation | exposes the existing client unexpected-disconnect hook on the 1.6 facade |
+| `ocpp1.6/v16.go:114`; `ocpp1.6/charge_point.go:315` | `ChargePoint.SetOnReconnectedHandler` + `chargePoint` delegation | exposes the existing client post-redial hook on the 1.6 facade, with the dispatcher-paused deadlock contract documented |
+| `ocpp2.0.1/v2.go:149`; `ocpp2.0.1/charging_station.go:467` | `ChargingStation.SetOnDisconnectedHandler` + `chargingStation` delegation | keeps 2.0.1 facade parity for the existing unexpected-disconnect hook |
+| `ocpp2.0.1/v2.go:155`; `ocpp2.0.1/charging_station.go:476` | `ChargingStation.SetOnReconnectedHandler` + `chargingStation` delegation | keeps 2.0.1 facade parity for the reconnect hook, including the `StartWithRetries` initial-connect nuance |
+
+**Guard:** `ocpp1.6_test/disconnect_hook_test.go` and
+`ocpp2.0.1_test/disconnect_hook_test.go` exercise the public facade setters for
+unexpected disconnect and reconnect wiring, including graceful-stop and panic
+guard behavior where applicable.
+
+Upstream: this completes **PR #85** (@michaelbeaumont — the in-tree
+`ocppj.Client` setters, also in `upstream/master`) at the facade layer, which
+upstream still lacks. It resolves the still-OPEN **#288** (@sc-atompower), where
+the disconnect handler appeared "not called" because the durable client hook was
+not reachable from the facade and the ws-layer hook is rewired by `Start`.
+
+> Line numbers are current as of the entries above; if the API moves, update this table
+> and the guard tests together. The guard tests are the real backstop — the line numbers
+> are only a navigation aid.

@@ -464,6 +464,27 @@ func (cs *chargingStation) SetOnHandlerPanic(handler func(ocppj.HandlerPanic)) {
 	cs.client.SetOnHandlerPanic(handler)
 }
 
+// SetOnDisconnectedHandler registers a callback invoked when the charging
+// station loses its connection to the CSMS unexpectedly (not on a graceful
+// Stop). The callback runs on the client's connection goroutine and blocks the
+// automatic reconnect from starting until it returns, so keep it fast; hand off
+// slow work to a goroutine. Set it before Start/StartWithRetries.
+func (cs *chargingStation) SetOnDisconnectedHandler(handler func(err error)) {
+	cs.client.SetOnDisconnectedHandler(handler)
+}
+
+// SetOnReconnectedHandler registers a callback invoked after the charging
+// station has (re)established a connection. It MUST NOT perform a synchronous
+// facade send (BootNotification, SendRequest, and similar): on a post-drop
+// reconnect the message dispatcher is still paused and the send deadlocks until
+// this callback returns; after an initial StartWithRetries success the
+// dispatcher is not yet started and the send fails ("client is not started").
+// Either way, dispatch post-connect work to a goroutine or use SendRequestAsync.
+// Set it before Start/StartWithRetries.
+func (cs *chargingStation) SetOnReconnectedHandler(handler func()) {
+	cs.client.SetOnReconnectedHandler(handler)
+}
+
 func (cs *chargingStation) SendRequest(request ocpp.Request) (ocpp.Response, error) {
 	featureName := request.GetFeatureName()
 	if _, found := cs.client.GetProfileForFeature(featureName); !found {

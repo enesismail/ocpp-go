@@ -105,6 +105,20 @@ type ChargePoint interface {
 	SetCertificateHandler(handler certificates.ChargePointHandler)
 	// Registers a callback invoked when a user-provided OCPP-J handler panics.
 	SetOnHandlerPanic(handler func(ocppj.HandlerPanic))
+	// SetOnDisconnectedHandler registers a callback invoked when the charge point
+	// loses its connection to the central system unexpectedly (not on a graceful
+	// Stop). The callback runs on the client's connection goroutine and blocks the
+	// automatic reconnect from starting until it returns, so keep it fast; hand off
+	// slow work to a goroutine. Set it before Start.
+	SetOnDisconnectedHandler(handler func(err error))
+	// SetOnReconnectedHandler registers a callback invoked after the charge point
+	// has automatically re-established a dropped connection. The callback runs while
+	// the message dispatcher is still paused, so it MUST NOT perform a synchronous
+	// facade send (BootNotification, SendRequest, and similar): those block until
+	// the dispatcher resumes, which only happens after this callback returns; a
+	// deadlock. To re-run post-connect logic, dispatch it to a goroutine or use
+	// SendRequestAsync. Set it before Start.
+	SetOnReconnectedHandler(handler func())
 
 	// Sends a request to the central system.
 	// The central system will respond with a confirmation, or with an error if the request was invalid or could not be processed.
@@ -123,7 +137,8 @@ type ChargePoint interface {
 	//
 	// Optional client options must be set before calling this function. Refer to NewClient.
 	//
-	// No auto-reconnect logic is implemented as of now, but is planned for the future.
+	// The client auto-reconnects while auto-reconnect is enabled (the default; see SetAutoReconnect),
+	// and SetOnReconnectedHandler observes each successful redial.
 	Start(centralSystemUrl string) error
 	// Stops the charge point routine, disconnecting it from the central system.
 	// Any pending requests are discarded.

@@ -146,6 +146,21 @@ type ChargingStation interface {
 	// Registers a handler for incoming data transfer messages
 	SetDataHandler(handler data.ChargingStationHandler)
 	SetOnHandlerPanic(handler func(ocppj.HandlerPanic))
+	// SetOnDisconnectedHandler registers a callback invoked when the charging
+	// station loses its connection to the CSMS unexpectedly (not on a graceful
+	// Stop). The callback runs on the client's connection goroutine and blocks the
+	// automatic reconnect from starting until it returns, so keep it fast; hand off
+	// slow work to a goroutine. Set it before Start/StartWithRetries.
+	SetOnDisconnectedHandler(handler func(err error))
+	// SetOnReconnectedHandler registers a callback invoked after the charging
+	// station has (re)established a connection. It MUST NOT perform a synchronous
+	// facade send (BootNotification, SendRequest, and similar): on a post-drop
+	// reconnect the message dispatcher is still paused and the send deadlocks until
+	// this callback returns; after an initial StartWithRetries success the
+	// dispatcher is not yet started and the send fails ("client is not started").
+	// Either way, dispatch post-connect work to a goroutine or use SendRequestAsync.
+	// Set it before Start/StartWithRetries.
+	SetOnReconnectedHandler(handler func())
 	// Sends a request to the CSMS.
 	// The CSMS will respond with a confirmation, or with an error if the request was invalid or could not be processed.
 	// In case of network issues (i.e. the remote host couldn't be reached), the function also returns an error.
@@ -164,7 +179,8 @@ type ChargingStation interface {
 	//
 	// Optional client options must be set before calling this function. Refer to NewChargingStation.
 	//
-	// No auto-reconnect logic is implemented as of now, but is planned for the future.
+	// The client auto-reconnects while auto-reconnect is enabled (the default; see SetAutoReconnect),
+	// and SetOnReconnectedHandler observes each successful redial.
 	Start(csmsUrl string) error
 
 	// Connects to the CSMS and starts the charging station routine, it retries if first attempt fails.
