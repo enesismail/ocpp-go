@@ -303,6 +303,26 @@ func (cp *chargePoint) SetOnHandlerPanic(handler func(ocppj.HandlerPanic)) {
 	cp.client.SetOnHandlerPanic(handler)
 }
 
+// SetOnDisconnectedHandler registers a callback invoked when the charge point
+// loses its connection to the central system unexpectedly (not on a graceful
+// Stop). The callback runs on the client's connection goroutine and blocks the
+// automatic reconnect from starting until it returns, so keep it fast; hand off
+// slow work to a goroutine. Set it before Start.
+func (cp *chargePoint) SetOnDisconnectedHandler(handler func(err error)) {
+	cp.client.SetOnDisconnectedHandler(handler)
+}
+
+// SetOnReconnectedHandler registers a callback invoked after the charge point
+// has automatically re-established a dropped connection. The callback runs while
+// the message dispatcher is still paused, so it MUST NOT perform a synchronous
+// facade send (BootNotification, SendRequest, and similar): those block until
+// the dispatcher resumes, which only happens after this callback returns; a
+// deadlock. To re-run post-connect logic, dispatch it to a goroutine or use
+// SendRequestAsync. Set it before Start.
+func (cp *chargePoint) SetOnReconnectedHandler(handler func()) {
+	cp.client.SetOnReconnectedHandler(handler)
+}
+
 func (cp *chargePoint) SendRequest(request ocpp.Request) (ocpp.Response, error) {
 	featureName := request.GetFeatureName()
 	if _, found := cp.client.GetProfileForFeature(featureName); !found {
