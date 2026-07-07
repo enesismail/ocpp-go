@@ -31,6 +31,34 @@ type ChargePointConnection interface {
 
 type ChargePointConnectionHandler func(chargePoint ChargePointConnection)
 
+// DefaultProfiles returns the full set of OCPP 1.6 profiles that NewChargePoint
+// and NewCentralSystem register by default. Pass it (spread) when constructing a
+// custom ocppj.Client/Server endpoint so the standard feature set is installed
+// without listing every profile by hand:
+//
+//	endpoint := ocppj.NewClient(id, client, dispatcher, nil, ocpp16.DefaultProfiles()...)
+//
+// A fresh slice is returned on each call; the caller may reorder or subset it
+// freely without affecting the library defaults. The elements are shared,
+// package-level singletons, so treat them as read-only — do not mutate a
+// returned Profile's Name or Features; the same pointers are installed in every
+// endpoint constructed from the defaults.
+func DefaultProfiles() []*ocpp.Profile {
+	return []*ocpp.Profile{
+		core.Profile,
+		localauth.Profile,
+		firmware.Profile,
+		reservation.Profile,
+		remotetrigger.Profile,
+		smartcharging.Profile,
+		logging.Profile,
+		security.Profile,
+		extendedtriggermessage.Profile,
+		certificates.Profile,
+		securefirmware.Profile,
+	}
+}
+
 // -------------------- v1.6 Charge Point --------------------
 
 // A Charge Point represents the physical system where an EV can be charged.
@@ -184,23 +212,7 @@ func NewChargePoint(id string, endpoint *ocppj.Client, client ws.Client) ChargeP
 
 	if endpoint == nil {
 		dispatcher := ocppj.NewDefaultClientDispatcher(ocppj.NewFIFOClientQueue(0))
-		endpoint = ocppj.NewClient(
-			id,
-			client,
-			dispatcher,
-			nil,
-			core.Profile,
-			localauth.Profile,
-			firmware.Profile,
-			reservation.Profile,
-			remotetrigger.Profile,
-			smartcharging.Profile,
-			logging.Profile,
-			security.Profile,
-			extendedtriggermessage.Profile,
-			certificates.Profile,
-			securefirmware.Profile,
-		)
+		endpoint = ocppj.NewClient(id, client, dispatcher, nil, DefaultProfiles()...)
 	}
 	endpoint.SetDialect(ocpp.V16)
 
@@ -365,19 +377,7 @@ func NewCentralSystem(endpoint *ocppj.Server, server ws.Server) CentralSystem {
 	}
 	server.AddSupportedSubprotocol(types.V16Subprotocol)
 	if endpoint == nil {
-		endpoint = ocppj.NewServer(server, nil, nil,
-			core.Profile,
-			localauth.Profile,
-			firmware.Profile,
-			reservation.Profile,
-			remotetrigger.Profile,
-			smartcharging.Profile,
-			logging.Profile,
-			security.Profile,
-			extendedtriggermessage.Profile,
-			certificates.Profile,
-			securefirmware.Profile,
-		)
+		endpoint = ocppj.NewServer(server, nil, nil, DefaultProfiles()...)
 	}
 	cs := newCentralSystem(endpoint)
 	cs.installDisconnectedHandler()

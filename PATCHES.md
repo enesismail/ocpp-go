@@ -228,3 +228,34 @@ not reachable from the facade and the ws-layer hook is rewired by `Start`.
 > Line numbers are current as of the entries above; if the API moves, update this table
 > and the guard tests together. The guard tests are the real backstop — the line numbers
 > are only a navigation aid.
+
+## Default profile exports
+
+The facade constructors already registered a canonical default profile set, but the same
+list was hand-maintained in four places and custom `ocppj` endpoint builders had no
+supported install path other than copy-pasting it. This fork exports additive
+`ocpp16.DefaultProfiles()` and `ocpp2.DefaultProfiles()` helpers and has the four default
+constructors source their variadic profile lists from them. The helpers return a fresh
+slice on every call while preserving the shared `*ocpp.Profile` elements and the existing
+order. This is **fork-original**; there is no upstream issue or PR.
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `ocpp1.6/v16.go:43` | `func DefaultProfiles() []*ocpp.Profile` | supported public way to install the OCPP 1.6 default constructor profile set on a custom `ocppj` endpoint |
+| `ocpp1.6/v16.go:212` | `NewChargePoint` uses `DefaultProfiles()...` | keeps the charge point constructor sourced from the exported single source of truth |
+| `ocpp1.6/v16.go:377` | `NewCentralSystem` uses `DefaultProfiles()...` | keeps the central system constructor sourced from the exported single source of truth |
+| `ocpp2.0.1/v2.go:51` | `func DefaultProfiles() []*ocpp.Profile` | supported public way to install the OCPP 2.0.1 default constructor profile set on a custom `ocppj` endpoint |
+| `ocpp2.0.1/v2.go:266` | `NewChargingStation` uses `DefaultProfiles()...` | keeps the charging station constructor sourced from the exported single source of truth |
+| `ocpp2.0.1/v2.go:472` | `NewCSMS` uses `DefaultProfiles()...` | keeps the CSMS constructor sourced from the exported single source of truth |
+
+**Guard:** `ocpp1.6_test/profiles_test.go` and `ocpp2.0.1_test/profiles_test.go` assert
+the exported default sets by pointer identity and order, and mutate the returned slice to
+prove each call returns a fresh slice. These tests are the sole completeness backstop for
+the constructor lists: the broader mock-based E2E suites inject prebuilt `ocppj`
+endpoints and bypass the defaults.
+
+> Line numbers are current as of the entries above; if the API moves, update this table
+> and the guard tests together. The profile-set pointer-identity tests are the real
+> backstop — the line numbers are only a navigation aid. A future upstream re-vendor of
+> `v16.go` or `v2.go` may drop the export and re-inline the lists; keep this fork-local
+> additive API.
