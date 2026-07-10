@@ -25,7 +25,7 @@ There are currently no plans of supporting OCPP-S.
 
 ## Installation
 
-Go version 1.13+ is required.
+Go version 1.21+ is required.
 
 ```sh
 go get github.com/lorenzodonini/ocpp-go
@@ -96,6 +96,13 @@ ocppj.SetLogger(log.WithField("logger", "ocppj"))
 
 The logger you pass needs to conform to the `logging.Logger` interface.
 Commonly used logging libraries, such as zap or logrus, adhere to this interface out-of-the-box.
+
+For the standard library's `log/slog`, a ready-made adapter is provided in the `logging/slogadapter` package:
+
+```go
+ocppj.SetLogger(slogadapter.New(slog.Default()))
+ws.SetLogger(slogadapter.New(slog.Default()))
+```
 
 If you are using a logger, that isn't conform, you can simply write an adapter between the `Logger` interface and your
 own logging system.
