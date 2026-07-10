@@ -50,9 +50,9 @@ func (s *NetworkTestSuite) SetupSuite() {
 	}
 	s.proxyPort = 8886
 	// The proxy upstreams to ProxyOcppUpstream (e.g. integration_test:8887), so the
-	// ocpp server under test must listen on THAT port — not the package-level
-	// serverPort, which is now an OS-assigned port chosen for the (non-proxied)
-	// websocket unit tests. Derive the bind port from the configured upstream.
+	// ocpp server under test must listen on THAT configured upstream port;
+	// the websocket unit tests now use per-server ephemeral ports instead.
+	// Derive the bind port from the configured upstream.
 	_, upstreamPortStr, err := net.SplitHostPort(cfg.ProxyOcppUpstream)
 	s.Require().NoError(err)
 	s.upstreamPort, err = strconv.Atoi(upstreamPortStr)
