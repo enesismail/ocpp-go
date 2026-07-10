@@ -306,37 +306,23 @@ func (s *WebSocketSuite) TestWebsocketGetReadTimeout() {
 
 func (s *WebSocketSuite) TestWebsocketEcho() {
 	msg := []byte("Hello webSocket!")
-	triggerC := make(chan struct{}, 1)
-	done := make(chan struct{}, 1)
+	serverRxC := make(chan []byte, 1)
+	tlsStateC := make(chan *tls.ConnectionState, 1)
+	echoC := make(chan []byte, 1)
 	s.server = newWebsocketServer(s.T(), func(data []byte) ([]byte, error) {
-		s.True(bytes.Equal(msg, data))
-		// Echo reply received, notifying flow routine
-		triggerC <- struct{}{}
+		serverRxC <- data
 		return data, nil
 	})
 	s.server.SetNewClientHandler(func(ws Channel) {
 		tlsState := ws.TLSConnectionState()
-		s.Nil(tlsState)
+		tlsStateC <- tlsState
 	})
 	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
-		s.True(bytes.Equal(msg, data))
-		// Echo response received, notifying flow routine
-		done <- struct{}{}
+		echoC <- data
 		return nil, nil
 	})
 	// Start server
 	go s.server.Start(serverPort, serverPath)
-	// Start flow routine
-	go func() {
-		// Wait for messages to be exchanged in a dedicate routine.
-		// Will reply to client.
-		sig := <-triggerC
-		s.NotNil(sig)
-		err := s.server.Write(path.Base(testPath), msg)
-		s.NoError(err)
-		sig = <-triggerC
-		s.NotNil(sig)
-	}()
 	time.Sleep(100 * time.Millisecond)
 	// Test connection
 	host := fmt.Sprintf("localhost:%v", serverPort)
@@ -344,13 +330,25 @@ func (s *WebSocketSuite) TestWebsocketEcho() {
 	err := s.client.Start(u.String())
 	s.NoError(err)
 	s.True(s.client.IsConnected())
+	select {
+	case tlsState := <-tlsStateC:
+		s.Nil(tlsState)
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for new client")
+	}
 	// Test message
 	err = s.client.Write(msg)
 	s.NoError(err)
+	select {
+	case got := <-serverRxC:
+		s.True(bytes.Equal(msg, got))
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for server message")
+	}
 	// Wait for echo result
 	select {
-	case result := <-done:
-		s.NotNil(result)
+	case got := <-echoC:
+		s.True(bytes.Equal(msg, got))
 	case <-time.After(1 * time.Second):
 		s.Fail("timeout waiting for echo result")
 	}
@@ -455,22 +453,17 @@ func (s *WebSocketSuite) TestWebsocketBootRetries() {
 
 func (s *WebSocketSuite) TestTLSWebsocketEcho() {
 	msg := []byte("Hello Secure webSocket!")
-	triggerC := make(chan struct{}, 1)
-	done := make(chan struct{}, 1)
+	serverRxC := make(chan []byte, 1)
+	tlsStateC := make(chan *tls.ConnectionState, 1)
+	echoC := make(chan []byte, 1)
 	// Use NewServer(WithServerTLSConfig(...)) when in different package
 	s.server = newWebsocketServer(s.T(), func(data []byte) ([]byte, error) {
-		s.True(bytes.Equal(msg, data))
-		// Message received, notifying flow routine
-		triggerC <- struct{}{}
+		serverRxC <- data
 		return data, nil
 	})
 	s.server.SetNewClientHandler(func(ws Channel) {
 		tlsState := ws.TLSConnectionState()
-		s.NotNil(tlsState)
-	})
-	s.server.SetDisconnectedClientHandler(func(ws Channel) {
-		// Connection closed, completing test
-		done <- struct{}{}
+		tlsStateC <- tlsState
 	})
 	// Create self-signed TLS certificate
 	// TODO: use FiloSottile's lib for this
@@ -486,9 +479,7 @@ func (s *WebSocketSuite) TestTLSWebsocketEcho() {
 	s.server.tlsCertificateKey = keyFilename
 	// Create TLS client
 	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
-		s.True(bytes.Equal(msg, data))
-		// Echo response received, notifying flow routine
-		done <- struct{}{}
+		echoC <- data
 		return nil, nil
 	})
 	s.client.AddOption(func(dialer *websocket.Dialer) {
@@ -504,17 +495,6 @@ func (s *WebSocketSuite) TestTLSWebsocketEcho() {
 
 	// Start server
 	go s.server.Start(serverPort, serverPath)
-	// Start flow routine
-	go func() {
-		// Wait for messages to be exchanged, then close connection
-		sig := <-triggerC
-		s.NotNil(sig)
-		// Use a local error variable to avoid racing on the outer `err`.
-		writeErr := s.server.Write(path.Base(testPath), msg)
-		s.NoError(writeErr)
-		sig = <-triggerC
-		s.NotNil(sig)
-	}()
 	time.Sleep(100 * time.Millisecond)
 
 	// Test connection
@@ -523,40 +503,56 @@ func (s *WebSocketSuite) TestTLSWebsocketEcho() {
 	err = s.client.Start(u.String())
 	s.NoError(err)
 	s.True(s.client.IsConnected())
+	select {
+	case tlsState := <-tlsStateC:
+		s.NotNil(tlsState)
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for new client")
+	}
 	// Test message
 	err = s.client.Write(msg)
 	s.NoError(err)
+	select {
+	case got := <-serverRxC:
+		s.True(bytes.Equal(msg, got))
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for server message")
+	}
 	// Wait for echo result
 	select {
-	case result := <-done:
-		s.NotNil(result)
+	case got := <-echoC:
+		s.True(bytes.Equal(msg, got))
 	case <-time.After(1 * time.Second):
 		s.Fail("timeout waiting for echo result")
 	}
 }
 
 func (s *WebSocketSuite) TestServerStartErrors() {
-	triggerC := make(chan struct{}, 1)
+	type errResult struct {
+		ok  bool
+		err error
+	}
+	errC := make(chan errResult, 1)
 	s.server = newWebsocketServer(s.T(), nil)
-	s.server.SetNewClientHandler(func(ws Channel) {
-		triggerC <- struct{}{}
-	})
 	// Make sure http server is initialized on start
 	s.server.httpServer = nil
 	// Listen for errors
 	go func() {
 		err, ok := <-s.server.Errors()
-		s.True(ok)
-		s.Error(err)
-		triggerC <- struct{}{}
+		errC <- errResult{ok: ok, err: err}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	go s.server.Start(serverPort, serverPath)
 	time.Sleep(100 * time.Millisecond)
 	// Starting server again throws error
 	s.server.Start(serverPort, serverPath)
-	r := <-triggerC
-	s.NotNil(r)
+	select {
+	case res := <-errC:
+		s.True(res.ok)
+		s.Error(res.err)
+	case <-time.After(1 * time.Second):
+		s.Fail("timeout waiting for server error")
+	}
 }
 
 func (s *WebSocketSuite) TestClientDuplicateConnection() {
@@ -1333,10 +1329,10 @@ func (s *WebSocketSuite) TestClientReadLimitExceeded() {
 	s.client.SetDisconnectedHandler(func(err error) {
 		disconnectedC <- err
 	})
+	writeErrC := make(chan error, 1)
 	s.server.SetNewClientHandler(func(ws Channel) {
 		go func() {
-			err := s.server.Write(ws.ID(), oversized)
-			s.NoError(err)
+			writeErrC <- s.server.Write(ws.ID(), oversized)
 		}()
 	})
 
@@ -1354,6 +1350,12 @@ func (s *WebSocketSuite) TestClientReadLimitExceeded() {
 		s.True(errors.Is(err, websocket.ErrReadLimit), "expected websocket.ErrReadLimit, got %v", err)
 	case <-time.After(2 * time.Second):
 		s.Fail("timeout waiting for client disconnect due to read limit")
+	}
+	select {
+	case werr := <-writeErrC:
+		s.NoError(werr)
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for server write")
 	}
 }
 
