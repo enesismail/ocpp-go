@@ -32,23 +32,24 @@ func waitForDuplicatePolicyCondition(t *testing.T, name string, condition func()
 	}
 }
 
-func startDuplicatePolicyServer(t *testing.T, s *server) {
+func startDuplicatePolicyServer(t *testing.T, s *server) int {
 	t.Helper()
-	go s.Start(serverPort, serverPath)
+	go s.Start(0, serverPath)
 	waitForDuplicatePolicyCondition(t, "server listen address", func() bool {
 		return s.Addr() != nil
 	})
+	return s.Addr().Port
 }
 
-func duplicatePolicyURL() string {
-	host := fmt.Sprintf("localhost:%v", serverPort)
+func duplicatePolicyURL(port int) string {
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	return u.String()
 }
 
-func connectDuplicatePolicyClient(t *testing.T, c *client) {
+func connectDuplicatePolicyClient(t *testing.T, c *client, port int) {
 	t.Helper()
-	require.NoError(t, c.Start(duplicatePolicyURL()))
+	require.NoError(t, c.Start(duplicatePolicyURL(port)))
 }
 
 func receiveDuplicatePolicySignal(t *testing.T, name string, ch <-chan struct{}) {
@@ -88,11 +89,11 @@ func TestDuplicatePolicyDefaultRejectNewUnchanged(t *testing.T) {
 	s.SetNewClientHandler(func(ch Channel) {
 		connectedC <- ch.ID()
 	})
-	startDuplicatePolicyServer(t, s)
+	port := startDuplicatePolicyServer(t, s)
 
 	oldClient := newDuplicatePolicyClient(t)
 	defer oldClient.Stop()
-	connectDuplicatePolicyClient(t, oldClient)
+	connectDuplicatePolicyClient(t, oldClient, port)
 	require.Equal(t, "testws", receiveDuplicatePolicyID(t, "initial connect", connectedC))
 
 	newClient := newDuplicatePolicyClient(t)
@@ -100,7 +101,7 @@ func TestDuplicatePolicyDefaultRejectNewUnchanged(t *testing.T) {
 	// Finding 7: the rejected duplicate must not auto-reconnect and retry
 	// forever, which would make "exactly one winner stays rejected" unstable.
 	newClient.SetAutoReconnect(false)
-	connectDuplicatePolicyClient(t, newClient)
+	connectDuplicatePolicyClient(t, newClient, port)
 
 	waitForDuplicatePolicyCondition(t, "duplicate rejection", func() bool {
 		return !newClient.IsConnected() && connectionCount(s) == 1
@@ -127,16 +128,16 @@ func TestDuplicatePolicyKeepNewEvictsOldAcceptsNew(t *testing.T) {
 	s.SetNewClientHandler(func(ch Channel) {
 		connectedC <- ch.ID()
 	})
-	startDuplicatePolicyServer(t, s)
+	port := startDuplicatePolicyServer(t, s)
 
 	oldClient := newDuplicatePolicyClient(t)
 	defer oldClient.Stop()
-	connectDuplicatePolicyClient(t, oldClient)
+	connectDuplicatePolicyClient(t, oldClient, port)
 	require.Equal(t, "testws", receiveDuplicatePolicyID(t, "initial connect", connectedC))
 
 	newClient := newDuplicatePolicyClient(t)
 	defer newClient.Stop()
-	connectDuplicatePolicyClient(t, newClient)
+	connectDuplicatePolicyClient(t, newClient, port)
 	require.Equal(t, "testws", receiveDuplicatePolicyID(t, "replacement connect", connectedC))
 
 	waitForDuplicatePolicyCondition(t, "old evicted and new retained", func() bool {
@@ -170,18 +171,18 @@ func TestDuplicatePolicyTransitionGateRejectsNaturalDisconnectWindow(t *testing.
 				<-releaseDisconnect
 				disconnectedC <- struct{}{}
 			})
-			startDuplicatePolicyServer(t, s)
+			port := startDuplicatePolicyServer(t, s)
 
 			oldClient := newDuplicatePolicyClient(t)
 			defer oldClient.Stop()
-			connectDuplicatePolicyClient(t, oldClient)
+			connectDuplicatePolicyClient(t, oldClient, port)
 			oldClient.Stop()
 			require.Eventually(t, func() bool { return connectionCount(s) == 0 }, duplicatePolicyWait, 10*time.Millisecond)
 			receiveDuplicatePolicySignal(t, "disconnect handler entry", enteredDisconnect)
 
 			reconnect := newDuplicatePolicyClient(t)
 			defer reconnect.Stop()
-			connectDuplicatePolicyClient(t, reconnect)
+			connectDuplicatePolicyClient(t, reconnect, port)
 			waitForDuplicatePolicyCondition(t, "gated reconnect rejection", func() bool {
 				return !reconnect.IsConnected()
 			})
@@ -205,18 +206,18 @@ func TestDuplicatePolicyOldDisconnectDoesNotClobberNew(t *testing.T) {
 	s.SetDisconnectedClientHandler(func(ch Channel) {
 		disconnectedC <- ch.ID()
 	})
-	startDuplicatePolicyServer(t, s)
+	port := startDuplicatePolicyServer(t, s)
 
 	oldClient := newDuplicatePolicyClient(t)
 	defer oldClient.Stop()
-	connectDuplicatePolicyClient(t, oldClient)
+	connectDuplicatePolicyClient(t, oldClient, port)
 	oldChannel, ok := s.GetChannel("testws")
 	require.True(t, ok)
 	oldWS := oldChannel.(*webSocket)
 
 	newClient := newDuplicatePolicyClient(t)
 	defer newClient.Stop()
-	connectDuplicatePolicyClient(t, newClient)
+	connectDuplicatePolicyClient(t, newClient, port)
 	waitForDuplicatePolicyCondition(t, "replacement current", func() bool {
 		ch, ok := s.GetChannel("testws")
 		return ok && ch != oldChannel && newClient.IsConnected()
@@ -303,7 +304,7 @@ func TestDuplicatePolicyConcurrentDuplicatesSingleWinner(t *testing.T) {
 			s, ok := srv.(*server)
 			require.True(t, ok)
 			defer s.Stop()
-			startDuplicatePolicyServer(t, s)
+			port := startDuplicatePolicyServer(t, s)
 
 			oldClient := newDuplicatePolicyClient(t)
 			defer oldClient.Stop()
@@ -311,7 +312,7 @@ func TestDuplicatePolicyConcurrentDuplicatesSingleWinner(t *testing.T) {
 			// without disabling auto-reconnect it could reconnect and evict the
 			// settled winner, making "exactly one winner" unstable.
 			oldClient.SetAutoReconnect(false)
-			connectDuplicatePolicyClient(t, oldClient)
+			connectDuplicatePolicyClient(t, oldClient, port)
 
 			clients := make([]*client, n)
 			var wg sync.WaitGroup
@@ -326,7 +327,7 @@ func TestDuplicatePolicyConcurrentDuplicatesSingleWinner(t *testing.T) {
 				go func(c *client) {
 					defer wg.Done()
 					<-startC
-					_ = c.Start(duplicatePolicyURL())
+					_ = c.Start(duplicatePolicyURL(port))
 				}(clients[i])
 			}
 			close(startC)
@@ -378,15 +379,15 @@ func TestDuplicatePolicyBarrierTimeoutBlockingDisconnectHandler(t *testing.T) {
 		enteredDisconnect <- struct{}{}
 		<-releaseDisconnect
 	})
-	startDuplicatePolicyServer(t, s)
+	port := startDuplicatePolicyServer(t, s)
 
 	oldClient := newDuplicatePolicyClient(t)
 	defer oldClient.Stop()
-	connectDuplicatePolicyClient(t, oldClient)
+	connectDuplicatePolicyClient(t, oldClient, port)
 
 	firstReplacement := newDuplicatePolicyClient(t)
 	defer firstReplacement.Stop()
-	connectDuplicatePolicyClient(t, firstReplacement)
+	connectDuplicatePolicyClient(t, firstReplacement, port)
 	receiveDuplicatePolicySignal(t, "disconnect handler entry", enteredDisconnect)
 	waitForDuplicatePolicyCondition(t, "timeout rejected replacement", func() bool {
 		return !firstReplacement.IsConnected()
@@ -395,7 +396,7 @@ func TestDuplicatePolicyBarrierTimeoutBlockingDisconnectHandler(t *testing.T) {
 	close(releaseDisconnect)
 	fresh := newDuplicatePolicyClient(t)
 	defer fresh.Stop()
-	connectDuplicatePolicyClient(t, fresh)
+	connectDuplicatePolicyClient(t, fresh, port)
 	waitForDuplicatePolicyCondition(t, "id connectable after timeout cleanup", func() bool {
 		return fresh.IsConnected() && connectionCount(s) == 1
 	})
@@ -421,18 +422,18 @@ func TestDuplicatePolicyKeepNewStopRejectsReplacementAfterShutdownPass(t *testin
 		enteredDisconnect <- struct{}{}
 		<-releaseDisconnect
 	})
-	startDuplicatePolicyServer(t, s)
+	port := startDuplicatePolicyServer(t, s)
 
 	oldClient := newDuplicatePolicyClient(t)
 	oldClient.SetAutoReconnect(false)
 	defer oldClient.Stop()
-	connectDuplicatePolicyClient(t, oldClient)
+	connectDuplicatePolicyClient(t, oldClient, port)
 	require.Equal(t, "testws", receiveDuplicatePolicyID(t, "initial connect", connectedC))
 
 	replacement := newDuplicatePolicyClient(t)
 	replacement.SetAutoReconnect(false)
 	defer replacement.Stop()
-	connectDuplicatePolicyClient(t, replacement)
+	connectDuplicatePolicyClient(t, replacement, port)
 	receiveDuplicatePolicySignal(t, "old disconnect handler entry", enteredDisconnect)
 
 	stopDone := make(chan struct{})
@@ -480,10 +481,10 @@ func TestDuplicatePolicyNoDeadlockUnderConcurrentEvictionLoad(t *testing.T) {
 	srv := NewServer(WithDuplicateConnectionPolicy(KeepNew))
 	s, ok := srv.(*server)
 	require.True(t, ok)
-	startDuplicatePolicyServer(t, s)
+	port := startDuplicatePolicyServer(t, s)
 
 	oldClient := newDuplicatePolicyClient(t)
-	connectDuplicatePolicyClient(t, oldClient)
+	connectDuplicatePolicyClient(t, oldClient, port)
 	defer oldClient.Stop()
 
 	var wg sync.WaitGroup
@@ -493,7 +494,7 @@ func TestDuplicatePolicyNoDeadlockUnderConcurrentEvictionLoad(t *testing.T) {
 			defer wg.Done()
 			c := newDuplicatePolicyClient(t)
 			defer c.Stop()
-			_ = c.Start(duplicatePolicyURL())
+			_ = c.Start(duplicatePolicyURL(port))
 		}()
 	}
 	doneC := make(chan struct{})

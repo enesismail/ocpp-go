@@ -60,8 +60,8 @@ func (r *disconnectRecorder) Count() int {
 // (already started by the caller) for wsID, waiting on triggerC for the
 // server's newClientHandler to confirm registration. It returns the real
 // *webSocket registered in s.connections[wsID].
-func (s *WebSocketSuite) connectRealClientAndGetChannel(wsID string, triggerC chan struct{}) *webSocket {
-	host := fmt.Sprintf("localhost:%v", serverPort)
+func (s *WebSocketSuite) connectRealClientAndGetChannel(wsID string, triggerC chan struct{}, port int) *webSocket {
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
 		return nil, nil
@@ -92,10 +92,9 @@ func (s *WebSocketSuite) TestHandleDisconnectSupersededSuppressed() {
 	s.server.SetDisconnectedClientHandler(func(ws Channel) {
 		rec.record()
 	})
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
-	newWs := s.connectRealClientAndGetChannel(wsID, triggerC)
+	newWs := s.connectRealClientAndGetChannel(wsID, triggerC, port)
 	s.Require().Equal(1, connectionCount(s.server))
 
 	// Synthesize a distinct stale *webSocket sharing the same ID and drive
@@ -126,10 +125,9 @@ func (s *WebSocketSuite) TestHandleDisconnectDeleteIfMeNoClobber() {
 	s.server.SetDisconnectedClientHandler(func(ws Channel) {
 		rec.record()
 	})
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
-	newWs := s.connectRealClientAndGetChannel(wsID, triggerC)
+	newWs := s.connectRealClientAndGetChannel(wsID, triggerC, port)
 
 	// A different pointer, same ID: must not delete/clobber the real entry.
 	staleWs := &webSocket{id: wsID}
@@ -160,10 +158,9 @@ func (s *WebSocketSuite) TestHandleDisconnectNormalFiresOnce() {
 		disconnectedServerC <- struct{}{}
 	})
 	s.client = newWebsocketClient(s.T(), nil)
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.Require().NoError(err)

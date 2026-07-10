@@ -37,20 +37,6 @@ const (
 	defaultSubProtocol = "ocpp1.6"
 )
 
-// serverPort is chosen once at test-process start: an OS-assigned free port,
-// probed by binding ":0" then releasing it. Using a dynamic port instead of a
-// hard-coded one keeps `go test ./ws/ -race` runnable even when something else
-// (e.g. a local CSMS) is already listening on a fixed port, and avoids
-// cross-run bind collisions.
-var serverPort = func() int {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 8887
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}()
-
 // connectionCount returns the number of active server connections, reading the
 // connections map under the server's mutex to avoid racing with the websocket
 // handler/disconnect callbacks that mutate it concurrently.
@@ -140,6 +126,38 @@ func (s *WebSocketSuite) TearDownTest() {
 	time.Sleep(50 * time.Millisecond)
 }
 
+// startServer starts srv on an OS-assigned ephemeral port and returns the bound
+// port once the listener is up (Addr() != nil), so a client never dials before
+// the server is listening. Replaces `go srv.Start(fixedPort, path) + Sleep`.
+// Pass a FRESH, never-started server: Stop() does not reset srv.addr, so calling
+// this on an already-started server would return the stale prior port immediately
+// without a new listener being up. (All standard sites use fresh SetupTest servers.)
+func (s *WebSocketSuite) startServer(srv *server, listenPath string) int {
+	go srv.Start(0, listenPath)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if addr := srv.Addr(); addr != nil {
+			return addr.Port
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	s.FailNow("server did not start listening")
+	return 0
+}
+
+// freePort returns a likely-free ephemeral port for tests that need to control
+// the exact port (a dead-port dial, or a port a server will bind LATER). Probe
+// with the SAME bind shape server.Start uses — `":0"` (all interfaces), NOT
+// `127.0.0.1:0` — so the port is guaranteed bindable by a later `Start(port,…)`;
+// a `127.0.0.1`-only probe can hand back a port that then fails `":port"` bind.
+// The small probe-then-release TOCTOU window is acceptable for a loopback test.
+func freePort(t *testing.T) int {
+	l, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
 func (s *WebSocketSuite) TestPingTicker() {
 	defaultPeriod := 1 * time.Millisecond
 	testTable := []struct {
@@ -218,9 +236,8 @@ func (s *WebSocketSuite) TestWebsocketConnectionState() {
 		closeC <- struct{}{}
 	})
 	// Simulate connection
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(50 * time.Millisecond)
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	port := s.startServer(s.server, serverPath)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -248,9 +265,8 @@ func (s *WebSocketSuite) TestWebsocketGetReadTimeout() {
 		ctrlC <- struct{}{}
 	})
 	// Simulate connection to initialize a websocket
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(50 * time.Millisecond)
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	port := s.startServer(s.server, serverPath)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -322,10 +338,9 @@ func (s *WebSocketSuite) TestWebsocketEcho() {
 		return nil, nil
 	})
 	// Start server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 	// Test connection
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -366,8 +381,7 @@ func (s *WebSocketSuite) TestWebsocketChargePointIdResolver() {
 	s.server.SetNewClientHandler(func(ws Channel) {
 		connected <- ws.ID()
 	})
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(500 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Test message
 	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
@@ -375,7 +389,7 @@ func (s *WebSocketSuite) TestWebsocketChargePointIdResolver() {
 		return nil, nil
 	})
 
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	// Attempt to connect and expect the custom resolved charge point id
 	err := s.client.Start(u.String())
@@ -392,8 +406,7 @@ func (s *WebSocketSuite) TestWebsocketChargePointIdResolverFailure() {
 	s.server.SetChargePointIdResolver(func(*http.Request) (string, error) {
 		return "", fmt.Errorf("test error")
 	})
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(500 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Test message
 	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
@@ -401,7 +414,7 @@ func (s *WebSocketSuite) TestWebsocketChargePointIdResolverFailure() {
 		return nil, nil
 	})
 
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	// Attempt to connect and expect the custom resolved charge point id
 	err := s.client.Start(u.String())
@@ -432,10 +445,11 @@ func (s *WebSocketSuite) TestWebsocketBootRetries() {
 	// Reduce timeout to make test faster
 	s.client.timeoutConfig.RetryBackOffWaitMinimum = 1 * time.Second
 	s.client.timeoutConfig.RetryBackOffRandomRange = 2
+	port := freePort(s.T())
 
 	go func() {
 		// Start websocket client
-		host := fmt.Sprintf("localhost:%v", serverPort)
+		host := fmt.Sprintf("localhost:%v", port)
 		u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 		s.client.StartWithRetries(u.String())
 	}()
@@ -444,7 +458,7 @@ func (s *WebSocketSuite) TestWebsocketBootRetries() {
 
 	time.Sleep(500 * time.Millisecond)
 
-	go s.server.Start(serverPort, serverPath)
+	go s.server.Start(port, serverPath)
 	verifyConnection(s.client, true)
 
 	s.server.Stop()
@@ -494,11 +508,10 @@ func (s *WebSocketSuite) TestTLSWebsocketEcho() {
 	})
 
 	// Start server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Test connection
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "wss", Host: host, Path: testPath}
 	err = s.client.Start(u.String())
 	s.NoError(err)
@@ -541,11 +554,18 @@ func (s *WebSocketSuite) TestServerStartErrors() {
 		err, ok := <-s.server.Errors()
 		errC <- errResult{ok: ok, err: err}
 	}()
-	time.Sleep(100 * time.Millisecond)
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	p := freePort(s.T())
+	go s.server.Start(p, serverPath)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.server.Addr() != nil {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	s.Require().NotNil(s.server.Addr(), "server did not start listening")
 	// Starting server again throws error
-	s.server.Start(serverPort, serverPath)
+	s.server.Start(p, serverPath)
 	select {
 	case res := <-errC:
 		s.True(res.ok)
@@ -560,13 +580,12 @@ func (s *WebSocketSuite) TestClientDuplicateConnection() {
 	s.server.SetNewClientHandler(func(ws Channel) {
 	})
 	// Start server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 	// Connect client 1
 	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
 		return nil, nil
 	})
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -575,6 +594,8 @@ func (s *WebSocketSuite) TestClientDuplicateConnection() {
 	wsClient2 := newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
 		return nil, nil
 	})
+	defer wsClient2.Stop()
+	wsClient2.SetAutoReconnect(false)
 	wsClient2.SetDisconnectedHandler(func(err error) {
 		s.IsType(&websocket.CloseError{}, err)
 		var wsErr *websocket.CloseError
@@ -621,15 +642,14 @@ func (s *WebSocketSuite) TestServerStopConnection() {
 		disconnectedClientC <- struct{}{}
 	})
 	// Start server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 	var c Channel
 	var ok bool
 	c, ok = s.server.GetChannel(wsID)
 	s.False(ok)
 	s.Nil(c)
 	// Connect client
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -670,12 +690,11 @@ func (s *WebSocketSuite) TestWebsocketServerStopAllConnections() {
 		disconnectedServerC <- struct{}{}
 	})
 	// Start server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 	// Connect clients
 	clients := []Client{}
 	wg := sync.WaitGroup{}
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	for i := 0; i < numClients; i++ {
 		wsClient := newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
 			return nil, nil
@@ -731,12 +750,11 @@ func (s *WebSocketSuite) TestWebsocketClientConnectionBreak() {
 	s.server.SetDisconnectedClientHandler(func(ws Channel) {
 		disconnected <- struct{}{}
 	})
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Test
 	s.client = newWebsocketClient(s.T(), nil)
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	// Connect and wait
 	err := s.client.Start(u.String())
@@ -786,12 +804,11 @@ func (s *WebSocketSuite) TestWebsocketServerConnectionBreak() {
 	s.server.SetDisconnectedClientHandler(func(ws Channel) {
 		disconnected <- struct{}{}
 	})
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Test
 	s.client = newWebsocketClient(s.T(), nil)
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -843,8 +860,7 @@ func (s *WebSocketSuite) TestValidBasicAuth() {
 		connected <- struct{}{}
 	})
 	// Run server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Create TLS client
 	certPool := x509.NewCertPool()
@@ -861,7 +877,7 @@ func (s *WebSocketSuite) TestValidBasicAuth() {
 	// Add basic auth
 	s.client.SetBasicAuth(authUsername, authPassword)
 	// Test connection
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "wss", Host: host, Path: testPath}
 	err = s.client.Start(u.String())
 	s.NoError(err)
@@ -898,8 +914,7 @@ func (s *WebSocketSuite) TestInvalidBasicAuth() {
 		s.Fail("no new connection should be received from client!")
 	})
 	// Run server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Create TLS client
 	certPool := x509.NewCertPool()
@@ -911,7 +926,7 @@ func (s *WebSocketSuite) TestInvalidBasicAuth() {
 		RootCAs: certPool,
 	}))
 	// Test connection without bssic auth -> error expected
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "wss", Host: host, Path: testPath}
 	err = wsClient.Start(u.String())
 	// Assert HTTP error
@@ -942,8 +957,7 @@ func (s *WebSocketSuite) TestInvalidOriginHeader() {
 	s.server.SetNewClientHandler(func(ws Channel) {
 		s.Fail("no new connection should be received from client!")
 	})
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Test message
 	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
@@ -952,7 +966,7 @@ func (s *WebSocketSuite) TestInvalidOriginHeader() {
 	})
 	// Set invalid origin header
 	s.client.SetHeaderValue("Origin", "example.org")
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	// Attempt to connect and expect cross-origin error
 	err := s.client.Start(u.String())
@@ -977,8 +991,7 @@ func (s *WebSocketSuite) TestCustomOriginHeaderHandler() {
 	s.server.SetCheckOriginHandler(func(r *http.Request) bool {
 		return r.Header.Get("Origin") == origin
 	})
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Test message
 	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
@@ -987,7 +1000,7 @@ func (s *WebSocketSuite) TestCustomOriginHeaderHandler() {
 	})
 	// Set invalid origin header (not example.org)
 	s.client.SetHeaderValue("Origin", "localhost")
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	// Attempt to connect and expect cross-origin error
 	err := s.client.Start(u.String())
@@ -1020,8 +1033,7 @@ func (s *WebSocketSuite) TestCustomCheckClientHandler() {
 	s.server.SetCheckClientHandler(func(clientId string, r *http.Request) bool {
 		return id == clientId
 	})
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Test message
 	s.client = newWebsocketClient(s.T(), func(data []byte) ([]byte, error) {
@@ -1029,7 +1041,7 @@ func (s *WebSocketSuite) TestCustomCheckClientHandler() {
 		return nil, nil
 	})
 
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	// Set invalid client (not /ws/testws)
 	u := url.URL{Scheme: "ws", Host: host, Path: invalidTestPath}
 	// Attempt to connect and expect invalid client id error
@@ -1088,8 +1100,7 @@ func (s *WebSocketSuite) TestValidClientTLSCertificate() {
 		connected <- struct{}{}
 	})
 	// Run server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Create TLS client
 	certPool = x509.NewCertPool()
@@ -1107,7 +1118,7 @@ func (s *WebSocketSuite) TestValidClientTLSCertificate() {
 	s.True(ok)
 	s.client.SetRequestedSubProtocol(defaultSubProtocol)
 	// Test connection
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "wss", Host: host, Path: testPath}
 	err = s.client.Start(u.String())
 	s.NoError(err)
@@ -1154,8 +1165,7 @@ func (s *WebSocketSuite) TestInvalidClientTLSCertificate() {
 		s.Fail("no new connection should be received from client!")
 	})
 	// Run server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Create TLS client
 	certPool = x509.NewCertPool()
@@ -1173,7 +1183,7 @@ func (s *WebSocketSuite) TestInvalidClientTLSCertificate() {
 	s.True(ok)
 	s.client.SetRequestedSubProtocol(defaultSubProtocol)
 	// Test connection
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "wss", Host: host, Path: testPath}
 	err = s.client.Start(u.String())
 	s.Error(err)
@@ -1194,8 +1204,7 @@ func (s *WebSocketSuite) TestUnsupportedSubProtocol() {
 	s.server.AddSupportedSubprotocol(defaultSubProtocol)
 	s.Len(s.server.upgrader.Subprotocols, 1)
 	// Start server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
 	// Setup client
 	disconnectC := make(chan struct{})
@@ -1214,7 +1223,7 @@ func (s *WebSocketSuite) TestUnsupportedSubProtocol() {
 		dialer.Subprotocols = []string{"unsupportedSubProto"}
 	})
 	// Test
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -1243,12 +1252,11 @@ func (s *WebSocketSuite) TestSetServerTimeoutConfig() {
 	config.WriteWait = writeWait
 	s.server.SetTimeoutConfig(config)
 	// Start server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 	s.Equal(s.server.timeoutConfig.PingWait, pingWait)
 	s.Equal(s.server.timeoutConfig.WriteWait, writeWait)
 	// Run test
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -1269,10 +1277,9 @@ func (s *WebSocketSuite) TestSetClientTimeoutConfig() {
 		close(disconnected)
 	})
 	// Start server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 	// Run test
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	// Set client timeout
 	config := NewClientTimeoutConfig()
@@ -1336,10 +1343,9 @@ func (s *WebSocketSuite) TestClientReadLimitExceeded() {
 		}()
 	})
 
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -1383,10 +1389,9 @@ func (s *WebSocketSuite) TestServerReadLimitExceeded() {
 		serverDisconnectedC <- struct{}{}
 	})
 
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -1420,10 +1425,9 @@ func (s *WebSocketSuite) TestServerReadLimitUnderLimitPasses() {
 	})
 	s.server.SetTimeoutConfig(config)
 
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -1454,10 +1458,9 @@ func (s *WebSocketSuite) TestReadLimitDefaultUnlimited() {
 		return nil, nil
 	})
 
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -1505,10 +1508,9 @@ func (s *WebSocketSuite) TestClientReadLimitAppliesAfterReconnect() {
 		disconnectedC <- err
 	})
 
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 
 	// First connection.
@@ -1598,10 +1600,9 @@ func (s *WebSocketSuite) TestServerErrors() {
 		return fmt.Errorf("this is a dummy error")
 	})
 	// Start server
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 	// Connect client
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err := s.client.Start(u.String())
 	s.NoError(err)
@@ -1670,13 +1671,12 @@ func (s *WebSocketSuite) TestClientErrors() {
 			errorC <- err
 		}
 	}()
-	go s.server.Start(serverPort, serverPath)
-	time.Sleep(100 * time.Millisecond)
+	port := s.startServer(s.server, serverPath)
 	// Attempt to write a message without being connected
 	err := s.client.Write([]byte("dummy message"))
 	s.Error(err)
 	// Connect client
-	host := fmt.Sprintf("localhost:%v", serverPort)
+	host := fmt.Sprintf("localhost:%v", port)
 	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
 	err = s.client.Start(u.String())
 	s.NoError(err)
