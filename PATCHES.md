@@ -259,3 +259,30 @@ endpoints and bypass the defaults.
 > backstop — the line numbers are only a navigation aid. A future upstream re-vendor of
 > `v16.go` or `v2.go` may drop the export and re-inline the lists; keep this fork-local
 > additive API.
+
+## slog logging adapter
+
+The library logs through the `logging.Logger` interface (`logging/log.go`) and ships only a
+silent `VoidLogger` default, so a consumer must hand-write an adapter to route the library's
+internal logs anywhere. This fork adds a ready-made bridge from `logging.Logger` to the stdlib
+`log/slog` — `slogadapter.New(*slog.Logger) logging.Logger` — so `ocppj.SetLogger(...)` /
+`ws.SetLogger(...)` can pipe the library's logs into a consumer's `slog` setup instead of
+running at `VoidLogger`. It lives in a **leaf package** so `log/slog` is imported there only and
+never enters the core (`ocppj`/`ws`) import graph. This is **fork-original** — no upstream issue
+or PR. (`log/slog` requires Go 1.21; the module `go` directive was bumped `1.16`→`1.21` alongside
+this — the real floor was already ≥1.19 via `atomic.Bool`, so no build tags are needed.)
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `logging/slogadapter/slogadapter.go:26` | `func New(logger *slog.Logger) logging.Logger` | ready-made `logging.Logger` backed by `slog`; nil → `slog.Default()` (snapshot at construction); leaf package keeps `log/slog` out of the core graph |
+| `logging/slogadapter/slogadapter.go` | `slogLogger` — 6 methods (via `emit`) mapping to `slog` `Debug`/`Info`/`Error` with `fmt.Sprint`/`fmt.Sprintf`, gated on `Enabled` | print/printf → message-only slog calls (no structured attrs — the interface carries none), matching logrus print semantics; a disabled level skips formatting |
+| `go.mod:3` | `go 1.21` | required by `log/slog`; the leaf package makes it the true floor only for slog users, though the directive raises it module-wide (both consumers are already 1.21+) |
+
+**Guard:** `logging/slogadapter/slogadapter_test.go` asserts level+message routing for all six
+methods, that `New(nil)` actually routes through `slog.Default()` (swaps the default to a capturing
+handler and asserts the record lands there), and — via a *print* method — that args are formatted
+into the message and NOT leaked as slog attributes; plus the compile-time
+`var _ logging.Logger = (*slogLogger)(nil)` (the real backstop if the interface gains a method).
+
+> A future upstream that ever adds an slog adapter would likely place it differently — keep this
+> leaf-package split so `log/slog` stays out of the `ocppj`/`ws` transitive dependency set.
