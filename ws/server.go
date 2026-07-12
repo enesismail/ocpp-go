@@ -64,6 +64,11 @@ type Server interface {
 	// Shuts down a running websocket server.
 	// All open channels will be forcefully closed, and the previously called Start function will return.
 	Stop()
+	// Shutdown gracefully shuts the server down, bounding the underlying
+	// http.Server.Shutdown by ctx. Stop() delegates here with
+	// context.Background(). On early ctx expiry Errors() is closed immediately
+	// and any later teardown errors are dropped.
+	Shutdown(ctx context.Context) error
 	// Closes a specific websocket connection.
 	StopConnection(id string, closeError websocket.CloseError) error
 	// Errors returns a buffered channel for asynchronous error messages.
@@ -372,29 +377,34 @@ func (s *server) Start(port int, listenPath string) {
 	}
 }
 
-func (s *server) Stop() {
+// Stop shuts the server down and waits (unbounded) for connections to drain.
+func (s *server) Stop() { _ = s.Shutdown(context.Background()) }
+
+// Shutdown gracefully shuts the server down, bounding the underlying
+// http.Server.Shutdown by ctx. It returns ctx.Err() if ctx is done before that
+// completes, or a listener-close error, or nil. NOTE: upgraded ws connections
+// are hijacked and closed by the RegisterOnShutdown hook in an un-awaited
+// goroutine, so ctx does NOT enforce a hard per-connection deadline. Stop() delegates here with context.Background().
+func (s *server) Shutdown(ctx context.Context) error {
 	log.Info("stopping websocket server")
-	// Snapshot the http server under the lock, then shut it down outside the
-	// lock (Shutdown blocks until active connections drain).
 	s.connMutex.RLock()
 	httpServer := s.httpServer
 	s.connMutex.RUnlock()
+	var err error
 	if httpServer != nil {
-		err := httpServer.Shutdown(context.TODO())
+		err = httpServer.Shutdown(ctx) // nil, ctx.Err(), or a listener-close error
 		if err != nil {
+			// Preserve Stop()'s async report; surface before the errC close.
 			s.error(fmt.Errorf("shutdown failed: %w", err))
 		}
 	}
-
-	// Close the error channel (close-once, guarded by the mutex to avoid racing
-	// with concurrent error() senders). The channel is not niled out, so a
-	// concurrent sender never observes a nil channel.
 	s.connMutex.Lock()
 	if !s.errClosed {
 		s.errClosed = true
 		close(s.errC)
 	}
 	s.connMutex.Unlock()
+	return err
 }
 
 func (s *server) StopConnection(id string, closeError websocket.CloseError) error {

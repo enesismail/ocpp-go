@@ -1,6 +1,7 @@
 package ocpp16_test
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -73,6 +74,11 @@ func (websocketServer *MockWebsocketServer) Start(port int, listenPath string) {
 
 func (websocketServer *MockWebsocketServer) Stop() {
 	websocketServer.MethodCalled("Stop")
+}
+
+func (websocketServer *MockWebsocketServer) Shutdown(ctx context.Context) error {
+	args := websocketServer.MethodCalled("Shutdown", ctx)
+	return args.Error(0)
 }
 
 func (websocketServer *MockWebsocketServer) Write(webSocketId string, data []byte) error {
@@ -724,6 +730,28 @@ func (suite *OcppV16TestSuite) TestIsConnected() {
 }
 
 // TODO: implement generic protocol tests
+
+type a4CtxKey struct{}
+
+func (suite *OcppV16TestSuite) TestShutdownThreadsThrough() {
+	ctx := context.WithValue(context.Background(), a4CtxKey{}, "a4")
+
+	suite.serverDispatcher.Start()
+	suite.mockWsServer.On("Shutdown", mock.Anything).Return(nil).Run(func(args mock.Arguments) {
+		assert.False(suite.T(), suite.serverDispatcher.IsRunning(), "dispatcher must be stopped before ws.Shutdown")
+	})
+
+	err := suite.centralSystem.Shutdown(ctx)
+	require.NoError(suite.T(), err)
+	suite.mockWsServer.AssertCalled(suite.T(), "Shutdown", ctx)
+}
+
+func (suite *OcppV16TestSuite) TestShutdownPropagatesError() {
+	suite.mockWsServer.On("Shutdown", mock.Anything).Return(assert.AnError)
+	err := suite.centralSystem.Shutdown(context.Background())
+	assert.ErrorIs(suite.T(), err, assert.AnError)
+}
+
 func TestOcpp16Protocol(t *testing.T) {
 	suite.Run(t, new(OcppV16TestSuite))
 }

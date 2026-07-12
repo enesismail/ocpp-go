@@ -2,6 +2,7 @@
 package ocpp16
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 
@@ -174,7 +175,7 @@ type ChargePoint interface {
 	// Returns true if the charge point is currently connected to the central system, false otherwise.
 	// While automatically reconnecting to the central system, the method returns false.
 	IsConnected() bool
-	// Errors returns a channel for error messages. If it doesn't exist it es created.
+	// Errors returns a channel for error messages. If it doesn't exist it is created.
 	// The channel is closed by the charge point when stopped.
 	Errors() <-chan error
 }
@@ -355,7 +356,11 @@ type CentralSystem interface {
 	Start(listenPort int, listenPath string)
 	// Stops the central system, clearing all pending requests.
 	Stop()
-	// Errors returns a channel for error messages. If it doesn't exist it es created.
+	// Shutdown is the context-bounded variant of Stop. ctx bounds the underlying
+	// ws/http server shutdown. The dispatcher is stopped first and unconditionally
+	// at the ocppj layer.
+	Shutdown(ctx context.Context) error
+	// Errors returns a channel for error messages. If it doesn't exist it is created.
 	Errors() <-chan error
 }
 

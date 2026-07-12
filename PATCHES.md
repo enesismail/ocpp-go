@@ -286,3 +286,57 @@ into the message and NOT leaked as slog attributes; plus the compile-time
 
 > A future upstream that ever adds an slog adapter would likely place it differently — keep this
 > leaf-package split so `log/slog` stays out of the `ocppj`/`ws` transitive dependency set.
+
+## Context-bounded server shutdown
+
+The server teardown chain (`facade.Stop()` → `ocppj.Server.Stop()` → `ws.Server.Stop()`) ended at
+`httpServer.Shutdown(context.TODO())` — an un-cancelable, un-deadlined shutdown, so a caller could
+not bound how long teardown blocks (only an external timeout could). This fork adds an **additive**
+`Shutdown(ctx context.Context) error` at each layer, mirroring `http.Server.Shutdown`: it threads
+the caller's context down to `httpServer.Shutdown(ctx)` and returns the resulting error. The
+existing `Stop()` is kept as the unbounded convenience — at the `ws` layer it is now
+`Shutdown(context.Background())` (behavior-identical to the old `context.TODO()` path, and it still
+reports any listener-close error to `Errors()`); at the `ocppj`/facade layers `Stop()` is left
+unchanged so it keeps calling the wrapped `Stop()` rather than re-routing through `Shutdown`.
+
+The `Shutdown(ctx)` **API is fork-original**, but it extends upstream's graceful-server-`Stop()`
+lineage: the facade `Stop()` it parallels came from [#245](https://github.com/lorenzodonini/ocpp-go/pull/245)
+(@rbright, explicitly motivated by "graceful shutdown when the application stops"), and the
+connection-teardown-on-`Stop()` mechanism it threads `ctx` through came from
+[#93](https://github.com/lorenzodonini/ocpp-go/pull/93) and
+[#82](https://github.com/lorenzodonini/ocpp-go/pull/82) (@michaelbeaumont — #93 documents that
+`http.Server.Shutdown` leaves hijacked websocket connections to the pump goroutines, the exact
+behaviour this section's semantics build on). It does **not** resolve the still-open, client-side
+[#143](https://github.com/lorenzodonini/ocpp-go/issues/143) (@bhatanku1 — `ChargePoint.Stop`
+should return an error), which is the same theme on the opposite endpoint.
+
+Semantics (documented on the methods): `ctx` bounds `http.Server.Shutdown`, which covers the
+listeners and any *tracked* HTTP requests (`AddHttpHandler` handlers, pre-upgrade requests). It does
+**not** impose a per-connection deadline on already-upgraded websockets — those are hijacked and
+closed asynchronously by the existing `RegisterOnShutdown(s.stopConnections)` hook — and the `ocppj`
+layer stops the dispatcher first and unconditionally (not `ctx`-aware), so `ctx` is not an
+end-to-end teardown deadline. On early `ctx` expiry the error channel is closed immediately and any
+later teardown errors are dropped.
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `ws/server.go:388` | `func (s *server) Shutdown(ctx context.Context) error` | context-bounded teardown; threads `ctx` into `httpServer.Shutdown`, reports a listener-close error to `Errors()`, returns the error; `Stop()` delegates here with `context.Background()` |
+| `ws/server.go:71` | `Shutdown(ctx context.Context) error` on the `ws.Server` interface | exposes the bounded variant alongside `Stop()` |
+| `ocppj/server.go:156` | `func (s *Server) Shutdown(ctx context.Context) error` | `dispatcher.Stop()` then `server.Shutdown(ctx)`; `Stop()` left unchanged as a parallel wrapper |
+| `ocpp1.6/central_system.go:566` + `ocpp1.6/v16.go:362` | `CentralSystem.Shutdown(ctx)` | 1.6 facade + interface delegation to `ocppj.Server.Shutdown` |
+| `ocpp2.0.1/csms.go:844` + `ocpp2.0.1/v2.go:457` | `CSMS.Shutdown(ctx)` | 2.0.1 facade + interface delegation (1.6/2.0.1 parity) |
+| `ws/mocks/mock_Server.go:480` | `MockServer.Shutdown` | regenerated for the grown `ws.Server` interface (kept in mockery's alphabetical method order so `mockery` produces no diff) |
+
+**Guard:** `ws/websocket_test.go` — `TestServerShutdownGraceful` (real server: `Shutdown(Background)`
+returns nil, `Errors()` closes, the client disconnects), `TestServerStopStillTearsDown` (`Stop()`
+still tears down via the delegation), `TestServerShutdownCanceledCtx` (an already-canceled ctx still
+tears the server down without panic). Facade suites `ocpp1.6_test`/`ocpp2.0.1_test` —
+`TestShutdownThreadsThrough` (asserts the *exact* caller `ctx` instance reaches `ws.Server.Shutdown`,
+and that the dispatcher is already stopped when it does) and `TestShutdownPropagatesError` (the error
+is returned unswallowed — something `Stop()` could not express). All under `-race`.
+
+> `Stop()` is intentionally *not* re-routed through `Shutdown` at the `ocppj`/facade layers: the
+> facade test suites drive a hand-written `MockWebsocketServer` that records via `MethodCalled`, and
+> every existing server test sets only `.On("Stop")` — routing `Stop()` through `Shutdown` there
+> would make those calls hit an unexpected `Shutdown` mock and panic. Keep the two as parallel
+> wrappers.

@@ -1,6 +1,7 @@
 package ocppj
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -144,6 +145,17 @@ func (s *Server) Start(listenPort int, listenPath string) {
 func (s *Server) Stop() {
 	s.dispatcher.Stop()
 	s.server.Stop()
+}
+
+// Shutdown is the context-bounded variant of Stop. ctx bounds ONLY the
+// underlying ws/http server shutdown. The dispatcher is stopped first and
+// unconditionally — dispatcher.Stop() waits on its pump's done signal and is
+// not ctx-aware, so if the pump is wedged behind a blocked Write, Shutdown can
+// block past ctx before http.Server.Shutdown is ever reached. ctx is not an
+// end-to-end teardown deadline.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.dispatcher.Stop()
+	return s.server.Shutdown(ctx)
 }
 
 // Sends an OCPP Request to a client, identified by the clientID parameter.
