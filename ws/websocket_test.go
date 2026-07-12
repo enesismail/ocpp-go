@@ -2,6 +2,7 @@ package ws
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -1845,6 +1846,126 @@ func createTLSCertificate(certificateFilename string, keyFilename string, cn str
 		return err
 	}
 	return nil
+}
+
+// drainErrorsClosed drains errs (tolerating any buffered shutdown errors)
+// until it is closed, failing if it does not close within the deadline.
+func drainErrorsClosed(t require.TestingT, errs <-chan error) {
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-errs:
+			if !ok {
+				return // closed
+			}
+		case <-deadline:
+			require.FailNow(t, "Errors() channel did not close")
+		}
+	}
+}
+
+func (s *WebSocketSuite) TestServerShutdownGraceful() {
+	srv := s.server
+	port := s.startServer(srv, testPath)
+
+	host := fmt.Sprintf("localhost:%v", port)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+	err := s.client.Start(u.String())
+	s.Require().NoError(err)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.client.IsConnected() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.Require().True(s.client.IsConnected())
+
+	err = srv.Shutdown(context.Background())
+	s.NoError(err)
+
+	drainErrorsClosed(s.T(), srv.Errors())
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !s.client.IsConnected() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.False(s.client.IsConnected())
+}
+
+func (s *WebSocketSuite) TestServerStopStillTearsDown() {
+	srv := s.server
+	port := s.startServer(srv, testPath)
+
+	host := fmt.Sprintf("localhost:%v", port)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+	err := s.client.Start(u.String())
+	s.Require().NoError(err)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.client.IsConnected() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.Require().True(s.client.IsConnected())
+
+	srv.Stop()
+
+	drainErrorsClosed(s.T(), srv.Errors())
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !s.client.IsConnected() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.False(s.client.IsConnected())
+}
+
+func (s *WebSocketSuite) TestServerShutdownCanceledCtx() {
+	srv := s.server
+	port := s.startServer(srv, testPath)
+
+	host := fmt.Sprintf("localhost:%v", port)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+	err := s.client.Start(u.String())
+	s.Require().NoError(err)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.client.IsConnected() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.Require().True(s.client.IsConnected())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// A canceled ctx may still return nil for a hijacked-ws-only server with no
+	// tracked requests (see the Semantics section of tasks/a4-server-shutdown-ctx.md);
+	// assert the plumbing (no panic, server stopped, Errors() closed), not the
+	// returned error.
+	_ = srv.Shutdown(ctx)
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !s.client.IsConnected() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	s.False(s.client.IsConnected())
+
+	drainErrorsClosed(s.T(), srv.Errors())
 }
 
 func TestWebSockets(t *testing.T) {

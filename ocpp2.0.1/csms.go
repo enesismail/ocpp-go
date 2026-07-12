@@ -1,6 +1,7 @@
 package ocpp2
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 
@@ -835,6 +836,13 @@ func (cs *csms) Start(listenPort int, listenPath string) {
 
 func (cs *csms) Stop() {
 	cs.server.Stop()
+}
+
+// Shutdown is the context-bounded variant of Stop. ctx bounds the underlying
+// ws/http server shutdown. The dispatcher is stopped first and unconditionally
+// at the ocppj layer.
+func (cs *csms) Shutdown(ctx context.Context) error {
+	return cs.server.Shutdown(ctx)
 }
 
 func (cs *csms) sendResponse(chargingStationID string, response ocpp.Response, err error, requestId string) {

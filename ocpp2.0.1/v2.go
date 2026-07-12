@@ -2,6 +2,7 @@
 package ocpp2
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 
@@ -228,7 +229,7 @@ type ChargingStation interface {
 	// Returns true if the charging station is currently connected to the CSMS, false otherwise.
 	// While automatically reconnecting to the CSMS, the method returns false.
 	IsConnected() bool
-	// Errors returns a channel for error messages. If it doesn't exist it es created.
+	// Errors returns a channel for error messages. If it doesn't exist it is created.
 	// The channel is closed by the charging station when stopped.
 	Errors() <-chan error
 }
@@ -450,7 +451,11 @@ type CSMS interface {
 	Start(listenPort int, listenPath string)
 	// Stops the CSMS, clearing all pending requests.
 	Stop()
-	// Errors returns a channel for error messages. If it doesn't exist it es created.
+	// Shutdown is the context-bounded variant of Stop. ctx bounds the underlying
+	// ws/http server shutdown. The dispatcher is stopped first and unconditionally
+	// at the ocppj layer.
+	Shutdown(ctx context.Context) error
+	// Errors returns a channel for error messages. If it doesn't exist it is created.
 	Errors() <-chan error
 }
 
