@@ -30,6 +30,24 @@ func newRequestTimeoutError(messageID string) *ocpp.Error {
 	return err
 }
 
+// requestCanceledMarker tags a request-canceled error so it is distinguishable from a server
+// CALLERROR that carries the same GenericError code (which is not, on its own, a discriminator).
+const requestCanceledMarker = "ocppj/request-canceled"
+
+// ErrRequestCanceled is the sentinel a caller matches with errors.Is to classify a request canceled
+// due to context cancellation.
+var ErrRequestCanceled = &ocpp.Error{Marker: requestCanceledMarker}
+
+func newRequestCanceledError(messageID string, cause error) *ocpp.Error {
+	return &ocpp.Error{
+		Code:        GenericError,
+		Description: cause.Error(),
+		MessageId:   messageID,
+		Marker:      requestCanceledMarker,
+		Cause:       cause,
+	}
+}
+
 // dispatcherStoppedMarker tags the local dispatcher-stopped error so it is distinguishable from a server
 // CALLERROR that carries the same GenericError code (which is not, on its own, a discriminator).
 const dispatcherStoppedMarker = "ocppj/dispatcher-stopped"

@@ -26,6 +26,11 @@ type RequestQueue interface {
 	Peek() interface{}
 	// Pop returns the first element of the queue, removing it from the queue.
 	Pop() interface{}
+	// PopIf atomically pops and returns the front element iff pred(front) is true.
+	// The predicate is evaluated while the queue lock is held, ensuring atomic
+	// compare-and-pop semantics. Returns (nil, false) if the queue is empty or
+	// the predicate returns false.
+	PopIf(predicate func(interface{}) bool) (interface{}, bool)
 	// Size returns the current size of the queue.
 	Size() int
 	// IsFull returns true if the queue is currently full, false otherwise.
@@ -86,6 +91,20 @@ func (q *FIFOClientQueue) Pop() interface{} {
 	result := q.elements[0]
 	q.elements = q.elements[1:]
 	return result
+}
+
+func (q *FIFOClientQueue) PopIf(predicate func(interface{}) bool) (interface{}, bool) {
+	q.mutex.Lock()
+	defer q.mutex.Unlock()
+	if len(q.elements) == 0 {
+		return nil, false
+	}
+	if !predicate(q.elements[0]) {
+		return nil, false
+	}
+	result := q.elements[0]
+	q.elements = q.elements[1:]
+	return result, true
 }
 
 func (q *FIFOClientQueue) Size() int {

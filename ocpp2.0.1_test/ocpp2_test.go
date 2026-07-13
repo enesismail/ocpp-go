@@ -994,9 +994,13 @@ func testUnsupportedRequestFromChargingStation(suite *OcppV2TestSuite, request o
 	})
 	require.Error(t, err)
 	assert.Equal(t, expectedError, err.Error())
-	// 2. Test receiving an unsupported request on the other endpoint and receiving an error
-	// Mark mocked request as pending, otherwise response will be ignored
+	// 2. Mark the outstanding request on the charging station: pending (so
+	// ParseMessage accepts the inbound CALL ERROR) plus a matching queue bundle
+	// (so CompleteRequest owns the completion via front-match PopIf; the pump
+	// never dispatches it, since pending is set). The request is then injected on
+	// the CSMS side, which replies NotSupported.
 	suite.ocppjClient.RequestState.AddPendingRequest(messageId, request)
+	require.NoError(t, suite.clientRequestQueue.Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: messageId}}))
 	err = suite.mockWsServer.MessageHandler(channel, []byte(requestJson))
 	require.Nil(t, err)
 	result := <-resultChannel
@@ -1075,6 +1079,7 @@ type OcppV2TestSuite struct {
 	chargingStation    ocpp2.ChargingStation
 	csms               ocpp2.CSMS
 	messageIdGenerator TestRandomIdGenerator
+	clientRequestQueue ocppj.RequestQueue
 	clientDispatcher   ocppj.ClientDispatcher
 	serverDispatcher   ocppj.ServerDispatcher
 }
@@ -1110,7 +1115,8 @@ func (suite *OcppV2TestSuite) SetupTest() {
 	mockServer := MockWebsocketServer{}
 	suite.mockWsClient = &mockClient
 	suite.mockWsServer = &mockServer
-	suite.clientDispatcher = ocppj.NewDefaultClientDispatcher(ocppj.NewFIFOClientQueue(queueCapacity))
+	suite.clientRequestQueue = ocppj.NewFIFOClientQueue(queueCapacity)
+	suite.clientDispatcher = ocppj.NewDefaultClientDispatcher(suite.clientRequestQueue)
 	suite.serverDispatcher = ocppj.NewDefaultServerDispatcher(ocppj.NewFIFOQueueMap(queueCapacity))
 	suite.ocppjClient = ocppj.NewClient("test_id", suite.mockWsClient, suite.clientDispatcher, nil, securityProfile, provisioningProfile, authProfile, availabilityProfile, reservationProfile, diagnosticsProfile, dataProfile, displayProfile, firmwareProfile, isoProfile, localAuthProfile, meterProfile, remoteProfile, smartChargingProfile, tariffProfile, transactionsProfile)
 	suite.ocppjServer = ocppj.NewServer(suite.mockWsServer, suite.serverDispatcher, nil, securityProfile, provisioningProfile, authProfile, availabilityProfile, reservationProfile, diagnosticsProfile, dataProfile, displayProfile, firmwareProfile, isoProfile, localAuthProfile, meterProfile, remoteProfile, smartChargingProfile, tariffProfile, transactionsProfile)

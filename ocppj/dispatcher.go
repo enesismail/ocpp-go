@@ -44,7 +44,11 @@ type ClientDispatcher interface {
 	// Notifies the dispatcher that a request has been completed (i.e. a response was received).
 	// The dispatcher takes care of removing the request marked by the requestID from
 	// the pending requests. It will then attempt to process the next queued request.
-	CompleteRequest(requestID string)
+	//
+	// Returns true if this call atomically popped the matching request from the queue
+	// (i.e. it "owns" the completion), false if the request was already completed
+	// or the front element does not match the given ID.
+	CompleteRequest(requestID string) bool
 	// Sets a callback to be invoked when a request gets canceled, due to network timeouts or internal errors.
 	// The callback passes the original message ID and request struct of the failed request, along with an error.
 	//
@@ -268,6 +272,11 @@ func (d *DefaultClientDispatcher) messagePump() {
 						outstanding = append(outstanding, d.requestQueue.Pop())
 					}
 				}
+				// Clear pending state before firing the cancel callbacks below, so a
+				// late inbound response arriving mid-drain cannot pass ParseMessage's
+				// pending-check and reach the (now drained, PopIf-losing) completion
+				// path after Stop has already taken ownership of the request.
+				d.pendingRequestState.ClearPendingRequests()
 				for _, el := range outstanding {
 					bundle, ok := el.(RequestBundle)
 					if !ok || bundle.Call == nil {
@@ -276,7 +285,6 @@ func (d *DefaultClientDispatcher) messagePump() {
 					d.fireRequestCancel(bundle.Call.Action, bundle.Call.UniqueId, bundle.Call.Payload,
 						newDispatcherStoppedError(bundle.Call.UniqueId))
 				}
-				d.pendingRequestState.ClearPendingRequests()
 				d.requestQueue.Init()
 				d.mutex.Lock()
 				d.requestChannel = nil
@@ -294,9 +302,10 @@ func (d *DefaultClientDispatcher) messagePump() {
 				// queue or a non-RequestBundle element) to avoid a nil-deref on bundle.Call.
 				el := d.requestQueue.Peek()
 				if bundle, ok := el.(RequestBundle); ok && bundle.Call != nil {
-					d.CompleteRequest(bundle.Call.UniqueId)
-					d.fireRequestCancel(bundle.Call.Action, bundle.Call.UniqueId, bundle.Call.Payload,
-						newRequestTimeoutError(bundle.Call.UniqueId))
+					if d.CompleteRequest(bundle.Call.UniqueId) {
+						d.fireRequestCancel(bundle.Call.Action, bundle.Call.UniqueId, bundle.Call.Payload,
+							newRequestTimeoutError(bundle.Call.UniqueId))
+					}
 				}
 			}
 			// No request is currently pending -> set timer to high number
@@ -311,8 +320,9 @@ func (d *DefaultClientDispatcher) messagePump() {
 			continue
 		}
 
-		// Only dispatch request if able to send and request queue isn't empty
-		if rdy && !d.requestQueue.IsEmpty() {
+		// Only dispatch request if able to send, queue isn't empty, and no request
+		// is currently in-flight (level-based check — re-derived every iteration).
+		if rdy && !d.requestQueue.IsEmpty() && !d.pendingRequestState.HasPendingRequest() {
 			if d.dispatchNextRequest() {
 				rdy = false
 				// Set timer. Non-blocking drain: d.timer.C has other receivers
@@ -353,9 +363,10 @@ func (d *DefaultClientDispatcher) dispatchNextRequest() bool {
 	err := d.network.Write(jsonMessage)
 	if err != nil {
 		// TODO: handle retransmission instead of skipping request altogether
-		d.CompleteRequest(bundle.Call.GetUniqueId())
-		d.fireRequestCancel(bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
-			NewLocalTransportError(InternalError, err.Error(), bundle.Call.UniqueId))
+		if d.CompleteRequest(bundle.Call.GetUniqueId()) {
+			d.fireRequestCancel(bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
+				NewLocalTransportError(InternalError, err.Error(), bundle.Call.UniqueId))
+		}
 	}
 	log.Infof("dispatched request %s to server", bundle.Call.UniqueId)
 	log.Debugf("sent JSON message to server: %s", string(jsonMessage))
@@ -407,26 +418,34 @@ func (d *DefaultClientDispatcher) Resume() {
 		d.timer.Reset(d.timeout)
 	} else {
 		// Can dispatch a new request. Notifying message pump.
-		d.readyForDispatch <- true
+		select {
+		case d.readyForDispatch <- true:
+		default:
+		}
 	}
 }
 
-func (d *DefaultClientDispatcher) CompleteRequest(requestId string) {
-	el := d.requestQueue.Peek()
-	if el == nil {
-		log.Errorf("attempting to pop front of queue, but queue is empty")
-		return
+func (d *DefaultClientDispatcher) CompleteRequest(requestId string) bool {
+	el, ok := d.requestQueue.PopIf(func(el interface{}) bool {
+		bundle, ok := el.(RequestBundle)
+		return ok && bundle.Call != nil && bundle.Call.UniqueId == requestId
+	})
+	if ok {
+		bundle := el.(RequestBundle)
+		d.pendingRequestState.DeletePendingRequest(bundle.Call.UniqueId)
+		log.Debugf("removed request %v from front of queue", bundle.Call.UniqueId)
+		// Signal that next message in queue may be sent (non-blocking, coalesced).
+		select {
+		case d.readyForDispatch <- true:
+		default:
+		}
+		return true
 	}
-	bundle, _ := el.(RequestBundle)
-	if bundle.Call.UniqueId != requestId {
-		log.Errorf("internal state mismatch: received response for %v but expected response for %v", requestId, bundle.Call.UniqueId)
-		return
-	}
-	d.requestQueue.Pop()
-	d.pendingRequestState.DeletePendingRequest(requestId)
-	log.Debugf("removed request %v from front of queue", bundle.Call.UniqueId)
-	// Signal that next message in queue may be sent
-	d.readyForDispatch <- true
+	// PopIf did not pop: the queue is empty or the front element did not match
+	// the requested ID. This call did not win completion ownership, so it must
+	// report false — the caller must NOT deliver a handler or fire a cancel
+	// (single-winner ownership / callback-steal prevention).
+	return false
 }
 
 // ServerDispatcher contains the state and logic for handling outgoing messages on a server endpoint.
