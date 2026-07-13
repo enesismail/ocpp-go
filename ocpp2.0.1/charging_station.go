@@ -3,6 +3,7 @@ package ocpp2
 import (
 	"fmt"
 	"reflect"
+	"sync"
 
 	"github.com/enesismail/ocpp-go/internal/callbackqueue"
 	"github.com/enesismail/ocpp-go/ocpp"
@@ -48,6 +49,7 @@ type chargingStation struct {
 	errorHandler         chan error
 	callbacks            callbackqueue.CallbackQueue
 	stopC                chan struct{}
+	stopOnce             *sync.Once
 	errC                 chan error // external error channel
 }
 
@@ -507,11 +509,16 @@ func (cs *chargingStation) SendRequest(request ocpp.Request) (ocpp.Response, err
 	if err != nil {
 		return nil, err
 	}
-	asyncResult, ok := <-asyncResponseC
-	if !ok {
-		return nil, fmt.Errorf("internal error while receiving result for %v request", request.GetFeatureName())
+	stopC := cs.stopC
+	select {
+	case asyncResult, ok := <-asyncResponseC:
+		if !ok {
+			return nil, fmt.Errorf("internal error while receiving result for %v request", request.GetFeatureName())
+		}
+		return asyncResult.r, asyncResult.e
+	case <-stopC:
+		return nil, fmt.Errorf("charging station stopped while awaiting response to %v request", request.GetFeatureName())
 	}
-	return asyncResult.r, asyncResult.e
 }
 
 func (cs *chargingStation) SendRequestAsync(request ocpp.Request, callback func(response ocpp.Response, err error)) error {
@@ -557,7 +564,7 @@ func (cs *chargingStation) SendRequestAsync(request ocpp.Request, callback func(
 	return err
 }
 
-func (cs *chargingStation) asyncCallbackHandler() {
+func (cs *chargingStation) asyncCallbackHandler(stopC chan struct{}) {
 	for {
 		select {
 		case confirmation := <-cs.responseHandler:
@@ -584,7 +591,7 @@ func (cs *chargingStation) asyncCallbackHandler() {
 			} else {
 				cs.error(fmt.Errorf("no callback available for incoming error %w", protoError))
 			}
-		case <-cs.stopC:
+		case <-stopC:
 			return
 		}
 	}
@@ -630,10 +637,11 @@ func (cs *chargingStation) sendResponse(response ocpp.Response, err error, reque
 func (cs *chargingStation) Start(csmsUrl string) error {
 	// Start client
 	cs.stopC = make(chan struct{}, 1)
+	cs.stopOnce = &sync.Once{}
 	err := cs.client.Start(csmsUrl)
 	// Async response handler receives incoming responses/errors and triggers callbacks
 	if err == nil {
-		go cs.asyncCallbackHandler()
+		go cs.asyncCallbackHandler(cs.stopC)
 	}
 	return err
 }
@@ -641,13 +649,19 @@ func (cs *chargingStation) Start(csmsUrl string) error {
 func (cs *chargingStation) StartWithRetries(csmsUrl string) {
 	// Start client
 	cs.stopC = make(chan struct{}, 1)
+	cs.stopOnce = &sync.Once{}
 	cs.client.StartWithRetries(csmsUrl)
 	// Async response handler receives incoming responses/errors and triggers callbacks
-	go cs.asyncCallbackHandler()
+	go cs.asyncCallbackHandler(cs.stopC)
 }
 
 func (cs *chargingStation) Stop() {
 	cs.client.Stop()
+	if cs.stopOnce != nil {
+		cs.stopOnce.Do(func() {
+			close(cs.stopC)
+		})
+	}
 }
 
 func (cs *chargingStation) IsConnected() bool {
