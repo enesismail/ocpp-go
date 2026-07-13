@@ -123,6 +123,9 @@ func (suite *OcppJTestSuite) TestClientResponseHandlerPanicRecovered() {
 	suite.mockClient.On("Write", mock.Anything).Return(nil)
 	require.NoError(t, suite.chargePoint.Start("someUrl"))
 	suite.chargePoint.RequestState.AddPendingRequest(mockUniqueId, pendingRequest)
+	// Stage a matching queue bundle so CompleteRequest owns the completion via
+	// front-match PopIf (the pump never dispatches it, since pending is set).
+	require.NoError(t, suite.clientRequestQueue.Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: mockUniqueId}}))
 
 	err := suite.mockClient.MessageHandler([]byte(mockCallResult))
 	assert.Nil(t, err)
@@ -148,19 +151,13 @@ func (suite *OcppJTestSuite) TestClientResponseHandlerPanicRecovered() {
 	}
 
 	// A subsequent CALL_RESULT must still be delivered to a fresh response handler.
-	// The first pending request slot must be freed explicitly first: clientState's
-	// AddPendingRequest is a no-op while a request is already pending (it supports
-	// only one in-flight request at a time), and dispatcher.CompleteRequest - which
-	// would normally free the slot - returns early here because this test drives
-	// RequestState directly without ever pushing a bundle onto the client's request
-	// queue (mirroring TestChargePointCallResultHandler), so CompleteRequest finds
-	// an empty queue and never calls DeletePendingRequest. Without this explicit
-	// delete, the second AddPendingRequest below would be silently ignored and the
-	// second CALL_RESULT would be rejected before reaching the handler, timing out
-	// even against a correct implementation.
-	suite.chargePoint.RequestState.DeletePendingRequest(mockUniqueId)
+	// The first request's completion already popped its bundle and freed its
+	// pending slot via CompleteRequest, so stage a fresh request the same way:
+	// pending (so ParseMessage accepts the response) plus a matching queue bundle
+	// (so CompleteRequest owns the completion via front-match PopIf).
 	secondUniqueId := "5102"
 	suite.chargePoint.RequestState.AddPendingRequest(secondUniqueId, newMockRequest("testValue2"))
+	require.NoError(t, suite.clientRequestQueue.Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: secondUniqueId}}))
 	deliveredC := make(chan string, 1)
 	suite.chargePoint.SetResponseHandler(func(confirmation ocpp.Response, requestId string) {
 		deliveredC <- requestId
@@ -200,6 +197,9 @@ func (suite *OcppJTestSuite) TestClientErrorHandlerPanicRecovered() {
 	suite.mockClient.On("Write", mock.Anything).Return(nil)
 	require.NoError(t, suite.chargePoint.Start("someUrl"))
 	suite.chargePoint.RequestState.AddPendingRequest(mockUniqueId, pendingRequest)
+	// Stage a matching queue bundle so CompleteRequest owns the completion via
+	// front-match PopIf (the pump never dispatches it, since pending is set).
+	require.NoError(t, suite.clientRequestQueue.Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: mockUniqueId}}))
 
 	err := suite.mockClient.MessageHandler([]byte(mockCallError))
 	assert.Nil(t, err)
@@ -225,13 +225,12 @@ func (suite *OcppJTestSuite) TestClientErrorHandlerPanicRecovered() {
 	}
 
 	// A subsequent CALL_ERROR must still be delivered to a fresh error handler.
-	// See the comment in TestClientResponseHandlerPanicRecovered: the first
-	// pending request slot must be freed explicitly, since CompleteRequest never
-	// ran against a populated queue in this test and AddPendingRequest is a no-op
-	// while a request is already pending.
-	suite.chargePoint.RequestState.DeletePendingRequest(mockUniqueId)
+	// The first request's completion already popped its bundle and freed its
+	// pending slot via CompleteRequest, so stage a fresh request the same way:
+	// pending plus a matching queue bundle (so CompleteRequest owns via PopIf).
 	secondUniqueId := "5202"
 	suite.chargePoint.RequestState.AddPendingRequest(secondUniqueId, newMockRequest("testValue2"))
+	require.NoError(t, suite.clientRequestQueue.Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: secondUniqueId}}))
 	deliveredC := make(chan string, 1)
 	suite.chargePoint.SetErrorHandler(func(err *ocpp.Error, details interface{}) {
 		deliveredC <- err.MessageId

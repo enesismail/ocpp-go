@@ -552,9 +552,13 @@ func testUnsupportedRequestFromChargePoint(suite *OcppV16TestSuite, request ocpp
 	})
 	require.Error(t, err)
 	assert.Equal(t, expectedError, err.Error())
-	// 2. Test receiving an unsupported request on the other endpoint and receiving an error
-	// Mark mocked request as pending, otherwise response will be ignored
+	// 2. Mark the outstanding request on the charge point: pending (so ParseMessage
+	// accepts the inbound CALL ERROR) plus a matching queue bundle (so
+	// CompleteRequest owns the completion via front-match PopIf; the pump never
+	// dispatches it, since pending is set). The request is then injected on the
+	// central system side, which replies NotSupported.
 	suite.ocppjChargePoint.RequestState.AddPendingRequest(messageId, request)
+	require.NoError(t, suite.clientRequestQueue.Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: messageId}}))
 	err = suite.mockWsServer.MessageHandler(channel, []byte(requestJson))
 	assert.Nil(t, err)
 	_, ok := <-resultChannel
@@ -642,6 +646,7 @@ type OcppV16TestSuite struct {
 	chargePoint        ocpp16.ChargePoint
 	centralSystem      ocpp16.CentralSystem
 	messageIdGenerator TestRandomIdGenerator
+	clientRequestQueue ocppj.RequestQueue
 	clientDispatcher   ocppj.ClientDispatcher
 	serverDispatcher   ocppj.ServerDispatcher
 }
@@ -671,7 +676,8 @@ func (suite *OcppV16TestSuite) SetupTest() {
 	mockServer := MockWebsocketServer{}
 	suite.mockWsClient = &mockClient
 	suite.mockWsServer = &mockServer
-	suite.clientDispatcher = ocppj.NewDefaultClientDispatcher(ocppj.NewFIFOClientQueue(queueCapacity))
+	suite.clientRequestQueue = ocppj.NewFIFOClientQueue(queueCapacity)
+	suite.clientDispatcher = ocppj.NewDefaultClientDispatcher(suite.clientRequestQueue)
 	suite.serverDispatcher = ocppj.NewDefaultServerDispatcher(ocppj.NewFIFOQueueMap(queueCapacity))
 	suite.ocppjChargePoint = ocppj.NewClient(
 		"test_id",

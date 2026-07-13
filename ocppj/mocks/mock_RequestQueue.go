@@ -233,6 +233,64 @@ func (_c *MockRequestQueue_Pop_Call) RunAndReturn(run func() interface{}) *MockR
 	return _c
 }
 
+// PopIf provides a mock function with given fields: predicate
+func (_m *MockRequestQueue) PopIf(predicate func(interface{}) bool) (interface{}, bool) {
+	ret := _m.Called(predicate)
+
+	if len(ret) == 0 {
+		panic("no return value specified for PopIf")
+	}
+
+	var r0 interface{}
+	var r1 bool
+	if rf, ok := ret.Get(0).(func(func(interface{}) bool) (interface{}, bool)); ok {
+		return rf(predicate)
+	}
+	if rf, ok := ret.Get(0).(func(func(interface{}) bool) interface{}); ok {
+		r0 = rf(predicate)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(interface{})
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(func(interface{}) bool) bool); ok {
+		r1 = rf(predicate)
+	} else {
+		r1 = ret.Get(1).(bool)
+	}
+
+	return r0, r1
+}
+
+// MockRequestQueue_PopIf_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'PopIf'
+type MockRequestQueue_PopIf_Call struct {
+	*mock.Call
+}
+
+// PopIf is a helper method to define mock.On call
+//   - predicate func(interface{}) bool
+func (_e *MockRequestQueue_Expecter) PopIf(predicate interface{}) *MockRequestQueue_PopIf_Call {
+	return &MockRequestQueue_PopIf_Call{Call: _e.mock.On("PopIf", predicate)}
+}
+
+func (_c *MockRequestQueue_PopIf_Call) Run(run func(predicate func(interface{}) bool)) *MockRequestQueue_PopIf_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func(interface{}) bool))
+	})
+	return _c
+}
+
+func (_c *MockRequestQueue_PopIf_Call) Return(_a0 interface{}, _a1 bool) *MockRequestQueue_PopIf_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockRequestQueue_PopIf_Call) RunAndReturn(run func(func(interface{}) bool) (interface{}, bool)) *MockRequestQueue_PopIf_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Push provides a mock function with given fields: element
 func (_m *MockRequestQueue) Push(element interface{}) error {
 	ret := _m.Called(element)

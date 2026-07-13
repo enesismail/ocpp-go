@@ -44,7 +44,7 @@ const panicWaitTimeout = 2 * time.Second
 func (suite *OcppV2TestSuite) TestServerRequestHandlerPanicRecoveredFacade() {
 	t := suite.T()
 	wsId := "test_id"
-	messageId := "9001"
+	messageId := defaultMessageId
 	wsUrl := "someUrl"
 	reason := provisioning.BootReasonPowerUp
 	chargePointModel := "model1"
@@ -70,7 +70,7 @@ func (suite *OcppV2TestSuite) TestServerRequestHandlerPanicRecoveredFacade() {
 	// The CSMS must reply to the charging station with a CALL
 	// ERROR(InternalError) in place of the crashed response.
 	setupDefaultCSMSHandlers(suite, expectedCSMSOptions{clientId: wsId, rawWrittenMessage: []byte(errorJson), forwardWrittenMessage: true}, handler)
-	setupDefaultChargingStationHandlers(suite, expectedChargingStationOptions{serverUrl: wsUrl, clientId: wsId, createChannelOnStart: true, channel: channel})
+	setupDefaultChargingStationHandlers(suite, expectedChargingStationOptions{serverUrl: wsUrl, clientId: wsId, createChannelOnStart: true, channel: channel, rawWrittenMessage: []byte(requestJson), forwardWrittenMessage: true})
 
 	errC := make(chan *ocpp.Error, 1)
 	suite.ocppjClient.SetErrorHandler(func(err *ocpp.Error, details interface{}) {
@@ -82,15 +82,11 @@ func (suite *OcppV2TestSuite) TestServerRequestHandlerPanicRecoveredFacade() {
 	err := suite.chargingStation.Start(wsUrl)
 	require.Nil(t, err)
 
-	// Mark the injected request id as pending on the charging station side,
-	// so the resulting CALL ERROR is routed to our error handler instead of
-	// being discarded as unknown (see ocppj.ParseMessage's CALL_ERROR
-	// branch).
-	suite.ocppjClient.RequestState.AddPendingRequest(messageId, provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor))
-
-	// Simulate the charging station sending a BootNotification directly to
-	// the CSMS. The registered handler panics in its own goroutine.
-	err = suite.mockWsServer.MessageHandler(channel, []byte(requestJson))
+	// The charging station sends a BootNotification through the real dispatch
+	// queue. The CSMS handler panics, is recovered, and replies with a
+	// CALL ERROR(InternalError) that the charging station's error handler
+	// receives via completion ownership.
+	err = suite.ocppjClient.SendRequest(provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor))
 	assert.Nil(t, err)
 
 	// 1. The panic must be recovered (no crash) and reported.

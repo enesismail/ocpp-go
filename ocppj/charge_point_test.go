@@ -391,7 +391,10 @@ func (suite *OcppJTestSuite) TestChargePointCallResultHandler() {
 		assert.NotNil(t, confirmation)
 	})
 	suite.mockClient.On("Start", mock.AnythingOfType("string")).Return(nil)
-	suite.chargePoint.RequestState.AddPendingRequest(mockUniqueId, mockRequest) // Manually add a pending request, so that response is not rejected
+	suite.chargePoint.RequestState.AddPendingRequest(mockUniqueId, mockRequest) // pending so ParseMessage accepts the response
+	// Stage a matching queue bundle so CompleteRequest owns the completion via
+	// front-match PopIf (the pump never dispatches it, since pending is set).
+	assert.NoError(t, suite.clientRequestQueue.Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: mockUniqueId}}))
 	err := suite.chargePoint.Start("somePath")
 	assert.Nil(t, err)
 	// Simulate central system message
@@ -417,7 +420,10 @@ func (suite *OcppJTestSuite) TestChargePointCallErrorHandler() {
 		assert.Equal(t, mockErrorDetails, details)
 	})
 	suite.mockClient.On("Start", mock.AnythingOfType("string")).Return(nil)
-	suite.chargePoint.RequestState.AddPendingRequest(mockUniqueId, mockRequest) // Manually add a pending request, so that response is not rejected
+	suite.chargePoint.RequestState.AddPendingRequest(mockUniqueId, mockRequest) // pending so ParseMessage accepts the response
+	// Stage a matching queue bundle so CompleteRequest owns the completion via
+	// front-match PopIf (the pump never dispatches it, since pending is set).
+	assert.NoError(t, suite.clientRequestQueue.Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: mockUniqueId}}))
 	err := suite.chargePoint.Start("someUrl")
 	assert.Nil(t, err)
 	// Simulate central system message

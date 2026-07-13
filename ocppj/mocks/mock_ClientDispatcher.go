@@ -27,8 +27,21 @@ func (_m *MockClientDispatcher) EXPECT() *MockClientDispatcher_Expecter {
 }
 
 // CompleteRequest provides a mock function with given fields: requestID
-func (_m *MockClientDispatcher) CompleteRequest(requestID string) {
-	_m.Called(requestID)
+func (_m *MockClientDispatcher) CompleteRequest(requestID string) bool {
+	ret := _m.Called(requestID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CompleteRequest")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func(string) bool); ok {
+		r0 = rf(requestID)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
 }
 
 // MockClientDispatcher_CompleteRequest_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CompleteRequest'
@@ -49,13 +62,13 @@ func (_c *MockClientDispatcher_CompleteRequest_Call) Run(run func(requestID stri
 	return _c
 }
 
-func (_c *MockClientDispatcher_CompleteRequest_Call) Return() *MockClientDispatcher_CompleteRequest_Call {
-	_c.Call.Return()
+func (_c *MockClientDispatcher_CompleteRequest_Call) Return(_a0 bool) *MockClientDispatcher_CompleteRequest_Call {
+	_c.Call.Return(_a0)
 	return _c
 }
 
-func (_c *MockClientDispatcher_CompleteRequest_Call) RunAndReturn(run func(string)) *MockClientDispatcher_CompleteRequest_Call {
-	_c.Run(run)
+func (_c *MockClientDispatcher_CompleteRequest_Call) RunAndReturn(run func(string) bool) *MockClientDispatcher_CompleteRequest_Call {
+	_c.Call.Return(run)
 	return _c
 }
 

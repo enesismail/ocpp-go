@@ -39,6 +39,7 @@ type Error struct {
 	Description string
 	MessageId   string
 	Marker      string
+	Cause       error
 }
 
 // Creates a new OCPP Error.
@@ -61,6 +62,13 @@ func (err Error) Error() string {
 func (err Error) Is(target error) bool {
 	t, ok := target.(*Error)
 	return ok && t.Marker != "" && err.Marker == t.Marker
+}
+
+// Unwrap returns the error wrapped by this Error, enabling errors.Is to traverse
+// into the underlying cause (e.g. context.Canceled). The value receiver matches
+// the existing Is method and is promoted into *Error's method set.
+func (err Error) Unwrap() error {
+	return err.Cause
 }
 
 // -------------------- Profile --------------------

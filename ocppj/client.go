@@ -322,23 +322,25 @@ func (c *Client) ocppMessageHandler(data []byte) error {
 		case CALL_RESULT:
 			callResult := message.(*CallResult)
 			log.Debugf("handling incoming CALL RESULT [%s]", callResult.UniqueId)
-			c.dispatcher.CompleteRequest(callResult.GetUniqueId()) // Remove current request from queue and send next one
-			if c.responseHandler != nil {
-				func() {
-					defer recoverHandler(ResponseHandlerKind, "", "", callResult.UniqueId, c.onHandlerPanic, nil)
-					c.responseHandler(callResult.Payload, callResult.UniqueId)
-				}()
+			if c.dispatcher.CompleteRequest(callResult.GetUniqueId()) {
+				if c.responseHandler != nil {
+					func() {
+						defer recoverHandler(ResponseHandlerKind, "", "", callResult.UniqueId, c.onHandlerPanic, nil)
+						c.responseHandler(callResult.Payload, callResult.UniqueId)
+					}()
+				}
 			}
 		case CALL_ERROR:
 			callError := message.(*CallError)
 			log.Debugf("handling incoming CALL ERROR [%s]", callError.UniqueId)
-			c.dispatcher.CompleteRequest(callError.GetUniqueId()) // Remove current request from queue and send next one
-			if c.errorHandler != nil {
-				ocppErr := ocpp.NewError(callError.ErrorCode, callError.ErrorDescription, callError.UniqueId)
-				func() {
-					defer recoverHandler(ErrorHandlerKind, "", "", callError.UniqueId, c.onHandlerPanic, nil)
-					c.errorHandler(ocppErr, callError.ErrorDetails)
-				}()
+			if c.dispatcher.CompleteRequest(callError.GetUniqueId()) {
+				if c.errorHandler != nil {
+					ocppErr := ocpp.NewError(callError.ErrorCode, callError.ErrorDescription, callError.UniqueId)
+					func() {
+						defer recoverHandler(ErrorHandlerKind, "", "", callError.UniqueId, c.onHandlerPanic, nil)
+						c.errorHandler(ocppErr, callError.ErrorDetails)
+					}()
+				}
 			}
 		}
 	}
