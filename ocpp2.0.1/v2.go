@@ -201,12 +201,19 @@ type ChargingStation interface {
 	//
 	// The request is synchronous blocking.
 	SendRequest(request ocpp.Request) (ocpp.Response, error)
+	// SendRequestCtx sends a synchronous request carrying a per-request context
+	// for cancellation and deadline propagation. A nil ctx is treated as
+	// context.Background(). The ctx-first parameter order follows Go convention.
+	SendRequestCtx(ctx context.Context, request ocpp.Request) (ocpp.Response, error)
 	// Sends an asynchronous request to the CSMS.
 	// The CSMS will respond with a confirmation message, or with an error if the request was invalid or could not be processed.
 	// This result is propagated via a callback, called asynchronously.
 	//
 	// In case of network issues (i.e. the remote host couldn't be reached), the function returns an error directly. In this case, the callback is never invoked.
 	SendRequestAsync(request ocpp.Request, callback func(confirmation ocpp.Response, protoError error)) error
+	// SendRequestAsyncCtx sends an asynchronous request carrying a per-request
+	// context for cancellation. A nil ctx is treated as context.Background().
+	SendRequestAsyncCtx(ctx context.Context, request ocpp.Request, callback func(confirmation ocpp.Response, protoError error)) error
 	// Connects to the CSMS and starts the charging station routine.
 	// The function doesn't block and returns right away, after having attempted to open a connection to the CSMS.
 	// If the connection couldn't be opened, an error is returned.

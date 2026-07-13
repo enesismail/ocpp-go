@@ -1,6 +1,7 @@
 package ocpp16
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 
@@ -36,6 +37,13 @@ type incomingMessage struct {
 	request      ocpp.Request
 	requestID    string
 	action       string
+}
+
+// asyncResponse wraps an asynchronous response for delivery via a channel
+// from the callback to the sync-send select.
+type asyncResponse struct {
+	r ocpp.Response
+	e error
 }
 
 type chargePoint struct {
@@ -324,20 +332,26 @@ func (cp *chargePoint) SetOnReconnectedHandler(handler func()) {
 }
 
 func (cp *chargePoint) SendRequest(request ocpp.Request) (ocpp.Response, error) {
+	return cp.SendRequestCtx(context.Background(), request)
+}
+
+// SendRequestCtx sends a synchronous OCPP request carrying a per-request
+// context for cancellation and deadline propagation. A nil ctx is treated as
+// context.Background(). The ctx-first parameter order follows Go convention
+// and deliberately diverges from the upstream #105 proposal.
+func (cp *chargePoint) SendRequestCtx(ctx context.Context, request ocpp.Request) (ocpp.Response, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	featureName := request.GetFeatureName()
 	if _, found := cp.client.GetProfileForFeature(featureName); !found {
 		return nil, fmt.Errorf("feature %v is unsupported on charge point (missing profile), cannot send request", featureName)
 	}
 
-	// Wraps an asynchronous response
-	type asyncResponse struct {
-		r ocpp.Response
-		e error
-	}
 	// Create channel and pass it to a callback function, for retrieving asynchronous response
 	asyncResponseC := make(chan asyncResponse, 1)
 	send := func() error {
-		return cp.client.SendRequest(request)
+		return cp.client.SendRequestCtx(ctx, request)
 	}
 	err := cp.callbacks.TryQueue("main", callbackqueue.RequestType(request.GetFeatureName()), send, func(confirmation ocpp.Response, err error) {
 		asyncResponseC <- asyncResponse{r: confirmation, e: err}
@@ -345,18 +359,48 @@ func (cp *chargePoint) SendRequest(request ocpp.Request) (ocpp.Response, error) 
 	if err != nil {
 		return nil, err
 	}
+	return cp.awaitCtxResult(ctx, featureName, asyncResponseC, cp.stopC)
+}
+
+// awaitCtxResult is the prefer-response-fast-path helper: a non-blocking
+// pre-check returns an already-delivered response even if ctx is canceled,
+// then a blocking select races response against stop and ctx.Done().
+// featureName only annotates the internal/stop error strings (kept identical
+// to the pre-E1c messages); it does not affect control flow.
+func (cp *chargePoint) awaitCtxResult(ctx context.Context, featureName string, asyncResponseC <-chan asyncResponse, stopC <-chan struct{}) (ocpp.Response, error) {
+	// Prefer a ready response (non-blocking pre-check).
 	select {
-	case asyncResult, ok := <-asyncResponseC:
+	case ar, ok := <-asyncResponseC:
 		if !ok {
-			return nil, fmt.Errorf("internal error while receiving result for %v request", request.GetFeatureName())
+			return nil, fmt.Errorf("internal error while receiving result for %v request", featureName)
 		}
-		return asyncResult.r, asyncResult.e
-	case <-cp.stopC:
-		return nil, fmt.Errorf("client stopped while waiting for response to %v", request.GetFeatureName())
+		return ar.r, ar.e
+	default:
+	}
+
+	select {
+	case ar, ok := <-asyncResponseC:
+		if !ok {
+			return nil, fmt.Errorf("internal error while receiving result for %v request", featureName)
+		}
+		return ar.r, ar.e
+	case <-stopC:
+		return nil, fmt.Errorf("client stopped while waiting for response to %v", featureName)
+	case <-ctx.Done():
+		return nil, ocppj.NewRequestCanceledError("", ctx.Err())
 	}
 }
 
 func (cp *chargePoint) SendRequestAsync(request ocpp.Request, callback func(confirmation ocpp.Response, err error)) error {
+	return cp.SendRequestAsyncCtx(context.Background(), request, callback)
+}
+
+// SendRequestAsyncCtx sends an asynchronous OCPP request carrying a per-request
+// context for cancellation. A nil ctx is treated as context.Background().
+func (cp *chargePoint) SendRequestAsyncCtx(ctx context.Context, request ocpp.Request, callback func(confirmation ocpp.Response, err error)) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	featureName := request.GetFeatureName()
 	if _, found := cp.client.GetProfileForFeature(featureName); !found {
 		return fmt.Errorf("feature %v is unsupported on charge point (missing profile), cannot send request", featureName)
@@ -373,7 +417,7 @@ func (cp *chargePoint) SendRequestAsync(request ocpp.Request, callback func(conf
 	}
 	// Response will be retrieved asynchronously via asyncHandler
 	send := func() error {
-		return cp.client.SendRequest(request)
+		return cp.client.SendRequestCtx(ctx, request)
 	}
 	err := cp.callbacks.TryQueue("main", callbackqueue.RequestType(request.GetFeatureName()), send, callback)
 	return err

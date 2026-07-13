@@ -88,6 +88,16 @@ type pendingRequest struct {
 	request ocpp.Request
 }
 
+// pumpPending is the pump-local token for an in-flight dispatched request.
+// The messagePump arms a ctx.Done() select arm from this token so an
+// in-flight request can be canceled before a response arrives.
+type pumpPending struct {
+	id      string
+	action  string
+	ctx     context.Context
+	payload ocpp.Request
+}
+
 // DefaultClientDispatcher is a default implementation of the ClientDispatcher interface.
 //
 // The dispatcher implements the ClientState as well for simplicity.
@@ -257,7 +267,26 @@ func (d *DefaultClientDispatcher) messagePump() {
 	// preference), so a pump that needed RLock could never drain that send.
 	reqCh := d.requestChannel
 
+	var pending pumpPending // pump-local in-flight token; zero when none in flight
+
 	for {
+		// Reconcile the local in-flight token against authoritative state.
+		// The coalesced readyForDispatch carries no id, so a response that
+		// completed the request off-pump is detected here.
+		if pending.id != "" {
+			if _, ok := d.pendingRequestState.GetPendingRequest(pending.id); !ok {
+				pending = pumpPending{}
+			}
+		}
+
+		// Arm the ctx-cancel select arm only when there is an in-flight request
+		// with its own context. context.Background().Done() is nil, so the arm
+		// remains inert (blocks forever) for a ctx-less send.
+		var pendingDone <-chan struct{}
+		if pending.id != "" && pending.ctx != nil {
+			pendingDone = pending.ctx.Done()
+		}
+
 		select {
 		case _, ok := <-reqCh:
 			// New request was posted
@@ -310,8 +339,19 @@ func (d *DefaultClientDispatcher) messagePump() {
 			}
 			// No request is currently pending -> set timer to high number
 			d.timer.Reset(defaultTimeoutTick)
+			pending = pumpPending{}
 		case rdy = <-d.readyForDispatch:
 			// Ready flag set, keep going
+		case <-pendingDone:
+			// This in-flight request's ctx fired. Cancel iff still pending+front
+			// (identity + atomic via CompleteRequest).
+			if _, ok := d.pendingRequestState.GetPendingRequest(pending.id); ok {
+				if d.CompleteRequest(pending.id) {
+					d.fireRequestCancel(pending.action, pending.id, pending.payload,
+						newRequestCanceledError(pending.id, pending.ctx.Err()))
+				}
+			}
+			pending = pumpPending{}
 		}
 
 		// Check if dispatcher is paused
@@ -323,7 +363,8 @@ func (d *DefaultClientDispatcher) messagePump() {
 		// Only dispatch request if able to send, queue isn't empty, and no request
 		// is currently in-flight (level-based check — re-derived every iteration).
 		if rdy && !d.requestQueue.IsEmpty() && !d.pendingRequestState.HasPendingRequest() {
-			if d.dispatchNextRequest() {
+			if p, dispatched := d.dispatchNextRequest(); dispatched {
+				pending = p
 				rdy = false
 				// Set timer. Non-blocking drain: d.timer.C has other receivers
 				// (Pause and Resume), so a fire from the previous request can be
@@ -343,18 +384,31 @@ func (d *DefaultClientDispatcher) messagePump() {
 	}
 }
 
-func (d *DefaultClientDispatcher) dispatchNextRequest() bool {
+func (d *DefaultClientDispatcher) dispatchNextRequest() (pumpPending, bool) {
 	// Get first element in queue
 	el := d.requestQueue.Peek()
 	bundle, ok := el.(RequestBundle)
 	if !ok || bundle.Call == nil {
 		log.Errorf("failed to dispatch next request; nil Call attribute")
-		return false
+		return pumpPending{}, false
 	}
 
 	if bundle.Data == nil {
 		log.Errorf("failed to dispatch next request; nil Data attribute")
-		return false
+		return pumpPending{}, false
+	}
+
+	ctx := bundleCtx(bundle)
+	// Pre-write drop: if the ctx already fired (e.g. it expired while
+	// queued during a disconnect), drop it and return so the coalesced
+	// readiness re-enters dispatch for the next front on the following
+	// pump iteration. One front per call — no inner loop.
+	if ctx.Err() != nil {
+		if d.CompleteRequest(bundle.Call.UniqueId) {
+			d.fireRequestCancel(bundle.Call.Action, bundle.Call.UniqueId, bundle.Call.Payload,
+				newRequestCanceledError(bundle.Call.UniqueId, ctx.Err()))
+		}
+		return pumpPending{}, false
 	}
 
 	jsonMessage := bundle.Data
@@ -367,10 +421,12 @@ func (d *DefaultClientDispatcher) dispatchNextRequest() bool {
 			d.fireRequestCancel(bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
 				NewLocalTransportError(InternalError, err.Error(), bundle.Call.UniqueId))
 		}
+		// Write error: canceled, nothing live to track.
+		return pumpPending{}, true
 	}
 	log.Infof("dispatched request %s to server", bundle.Call.UniqueId)
 	log.Debugf("sent JSON message to server: %s", string(jsonMessage))
-	return true
+	return pumpPending{id: bundle.Call.UniqueId, action: bundle.Call.Action, ctx: ctx, payload: bundle.Call.Payload}, true
 }
 
 func (d *DefaultClientDispatcher) Pause() {

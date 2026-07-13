@@ -1,6 +1,7 @@
 package ocppj
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -10,6 +11,15 @@ import (
 type RequestBundle struct {
 	Call *Call
 	Data []byte
+	Ctx  context.Context // optional; nil ⇒ context.Background()
+}
+
+// bundleCtx returns the bundle's context if set, otherwise context.Background().
+func bundleCtx(b RequestBundle) context.Context {
+	if b.Ctx != nil {
+		return b.Ctx
+	}
+	return context.Background()
 }
 
 // RequestQueue can be arbitrarily implemented, as long as it conforms to the Queue interface.
