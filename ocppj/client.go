@@ -1,6 +1,7 @@
 package ocppj
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -189,6 +190,22 @@ func (c *Client) IsConnected() bool {
 //
 // - the output queue is full
 func (c *Client) SendRequest(request ocpp.Request) error {
+	return c.SendRequestCtx(context.Background(), request)
+}
+
+// SendRequestCtx sends an OCPP Request to the server, carrying a per-request
+// context for cancellation and deadline propagation. A nil ctx is treated as
+// context.Background().
+//
+// The function does NOT fast-fail on an already-expired context; the bundle is
+// enqueued and the dispatcher's pre-write drop is the single cancellation path.
+//
+// The API places ctx first per Go convention (context.Context leads), which
+// deliberately diverges from the upstream #105 proposal.
+func (c *Client) SendRequestCtx(ctx context.Context, request ocpp.Request) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !c.dispatcher.IsRunning() {
 		return fmt.Errorf("ocppj client is not started, couldn't send request")
 	}
@@ -201,7 +218,7 @@ func (c *Client) SendRequest(request ocpp.Request) error {
 		return err
 	}
 	// Message will be processed by dispatcher. A dedicated mechanism allows to delegate the message queue handling.
-	if err = c.dispatcher.SendRequest(RequestBundle{Call: call, Data: jsonMessage}); err != nil {
+	if err = c.dispatcher.SendRequest(RequestBundle{Call: call, Data: jsonMessage, Ctx: ctx}); err != nil {
 		log.Errorf("error dispatching request [%s, %s]: %v", call.UniqueId, call.Action, err)
 		return err
 	}

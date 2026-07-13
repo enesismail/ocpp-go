@@ -340,3 +340,56 @@ is returned unswallowed — something `Stop()` could not express). All under `-r
 > every existing server test sets only `.On("Stop")` — routing `Stop()` through `Shutdown` there
 > would make those calls hit an unexpected `Shutdown` mock and panic. Keep the two as parallel
 > wrappers.
+
+## Context-aware send (`SendRequestCtx`)
+
+Per-request `context.Context` on outbound client sends — a caller can cancel or deadline-bound an
+individual OCPP request independently of the dispatcher's fixed `SetTimeout`. Addresses the use-case
+of upstream **[#105](https://github.com/lorenzodonini/ocpp-go/pull/105)** (@michaelbeaumont) /
+**[#153](https://github.com/lorenzodonini/ocpp-go/issues/153)** (@sbindzau). The API **intentionally
+diverges** from #105: it is additive (ctx-less `SendRequest`/`SendRequestAsync` are preserved as
+`context.Background()` wrappers) and ctx-first (`SendRequestCtx(ctx, request)`, per Go convention),
+where #105 used ctx-last `SendRequestWithContext(request, ctx)` — so it *addresses the use-case of*
+#105, it does not *match* its signatures.
+
+Semantics: a ctx that fires while the request is queued is honored at dispatch (dropped, never sent
+on reconnect — the #153 ask); a ctx that fires in flight cancels via the E1a completion-ownership
+(`CompleteRequest`/`PopIf`), delivering an error matching both `ocppj.ErrRequestCanceled` (marker) and
+`context.Canceled`/`DeadlineExceeded` (via `ocpp.Error.Cause`+`Unwrap`, reusing E1a's error surface —
+no new sentinel). Exactly-once holds: a response, a timeout, a dispatcher-stop, and a ctx-cancel all
+race to the single-winner `CompleteRequest`. Cancellation is best-effort and local (the peer may still
+receive/process the request; its late response is discarded by `ParseMessage`'s pending-check).
+
+**Not cleanly "additive" — two narrow source-breaking edges** (both low-risk here): `RequestBundle`
+gains a `Ctx` field (breaks any downstream *unkeyed* literal — `server.go:185` was the only in-repo
+one, keyed here); and `ChargePoint`/`ChargingStation` grow two methods (breaks any downstream
+*implementer* — only the library's own concrete facades implement them). Call-site callers and typed
+helpers are byte-identical.
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `ocppj/queue.go:14,18` | `RequestBundle.Ctx` + `bundleCtx()` | optional per-request ctx on the dispatch bundle; nil ⇒ `context.Background()` |
+| `ocppj/client.go:205` | `Client.SendRequestCtx(ctx, request)` | ctx-carrying send; `SendRequest` delegates with `context.Background()` |
+| `ocppj/ocppj.go:47` | `NewRequestCanceledError(messageID, cause)` | exported so the facades can synthesize a canceled error matching `ErrRequestCanceled`+`context.Canceled`; nil-cause-safe |
+| `ocppj/dispatcher.go:387` | `dispatchNextRequest() (pumpPending, bool)` | pre-write drop of an already-fired ctx (one front per pump iteration — never a synchronous burst of on-pump cancels); returns the dispatched request's ctx token |
+| `ocppj/dispatcher.go:94,345` | `pumpPending` token + `case <-pendingDone` arm | in-flight ctx-cancel: pump-local `{id,ctx,action,payload}` reconciled via `GetPendingRequest`, cancels through `CompleteRequest` (single-winner); the pump never takes `d.mutex` |
+| `ocppj/server.go:185` | keyed `RequestBundle{Call:…, Data:…}` | the one positional literal the new field would break |
+| `ocpp1.6/charge_point.go:342,400` + `v16.go:161,169` | `ChargePoint.SendRequestCtx`/`SendRequestAsyncCtx` | 1.6 facade + interface; ctx-less variants are `Background()` wrappers |
+| `ocpp2.0.1/charging_station.go:506,565` + `v2.go:207,216` | `ChargingStation.SendRequestCtx`/`SendRequestAsyncCtx` | 2.0.1 facade + interface (1.6/2.0.1 parity) |
+| `ocpp1.6/charge_point.go:370` + `ocpp2.0.1/charging_station.go:535` | `awaitCtxResult(ctx, featureName, …)` | prefer-response fast-path (a delivered response wins over an already-fired ctx); `featureName` keeps the internal/stop error strings byte-identical to pre-E1c |
+| `ocpp2.0.1/charging_station.go:645` (called `:639`) | `chargingStation.clearCallbacks()` on the `stopC` arm | mirrors 1.6's `clearCallbacks` — without it a ctx/response/Stop race orphans the callback closure (and, across Stop→Start, mis-routes a later same-feature response to the stale closure) |
+
+**Guard:** `ocppj/e1c_context_send_test.go` (pre-write drop, in-flight cancel + no-double-deliver,
+queued-during-pause, in-flight-cancel-*while-paused*, ctx-less regression, Stop-vs-cancel exactly-once,
+off-pump-complete-then-stale-ctx, N>1 cascading drops); `ocpp2.0.1/context_clearcallbacks_test.go`
+(white-box: the `stopC` arm drains `cs.callbacks`); `ocpp{1.6,2.0.1}/context_awaitresult_test.go`
+(white-box: the prefer-response fast-path, iterated 100× to defeat a plain-select 50/50 false-pass);
+`ocpp{1.6,2.0.1}_test/context_send_test.go` (facade e2e: canceled-ctx error, nil-ctx == Background,
+`SendRequest`/typed helpers untouched). All under `-race`.
+
+> **Known pre-existing, deferred (see `DEFERRED.md`), NOT E1c regressions:** on-pump cancel delivery
+> does a blocking send to the facade's shared channel — E1c stays one-cancel-per-iteration so it does
+> not *amplify* the pre-existing blocking-callback shutdown-deadlock class; the default
+> `FIFOClientQueue` is unbounded, so canceled-while-disconnected requests accumulate (active eviction
+> deferred); and the 2.0.1 `clearCallbacks` mirror inherits 1.6's no-handler-join restart race (the
+> join-fix must land on both). **Out of scope: E2** — server-side (CSMS) context-aware send.

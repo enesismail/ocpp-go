@@ -38,14 +38,28 @@ const requestCanceledMarker = "ocppj/request-canceled"
 // due to context cancellation.
 var ErrRequestCanceled = &ocpp.Error{Marker: requestCanceledMarker}
 
-func newRequestCanceledError(messageID string, cause error) *ocpp.Error {
+// NewRequestCanceledError builds a tagged request-canceled error from a cause
+// (typically a context error). It is used by the facade sync-send select (C4)
+// to synthesize a cancel when the ctx arm wins the race, in which case the
+// MessageId is empty. A nil cause is tolerated: Description falls back to a
+// generic string and Cause stays nil (so errors.Is against a wrapped target is
+// a no-op rather than a nil-deref panic).
+func NewRequestCanceledError(messageID string, cause error) *ocpp.Error {
+	description := "request canceled"
+	if cause != nil {
+		description = cause.Error()
+	}
 	return &ocpp.Error{
 		Code:        GenericError,
-		Description: cause.Error(),
+		Description: description,
 		MessageId:   messageID,
 		Marker:      requestCanceledMarker,
 		Cause:       cause,
 	}
+}
+
+func newRequestCanceledError(messageID string, cause error) *ocpp.Error {
+	return NewRequestCanceledError(messageID, cause)
 }
 
 // dispatcherStoppedMarker tags the local dispatcher-stopped error so it is distinguishable from a server
