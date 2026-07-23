@@ -229,10 +229,20 @@ func (suite *OcppV16TestSuite) TestE2_0_ServerCrossDeliveryRegression() {
 
 	// Wire the mocks: server writes to mockWsServer.Write. R1's Write
 	// succeeds; R2's Write fails, triggering the pump-side cancel.
+	// serverWroteR1 signals when the pump has actually written R1, so the test
+	// only injects R1's CALL_RESULT once R1 is pending — otherwise a slow runner
+	// can deliver the result before dispatch and ocppj discards it (the hook then
+	// never fires).
+	serverWroteR1 := make(chan struct{}, 1)
 	suite.mockWsServer.On("Start", mock.AnythingOfType("int"), mock.AnythingOfType("string")).Return(nil)
 	suite.mockWsServer.On("Stop").Return()
 	suite.mockWsServer.On("Write", mock.AnythingOfType("string"), mock.Anything).
-		Return(nil).Once()
+		Return(nil).Run(func(args mock.Arguments) {
+		select {
+		case serverWroteR1 <- struct{}{}:
+		default:
+		}
+	}).Once()
 	suite.mockWsServer.On("Write", mock.AnythingOfType("string"), mock.Anything).
 		Return(fmt.Errorf("write failed for R2"))
 
@@ -296,6 +306,14 @@ func (suite *OcppV16TestSuite) TestE2_0_ServerCrossDeliveryRegression() {
 			r2Result <- result{confirmation: conf, err: err}
 		})
 	require.NoError(t, err)
+
+	// Wait until the server has actually dispatched R1 (so it is pending) before
+	// injecting its CALL_RESULT — otherwise ocppj discards the result as unsolicited.
+	select {
+	case <-serverWroteR1:
+	case <-time.After(inboundOrderingWaitTimeout):
+		t.Fatal("timed out waiting for the server to dispatch R1")
+	}
 
 	// --- Inject R1's CALL RESULT into the server ---
 	callResultJson := fmt.Sprintf(`[3,"%s",{"status":"%s"}]`, r1ID, core.AvailabilityStatusAccepted)
