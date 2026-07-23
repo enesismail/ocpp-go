@@ -69,7 +69,8 @@ func (suite *OcppJTestSuite) TestClientCancelHandlerPanicRecoveredOnTimeout() {
 	require.NoError(t, suite.chargePoint.Start("someUrl"))
 
 	req := newMockRequest("testValue")
-	require.NoError(t, suite.chargePoint.SendRequest(req))
+	_, e2sendErr := suite.chargePoint.SendRequest(req)
+	require.NoError(t, e2sendErr)
 
 	var data []byte
 	select {
@@ -94,7 +95,8 @@ func (suite *OcppJTestSuite) TestClientCancelHandlerPanicRecoveredOnTimeout() {
 
 	// The pump must have survived: a subsequent request still dispatches.
 	req2 := newMockRequest("testValue2")
-	require.NoError(t, suite.chargePoint.SendRequest(req2))
+	_, e2sendErr = suite.chargePoint.SendRequest(req2)
+	require.NoError(t, e2sendErr)
 	select {
 	case <-writeC:
 	case <-time.After(panicWaitTimeout):
@@ -139,7 +141,8 @@ func (suite *OcppJTestSuite) TestClientCancelHandlerPanicRecoveredOnWriteFailure
 	require.NoError(t, suite.chargePoint.Start("someUrl"))
 
 	req := newMockRequest("testValue")
-	require.NoError(t, suite.chargePoint.SendRequest(req))
+	_, e2sendErr := suite.chargePoint.SendRequest(req)
+	require.NoError(t, e2sendErr)
 
 	var requestID string
 	select {
@@ -165,7 +168,8 @@ func (suite *OcppJTestSuite) TestClientCancelHandlerPanicRecoveredOnWriteFailure
 	// The pump must have survived: a subsequent request still dispatches
 	// (this time successfully, per the fallback Write expectation above).
 	req2 := newMockRequest("testValue2")
-	require.NoError(t, suite.chargePoint.SendRequest(req2))
+	_, e2sendErr = suite.chargePoint.SendRequest(req2)
+	require.NoError(t, e2sendErr)
 	select {
 	case <-writeC:
 	case <-time.After(panicWaitTimeout):
@@ -199,7 +203,8 @@ func (suite *OcppJTestSuite) TestServerCancelHandlerPanicRecoveredOnTimeout() {
 	suite.serverDispatcher.CreateClient(clientID)
 
 	req := newMockRequest("testValue")
-	require.NoError(t, suite.centralSystem.SendRequest(clientID, req))
+	_, e2sendErr := suite.centralSystem.SendRequest(clientID, req)
+	require.NoError(t, e2sendErr)
 
 	var data []byte
 	select {
@@ -225,7 +230,8 @@ func (suite *OcppJTestSuite) TestServerCancelHandlerPanicRecoveredOnTimeout() {
 	// The shared pump must have survived: a subsequent request to the same
 	// client still dispatches.
 	req2 := newMockRequest("testValue2")
-	require.NoError(t, suite.centralSystem.SendRequest(clientID, req2))
+	_, e2sendErr = suite.centralSystem.SendRequest(clientID, req2)
+	require.NoError(t, e2sendErr)
 	select {
 	case <-writeC:
 	case <-time.After(panicWaitTimeout):
@@ -273,7 +279,8 @@ func (suite *OcppJTestSuite) TestServerCancelHandlerPanicRecoveredOnWriteFailure
 	suite.serverDispatcher.CreateClient(clientID)
 
 	req := newMockRequest("testValue")
-	require.NoError(t, suite.centralSystem.SendRequest(clientID, req))
+	_, e2sendErr := suite.centralSystem.SendRequest(clientID, req)
+	require.NoError(t, e2sendErr)
 
 	var requestID string
 	select {
@@ -298,7 +305,8 @@ func (suite *OcppJTestSuite) TestServerCancelHandlerPanicRecoveredOnWriteFailure
 	// The shared pump must have survived: a subsequent request to the same
 	// client still dispatches (this time successfully).
 	req2 := newMockRequest("testValue2")
-	require.NoError(t, suite.centralSystem.SendRequest(clientID, req2))
+	_, e2sendErr = suite.centralSystem.SendRequest(clientID, req2)
+	require.NoError(t, e2sendErr)
 	select {
 	case <-writeC:
 	case <-time.After(panicWaitTimeout):
@@ -416,7 +424,8 @@ func (suite *OcppJTestSuite) TestClientDisconnectedAndReconnectedHandlerPanicRec
 	// despite the handler panic: the dispatcher is unpaused and still usable.
 	assert.False(t, suite.clientDispatcher.IsPaused())
 	req := newMockRequest("testValue")
-	require.NoError(t, suite.chargePoint.SendRequest(req))
+	_, e2sendErr := suite.chargePoint.SendRequest(req)
+	require.NoError(t, e2sendErr)
 	select {
 	case <-writeC:
 	case <-time.After(panicWaitTimeout):

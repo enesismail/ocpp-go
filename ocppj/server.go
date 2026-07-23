@@ -169,25 +169,28 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // - the endpoint doesn't support the feature
 //
 // - the output queue is full
-func (s *Server) SendRequest(clientID string, request ocpp.Request) error {
+//
+// On success it returns the generated OCPP message ID (Call.UniqueId); on error
+// it returns an empty string.
+func (s *Server) SendRequest(clientID string, request ocpp.Request) (string, error) {
 	if !s.dispatcher.IsRunning() {
-		return fmt.Errorf("ocppj server is not started, couldn't send request")
+		return "", fmt.Errorf("ocppj server is not started, couldn't send request")
 	}
 	call, err := s.CreateCall(request)
 	if err != nil {
-		return err
+		return "", err
 	}
 	jsonMessage, err := call.MarshalJSON()
 	if err != nil {
-		return err
+		return "", err
 	}
 	// Will not send right away. Queuing message and let it be processed by dedicated requestPump routine
 	if err = s.dispatcher.SendRequest(clientID, RequestBundle{Call: call, Data: jsonMessage}); err != nil {
 		log.Errorf("error dispatching request [%s, %s] to %s: %v", call.UniqueId, call.Action, clientID, err)
-		return err
+		return "", err
 	}
 	log.Debugf("enqueued CALL [%s, %s] for %s", call.UniqueId, call.Action, clientID)
-	return nil
+	return call.UniqueId, nil
 }
 
 // Sends an OCPP Response to a client, identified by the clientID parameter.

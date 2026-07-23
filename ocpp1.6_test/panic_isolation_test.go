@@ -77,7 +77,7 @@ func (suite *OcppV16TestSuite) TestServerRequestHandlerPanicRecoveredFacade() {
 	// The central system's handler panics, is recovered, and replies with a
 	// CALL ERROR(InternalError) that the charge point's error handler receives
 	// via completion ownership.
-	err = suite.ocppjChargePoint.SendRequest(core.NewBootNotificationRequest(chargePointModel, chargePointVendor))
+	_, err = suite.ocppjChargePoint.SendRequest(core.NewBootNotificationRequest(chargePointModel, chargePointVendor))
 	assert.Nil(t, err)
 
 	// 1. The panic must be recovered (no crash) and reported.

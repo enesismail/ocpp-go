@@ -28,6 +28,13 @@ import (
 	"github.com/enesismail/ocpp-go/ocppj"
 )
 
+// responseEnvelope wraps a response together with its OCPP message ID
+// so the asyncCallbackHandler can dequeue the correct callback.
+type responseEnvelope struct {
+	response  ocpp.Response
+	requestID string
+}
+
 type chargingStation struct {
 	client               *ocppj.Client
 	securityHandler      security.ChargingStationHandler
@@ -46,7 +53,7 @@ type chargingStation struct {
 	diagnosticsHandler   diagnostics.ChargingStationHandler
 	displayHandler       display.ChargingStationHandler
 	dataHandler          data.ChargingStationHandler
-	responseHandler      chan ocpp.Response
+	responseHandler      chan responseEnvelope
 	errorHandler         chan error
 	callbacks            callbackqueue.CallbackQueue
 	stopC                chan struct{}
@@ -514,10 +521,10 @@ func (cs *chargingStation) SendRequestCtx(ctx context.Context, request ocpp.Requ
 
 	// Create channel and pass it to a callback function, for retrieving asynchronous response
 	asyncResponseC := make(chan asyncResponse, 1)
-	send := func() error {
+	send := func() (string, error) {
 		return cs.client.SendRequestCtx(ctx, request)
 	}
-	err := cs.callbacks.TryQueue("main", callbackqueue.RequestType(request.GetFeatureName()), send, func(confirmation ocpp.Response, err error) {
+	err := cs.callbacks.TryQueue("main", send, func(confirmation ocpp.Response, err error) {
 		asyncResponseC <- asyncResponse{r: confirmation, e: err}
 	})
 	if err != nil {
@@ -601,33 +608,35 @@ func (cs *chargingStation) SendRequestAsyncCtx(ctx context.Context, request ocpp
 		return fmt.Errorf("unsupported action %v on charging station, cannot send request", featureName)
 	}
 	// Response will be retrieved asynchronously via asyncHandler
-	send := func() error {
+	send := func() (string, error) {
 		return cs.client.SendRequestCtx(ctx, request)
 	}
-	err := cs.callbacks.TryQueue("main", callbackqueue.RequestType(request.GetFeatureName()), send, callback)
+	err := cs.callbacks.TryQueue("main", send, callback)
 	return err
 }
 
 func (cs *chargingStation) asyncCallbackHandler(stopC chan struct{}) {
 	for {
 		select {
-		case confirmation := <-cs.responseHandler:
+		case env := <-cs.responseHandler:
 			// Get and invoke callback
-			if callback, ok := cs.callbacks.Dequeue("main", callbackqueue.RequestType(confirmation.GetFeatureName())); ok {
+			if callback, ok := cs.callbacks.Dequeue("main", env.requestID); ok {
 				func() {
-					defer cs.client.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, confirmation.GetFeatureName(), "", false)
-					callback(confirmation, nil)
+					defer cs.client.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, env.response.GetFeatureName(), "", false)
+					callback(env.response, nil)
 				}()
 			} else {
-				cs.error(fmt.Errorf("no callback available for incoming response %v", confirmation.GetFeatureName()))
+				cs.error(fmt.Errorf("no callback available for incoming response %v", env.response.GetFeatureName()))
 			}
 		case protoError := <-cs.errorHandler:
-			// Get and invoke callback
-			if callback, ok := cs.callbacks.Dequeue("main", ""); ok {
-				requestID := ""
-				if ocppErr, ok := protoError.(*ocpp.Error); ok {
-					requestID = ocppErr.MessageId
-				}
+			// Get and invoke callback by exact request ID
+			requestID := ""
+			if ocppError, ok := protoError.(*ocpp.Error); ok {
+				requestID = ocppError.MessageId
+			}
+			if requestID == "" {
+				cs.error(fmt.Errorf("cannot route error with no message id: %v", protoError))
+			} else if callback, ok := cs.callbacks.Dequeue("main", requestID); ok {
 				func() {
 					defer cs.client.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, "", requestID, false)
 					callback(nil, protoError)
@@ -642,9 +651,10 @@ func (cs *chargingStation) asyncCallbackHandler(stopC chan struct{}) {
 	}
 }
 
+// clearCallbacks discards every pending callback on stop (they are not invoked;
+// DrainAll's non-FIFO order is irrelevant since nothing is called).
 func (cs *chargingStation) clearCallbacks() {
-	for _, ok := cs.callbacks.Dequeue("main", ""); ok; _, ok = cs.callbacks.Dequeue("main", "") {
-	}
+	cs.callbacks.DrainAll("main")
 }
 
 func (cs *chargingStation) sendResponse(response ocpp.Response, err error, requestId string) {

@@ -280,7 +280,7 @@ func NewChargingStation(id string, endpoint *ocppj.Client, client ws.Client) Cha
 
 	cs := chargingStation{
 		client:          endpoint,
-		responseHandler: make(chan ocpp.Response, 1),
+		responseHandler: make(chan responseEnvelope, 1),
 		errorHandler:    make(chan error, 1),
 		callbacks:       callbackqueue.New(),
 	}
@@ -289,7 +289,7 @@ func NewChargingStation(id string, endpoint *ocppj.Client, client ws.Client) Cha
 	endpoint.SetOnRequestCanceled(cs.onRequestTimeout)
 
 	cs.client.SetResponseHandler(func(confirmation ocpp.Response, requestId string) {
-		cs.responseHandler <- confirmation
+		cs.responseHandler <- responseEnvelope{response: confirmation, requestID: requestId}
 	})
 	cs.client.SetErrorHandler(func(err *ocpp.Error, details interface{}) {
 		cs.errorHandler <- err

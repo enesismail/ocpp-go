@@ -135,13 +135,13 @@ func TestE1cPreWriteDropAlreadyCanceledCtx(t *testing.T) {
 	// PR-E1c: SendRequestCtx exists and enqueues with Ctx set.
 	// SendRequestCtx calls CreateCall INTERNALLY, generating a fresh id.
 	// Capture the REAL dispatched id via the recorder.
-	err := endpoint.SendRequestCtx(ctxA, reqA)
+	_, err := endpoint.SendRequestCtx(ctxA, reqA)
 	require.NoError(t, err, "SendRequestCtx must NOT fast-fail on an already-canceled context")
 	idA := rec.nth(0)
 
 	// --- Request B: live ctx ---
 	reqB := &e1aMockRequest{MockValue: "pre-write-b"}
-	err = endpoint.SendRequestCtx(context.Background(), reqB)
+	_, err = endpoint.SendRequestCtx(context.Background(), reqB)
 	require.NoError(t, err)
 
 	// Verify A's cancel fired exactly once.
@@ -218,7 +218,7 @@ func TestE1cInFlightCancelLateResponseNoDoubleDelivery(t *testing.T) {
 	ctxA, cancelA := context.WithCancel(context.Background())
 	reqA := &e1aMockRequest{MockValue: "inflight-a"}
 
-	err := endpoint.SendRequestCtx(ctxA, reqA)
+	_, err := endpoint.SendRequestCtx(ctxA, reqA)
 	require.NoError(t, err)
 
 	// Wait for A to be dispatched (written). After this, A is in-flight/pending
@@ -232,7 +232,7 @@ func TestE1cInFlightCancelLateResponseNoDoubleDelivery(t *testing.T) {
 
 	// --- Queue B behind A (live ctx) ---
 	reqB := &e1aMockRequest{MockValue: "inflight-b"}
-	err = endpoint.SendRequestCtx(context.Background(), reqB)
+	_, err = endpoint.SendRequestCtx(context.Background(), reqB)
 	require.NoError(t, err)
 	idB := rec.nth(1)
 	require.NotEqual(t, idA, idB, "message IDs must be distinct")
@@ -313,7 +313,7 @@ func TestE1cQueuedDuringPauseDrop(t *testing.T) {
 	ctxA, cancelA := context.WithCancel(context.Background())
 	reqA := &e1aMockRequest{MockValue: "qdp-a"}
 
-	err := endpoint.SendRequestCtx(ctxA, reqA)
+	_, err := endpoint.SendRequestCtx(ctxA, reqA)
 	require.NoError(t, err)
 	idA := rec.nth(0)
 	assert.Equal(t, 1, q.Size(), "A must be queued while paused")
@@ -394,7 +394,7 @@ func TestE1cInFlightCancelWhilePaused(t *testing.T) {
 	ctxA, cancelA := context.WithCancel(context.Background())
 	reqA := &e1aMockRequest{MockValue: "ifp-a"}
 
-	err := endpoint.SendRequestCtx(ctxA, reqA)
+	_, err := endpoint.SendRequestCtx(ctxA, reqA)
 	require.NoError(t, err)
 
 	// Wait for A to be dispatched (written). A is now in-flight/pending.
@@ -407,7 +407,7 @@ func TestE1cInFlightCancelWhilePaused(t *testing.T) {
 
 	// --- Queue B behind A ---
 	reqB := &e1aMockRequest{MockValue: "ifp-b"}
-	err = endpoint.SendRequestCtx(context.Background(), reqB)
+	_, err = endpoint.SendRequestCtx(context.Background(), reqB)
 	require.NoError(t, err)
 	idB := rec.nth(1)
 	require.NotEqual(t, idA, idB)
@@ -541,7 +541,7 @@ func TestE1cStopVsCancelExactlyOneTerminalError(t *testing.T) {
 	ctxA, cancelA := context.WithCancel(context.Background())
 	reqA := &e1aMockRequest{MockValue: "stop-vs-cancel"}
 
-	err := endpoint.SendRequestCtx(ctxA, reqA)
+	_, err := endpoint.SendRequestCtx(ctxA, reqA)
 	require.NoError(t, err)
 	idA := rec.nth(0)
 
@@ -628,7 +628,8 @@ func TestE1cOffPumpCompletionThenStaleCtxCancel(t *testing.T) {
 	defer d.Stop()
 
 	ctxA, cancelA := context.WithCancel(context.Background())
-	require.NoError(t, endpoint.SendRequestCtx(ctxA, &e1aMockRequest{MockValue: "offpump-a"}))
+	_, err := endpoint.SendRequestCtx(ctxA, &e1aMockRequest{MockValue: "offpump-a"})
+	require.NoError(t, err)
 	select {
 	case <-writtenC:
 	case <-time.After(e1cBound):
@@ -688,10 +689,12 @@ func TestE1cCascadingPreWriteDrops(t *testing.T) {
 	for i := 0; i < nDrop; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		require.NoError(t, endpoint.SendRequestCtx(ctx, &e1aMockRequest{MockValue: fmt.Sprintf("drop-%d", i)}))
+		_, err := endpoint.SendRequestCtx(ctx, &e1aMockRequest{MockValue: fmt.Sprintf("drop-%d", i)})
+		require.NoError(t, err)
 		droppedIDs[rec.nth(i)] = false
 	}
-	require.NoError(t, endpoint.SendRequestCtx(context.Background(), &e1aMockRequest{MockValue: "live"}))
+	_, err := endpoint.SendRequestCtx(context.Background(), &e1aMockRequest{MockValue: "live"})
+	require.NoError(t, err)
 	liveID := rec.nth(nDrop)
 	require.Equal(t, nDrop+1, q.Size(), "all requests must be queued while paused")
 

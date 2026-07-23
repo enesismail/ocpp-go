@@ -350,10 +350,10 @@ func (cp *chargePoint) SendRequestCtx(ctx context.Context, request ocpp.Request)
 
 	// Create channel and pass it to a callback function, for retrieving asynchronous response
 	asyncResponseC := make(chan asyncResponse, 1)
-	send := func() error {
+	send := func() (string, error) {
 		return cp.client.SendRequestCtx(ctx, request)
 	}
-	err := cp.callbacks.TryQueue("main", callbackqueue.RequestType(request.GetFeatureName()), send, func(confirmation ocpp.Response, err error) {
+	err := cp.callbacks.TryQueue("main", send, func(confirmation ocpp.Response, err error) {
 		asyncResponseC <- asyncResponse{r: confirmation, e: err}
 	})
 	if err != nil {
@@ -416,10 +416,10 @@ func (cp *chargePoint) SendRequestAsyncCtx(ctx context.Context, request ocpp.Req
 		return fmt.Errorf("unsupported action %v on charge point, cannot send request", featureName)
 	}
 	// Response will be retrieved asynchronously via asyncHandler
-	send := func() error {
+	send := func() (string, error) {
 		return cp.client.SendRequestCtx(ctx, request)
 	}
-	err := cp.callbacks.TryQueue("main", callbackqueue.RequestType(request.GetFeatureName()), send, callback)
+	err := cp.callbacks.TryQueue("main", send, callback)
 	return err
 }
 
@@ -442,7 +442,7 @@ func (cp *chargePoint) asyncCallbackHandler() {
 			switch incoming.kind {
 			case incomingResponse:
 				// Get and invoke callback
-				if callback, ok := cp.callbacks.Dequeue("main", callbackqueue.RequestType(incoming.confirmation.GetFeatureName())); ok {
+				if callback, ok := cp.callbacks.Dequeue("main", incoming.requestID); ok {
 					func() {
 						defer cp.client.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, incoming.confirmation.GetFeatureName(), "", false)
 						callback(incoming.confirmation, nil)
@@ -452,12 +452,14 @@ func (cp *chargePoint) asyncCallbackHandler() {
 					cp.error(err)
 				}
 			case incomingError:
-				// Get and invoke callback
-				if callback, ok := cp.callbacks.Dequeue("main", ""); ok {
-					requestID := ""
-					if ocppError, ok := incoming.err.(*ocpp.Error); ok {
-						requestID = ocppError.MessageId
-					}
+				// Get and invoke callback by exact request ID
+				requestID := ""
+				if ocppError, ok := incoming.err.(*ocpp.Error); ok {
+					requestID = ocppError.MessageId
+				}
+				if requestID == "" {
+					cp.error(fmt.Errorf("cannot route error with no message id: %v", incoming.err))
+				} else if callback, ok := cp.callbacks.Dequeue("main", requestID); ok {
 					func() {
 						defer cp.client.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, "", requestID, false)
 						callback(nil, incoming.err)
@@ -482,9 +484,10 @@ func (cp *chargePoint) asyncCallbackHandler() {
 	}
 }
 
+// clearCallbacks discards every pending callback on stop (they are not invoked;
+// DrainAll's non-FIFO order is irrelevant since nothing is called).
 func (cp *chargePoint) clearCallbacks() {
-	for _, ok := cp.callbacks.Dequeue("main", ""); ok; _, ok = cp.callbacks.Dequeue("main", "") {
-	}
+	cp.callbacks.DrainAll("main")
 }
 
 func (cp *chargePoint) sendResponse(confirmation ocpp.Response, err error, requestId string) {

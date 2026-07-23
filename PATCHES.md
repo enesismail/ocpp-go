@@ -393,3 +393,70 @@ off-pump-complete-then-stale-ctx, N>1 cascading drops); `ocpp2.0.1/context_clear
 > `FIFOClientQueue` is unbounded, so canceled-while-disconnected requests accumulate (active eviction
 > deferred); and the 2.0.1 `clearCallbacks` mirror inherits 1.6's no-handler-join restart race (the
 > join-fix must land on both). **Out of scope: E2** — server-side (CSMS) context-aware send.
+
+## requestID-keyed callback queue
+
+Upstream lineage — the root fix for a family the fork had so far only *mitigated*:
+[#363](https://github.com/lorenzodonini/ocpp-go/issues/363) (@qosmotec — the type-keying
+mitigation, now superseded), #294 ("CS confuses error responses between requests in case of
+timeout"), #67 (panic when `TriggerMessage` and `Change/GetConfiguration` run concurrently).
+Type-keying (`callbackqueue.RequestType`) stopped the interface-conversion *panic* but not the
+*mis-pairing*, and did nothing on the CALL_ERROR path (which dequeued untyped — a CALL_ERROR
+carries no feature name). Keying the callback queue by the exact OCPP message ID instead of the
+feature type closes the whole family, including a live regression: E1c's pre-write ctx drop
+widened a previously near-unreachable client-side race into a routinely triggerable callback
+mis-pairing (two in-flight requests' callers could receive each other's result; in the
+different-type case one callback could be orphaned entirely).
+
+**Breaking — three `ocppj` signatures** (facade-level APIs — `SendRequestAsync`, the typed
+helpers — are unchanged):
+
+| File | Symbol | Change |
+|------|--------|--------|
+| `ocppj/client.go` | `Client.SendRequest(request) (string, error)` | was `error` |
+| `ocppj/client.go` | `Client.SendRequestCtx(ctx, request) (string, error)` | was `error`; this is the one the facades call |
+| `ocppj/server.go` | `Server.SendRequest(clientID, request) (string, error)` | was `error` |
+
+All three return the generated `Call.UniqueId` on success and `""` on error. The message ID is
+generated inside `CreateCall` (inside the send), so `internal/callbackqueue.TryQueue` now takes
+`try func() (string, error)` returning that ID; registration happens after the send but under the
+same mutex, so an early response blocks in `Dequeue` rather than racing registration.
+
+**Behavior change 1** — a response/error whose ID matches no registered callback now hits the
+"no handler available" error path instead of consuming an unrelated pending callback. This is the
+fix; it surfaces latent consumer bugs as errors where they were previously silent mis-deliveries.
+
+**Behavior change 2** — disconnect-drain order is no longer FIFO. `CallbackQueue.DrainAll` iterates
+a Go map; per-client callback order on disconnect is randomized per run. Correctness-neutral (every
+drained callback receives the same disconnect error) but observable to a consumer relying on order.
+
+`ErrDuplicateCallback`: `TryQueue` rejects a second callback for the same (clientID, requestID)
+rather than silently overwriting the first. Rejection happens *after* `try()` (message already on
+the wire, no callback — response lands on "no handler available"): defense-in-depth against silent
+overwrite, not a caller-actionable error, unreachable with the default random ID generator. It is
+NOT re-exported at the facade level — deliberate, since the spec treats it as unreachable
+defense-in-depth rather than something callers should `errors.Is`.
+
+Supersedes the #363 type-keying mitigation entirely — `RequestType` and `callbackEntry` are deleted
+from `internal/callbackqueue`.
+
+**Test seam (1.6 only):** the client/server cross-delivery regression tests need to pin a goroutine
+interleaving. The seam lives in an unexported `internal/testhooks` package (nil-by-default vars read
+at the top of the 1.6 response closures, set only by tests) — reachable by the black-box test package
+in the separate `ocpp1.6_test/` directory yet adding **zero** public API to `ocpp16`. No 2.0.1
+equivalent seam was added — deemed redundant with the 1.6 pins plus the `internal/callbackqueue`
+unit suite, since the production fix is symmetric across both versions (an equivalent 2.0.1 pin
+*is* achievable — the same gated-hook pattern transplants — it was simply judged not to earn its
+keep). The 2.0.1 client's response/error `select` over two channels remains a second inversion
+source that ID-keying tolerates rather than removes: the §1a channel-merge (converging 2.0.1 onto
+1.6's single-channel shape) was NOT adopted — spec-optional.
+
+Server-side lock caveat (documented in `central_system.go`/`csms.go` godoc): one `callbackQueue`
+mutex spans all connected clients; a pump wedged on one stalled client's `Write` stalls every
+client's dequeue. Pre-existing, unchanged here. DEFERRED: per-client lock striping.
+
+**Guard:** `internal/callbackqueue/e2_0_test.go` (out-of-order dequeue, try()-failure no-leak,
+Dequeue-blocks-on-TryQueue race, DrainAll exactly-once + outer-map cleanup, duplicate-ID rejection);
+`ocpp1.6_test/e2_0_cross_delivery_test.go` (client + server cross-delivery regressions [same- and
+different-type cascade], wire CALL_ERROR routing by ID). All green under `-race`; the four facade
+regression tests pass under `-race -count=10`.

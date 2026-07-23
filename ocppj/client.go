@@ -189,7 +189,10 @@ func (c *Client) IsConnected() bool {
 // - the endpoint doesn't support the feature
 //
 // - the output queue is full
-func (c *Client) SendRequest(request ocpp.Request) error {
+//
+// On success it returns the generated OCPP message ID (Call.UniqueId); on error
+// it returns an empty string.
+func (c *Client) SendRequest(request ocpp.Request) (string, error) {
 	return c.SendRequestCtx(context.Background(), request)
 }
 
@@ -202,28 +205,31 @@ func (c *Client) SendRequest(request ocpp.Request) error {
 //
 // The API places ctx first per Go convention (context.Context leads), which
 // deliberately diverges from the upstream #105 proposal.
-func (c *Client) SendRequestCtx(ctx context.Context, request ocpp.Request) error {
+//
+// On success it returns the generated OCPP message ID (Call.UniqueId); on error
+// it returns an empty string.
+func (c *Client) SendRequestCtx(ctx context.Context, request ocpp.Request) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	if !c.dispatcher.IsRunning() {
-		return fmt.Errorf("ocppj client is not started, couldn't send request")
+		return "", fmt.Errorf("ocppj client is not started, couldn't send request")
 	}
 	call, err := c.CreateCall(request)
 	if err != nil {
-		return err
+		return "", err
 	}
 	jsonMessage, err := call.MarshalJSON()
 	if err != nil {
-		return err
+		return "", err
 	}
 	// Message will be processed by dispatcher. A dedicated mechanism allows to delegate the message queue handling.
 	if err = c.dispatcher.SendRequest(RequestBundle{Call: call, Data: jsonMessage, Ctx: ctx}); err != nil {
 		log.Errorf("error dispatching request [%s, %s]: %v", call.UniqueId, call.Action, err)
-		return err
+		return "", err
 	}
 	log.Debugf("enqueued CALL [%s, %s]", call.UniqueId, call.Action)
-	return nil
+	return call.UniqueId, nil
 }
 
 // Sends an OCPP Response to the server.
