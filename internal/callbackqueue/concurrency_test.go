@@ -2,7 +2,7 @@ package callbackqueue
 
 import (
 	"errors"
-	"runtime"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,12 +10,24 @@ import (
 	"github.com/enesismail/ocpp-go/ocpp"
 )
 
+// produced is a (clientID, requestID) pair sent from a producer to consumers so
+// they know which callback to dequeue.
+type produced struct {
+	clientID  string
+	requestID string
+}
+
+// TestCallbackQueue_ConcurrentProduceConsumeConservesCallbacks verifies that
+// concurrent producers and consumers do not lose any callbacks. Producers
+// generate globally unique requestIDs and send the (clientID, requestID) pair
+// over a channel; consumers dequeue by exact ID. This replaces the old
+// type-keyed variant — the ID space is now per-(client,requestID) instead of
+// per-(client,RequestType), so IDs must be unique.
 func TestCallbackQueue_ConcurrentProduceConsumeConservesCallbacks(t *testing.T) {
 	queue := New()
 	q := &queue
 
 	ids := []string{"client-0", "client-1", "client-2", "client-3"}
-	requestTypes := []RequestType{"BootNotification", "Heartbeat", "StatusNotification"}
 
 	const producers = 8
 	const perProducer = 200
@@ -26,7 +38,8 @@ func TestCallbackQueue_ConcurrentProduceConsumeConservesCallbacks(t *testing.T) 
 	var dequeued int64
 	var producerWG sync.WaitGroup
 	var consumerWG sync.WaitGroup
-	var producersDone atomic.Bool
+
+	ch := make(chan produced, producers*perProducer)
 
 	producerWG.Add(producers)
 	for g := 0; g < producers; g++ {
@@ -35,12 +48,14 @@ func TestCallbackQueue_ConcurrentProduceConsumeConservesCallbacks(t *testing.T) 
 			defer producerWG.Done()
 			for i := 0; i < perProducer; i++ {
 				id := ids[(g+i)%len(ids)]
-				requestType := requestTypes[(g*perProducer+i)%len(requestTypes)]
-				if err := q.TryQueue(id, requestType, ok, func(ocpp.Response, error) {}); err != nil {
+				requestID := fmt.Sprintf("req-%d-%d", g, i)
+				try := func() (string, error) { return requestID, nil }
+				if err := q.TryQueue(id, try, func(ocpp.Response, error) {}); err != nil {
 					t.Errorf("TryQueue returned unexpected error: %v", err)
 					return
 				}
 				atomic.AddInt64(&queued, 1)
+				ch <- produced{id, requestID}
 			}
 		}()
 	}
@@ -49,30 +64,17 @@ func TestCallbackQueue_ConcurrentProduceConsumeConservesCallbacks(t *testing.T) 
 	for c := 0; c < consumers; c++ {
 		go func() {
 			defer consumerWG.Done()
-			for {
-				found := false
-				for _, id := range ids {
-					for _, requestType := range requestTypes {
-						if cb, ok := q.Dequeue(id, requestType); ok {
-							cb(nil, nil)
-							atomic.AddInt64(&dequeued, 1)
-							found = true
-						}
-					}
+			for it := range ch {
+				if cb, ok := q.Dequeue(it.clientID, it.requestID); ok {
+					cb(nil, nil)
+					atomic.AddInt64(&dequeued, 1)
 				}
-				if found {
-					continue
-				}
-				if producersDone.Load() && atomic.LoadInt64(&dequeued) == atomic.LoadInt64(&queued) {
-					return
-				}
-				runtime.Gosched()
 			}
 		}()
 	}
 
 	producerWG.Wait()
-	producersDone.Store(true)
+	close(ch)
 	consumerWG.Wait()
 
 	if got := atomic.LoadInt64(&queued); got != wantQueued {
@@ -83,12 +85,17 @@ func TestCallbackQueue_ConcurrentProduceConsumeConservesCallbacks(t *testing.T) 
 	}
 }
 
+// TestCallbackQueue_ConcurrentRollbackConservesSuccessfulCallbacks verifies
+// that when some try() calls fail, their callbacks are never registered (and
+// thus never dequeued), while all successful registrations survive and are
+// dequeued exactly once. In the new ID-keyed design there is no rollback path —
+// registration happens AFTER try(), so a failed try simply returns without
+// registering anything.
 func TestCallbackQueue_ConcurrentRollbackConservesSuccessfulCallbacks(t *testing.T) {
 	queue := New()
 	q := &queue
 
 	ids := []string{"client-0", "client-1", "client-2"}
-	requestTypes := []RequestType{"MeterValues", "Heartbeat", "Authorize"}
 	errSendFailed := errors.New("send failed")
 
 	const producers = 8
@@ -100,6 +107,8 @@ func TestCallbackQueue_ConcurrentRollbackConservesSuccessfulCallbacks(t *testing
 	var failedDequeued int64
 	var producerWG sync.WaitGroup
 
+	ch := make(chan produced, producers*perProducer)
+
 	producerWG.Add(producers)
 	for g := 0; g < producers; g++ {
 		g := g
@@ -108,16 +117,18 @@ func TestCallbackQueue_ConcurrentRollbackConservesSuccessfulCallbacks(t *testing
 			for i := 0; i < perProducer; i++ {
 				seq := g*perProducer + i
 				id := ids[seq%len(ids)]
-				requestType := requestTypes[seq%len(requestTypes)]
+				requestID := fmt.Sprintf("req-%d-%d", g, i)
 				shouldFail := seq%5 == 0
 				cb := func(ocpp.Response, error) {}
-				try := ok
+				var try func() (string, error)
 				if shouldFail {
-					try = func() error { return errSendFailed }
+					try = func() (string, error) { return "", errSendFailed }
 					cb = func(ocpp.Response, error) { atomic.AddInt64(&failedDequeued, 1) }
+				} else {
+					try = func() (string, error) { return requestID, nil }
 				}
 
-				err := q.TryQueue(id, requestType, try, cb)
+				err := q.TryQueue(id, try, cb)
 				if shouldFail {
 					if !errors.Is(err, errSendFailed) {
 						t.Errorf("failed TryQueue error = %v, want %v", err, errSendFailed)
@@ -131,22 +142,21 @@ func TestCallbackQueue_ConcurrentRollbackConservesSuccessfulCallbacks(t *testing
 					return
 				}
 				atomic.AddInt64(&queued, 1)
+				ch <- produced{id, requestID}
 			}
 		}()
 	}
 	producerWG.Wait()
+	close(ch)
 
-	for _, id := range ids {
-		for _, requestType := range requestTypes {
-			for {
-				cb, ok := q.Dequeue(id, requestType)
-				if !ok {
-					break
-				}
-				cb(nil, nil)
-				atomic.AddInt64(&dequeued, 1)
-			}
+	for it := range ch {
+		cb, ok := q.Dequeue(it.clientID, it.requestID)
+		if !ok {
+			t.Errorf("Dequeue failed for %s/%s", it.clientID, it.requestID)
+			continue
 		}
+		cb(nil, nil)
+		atomic.AddInt64(&dequeued, 1)
 	}
 
 	if got := atomic.LoadInt64(&failedDequeued); got != 0 {
@@ -161,11 +171,13 @@ func TestCallbackQueue_ConcurrentRollbackConservesSuccessfulCallbacks(t *testing
 	}
 }
 
+// TestCallbackQueue_ConcurrentClientIsolation verifies that concurrent
+// producers targeting different clients do not interfere, and each client's
+// callbacks are independently dequeued. Replaces the old type-keyed variant —
+// matching is now by exact requestID.
 func TestCallbackQueue_ConcurrentClientIsolation(t *testing.T) {
 	queue := New()
 	q := &queue
-
-	requestTypes := []RequestType{"BootNotification", "Heartbeat", "StatusNotification"}
 
 	const clients = 8
 	const perClient = 200
@@ -174,23 +186,7 @@ func TestCallbackQueue_ConcurrentClientIsolation(t *testing.T) {
 	var dequeued [clients]int64
 	var wg sync.WaitGroup
 
-	wg.Add(clients)
-	for client := 0; client < clients; client++ {
-		client := client
-		go func() {
-			defer wg.Done()
-			id := clientID(client)
-			for i := 0; i < perClient; i++ {
-				requestType := requestTypes[i%len(requestTypes)]
-				if err := q.TryQueue(id, requestType, ok, func(ocpp.Response, error) {}); err != nil {
-					t.Errorf("TryQueue returned unexpected error for %s: %v", id, err)
-					return
-				}
-				atomic.AddInt64(&queued[client], 1)
-			}
-		}()
-	}
-	wg.Wait()
+	ch := make(chan produced, clients*perClient)
 
 	wg.Add(clients)
 	for client := 0; client < clients; client++ {
@@ -198,19 +194,32 @@ func TestCallbackQueue_ConcurrentClientIsolation(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			id := clientID(client)
-			for _, requestType := range requestTypes {
-				for {
-					cb, ok := q.Dequeue(id, requestType)
-					if !ok {
-						break
-					}
-					cb(nil, nil)
-					atomic.AddInt64(&dequeued[client], 1)
+			for i := 0; i < perClient; i++ {
+				requestID := fmt.Sprintf("req-%d-%d", client, i)
+				try := func() (string, error) { return requestID, nil }
+				if err := q.TryQueue(id, try, func(ocpp.Response, error) {}); err != nil {
+					t.Errorf("TryQueue returned unexpected error for %s: %v", id, err)
+					return
 				}
+				atomic.AddInt64(&queued[client], 1)
+				ch <- produced{id, requestID}
 			}
 		}()
 	}
 	wg.Wait()
+	close(ch)
+
+	for it := range ch {
+		cb, ok := q.Dequeue(it.clientID, it.requestID)
+		if !ok {
+			t.Errorf("Dequeue failed for %s/%s", it.clientID, it.requestID)
+			continue
+		}
+		cb(nil, nil)
+		// clientID("N") returns "client-N"; extract the index.
+		clientIdx := int(it.clientID[len(it.clientID)-1] - '0')
+		atomic.AddInt64(&dequeued[clientIdx], 1)
+	}
 
 	for client := 0; client < clients; client++ {
 		if got, want := atomic.LoadInt64(&dequeued[client]), atomic.LoadInt64(&queued[client]); got != want {

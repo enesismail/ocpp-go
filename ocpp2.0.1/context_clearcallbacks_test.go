@@ -59,7 +59,7 @@ const e1cClearCallbacksBound = 2 * time.Second
 func TestE1cClearCallbacksOnStop(t *testing.T) {
 	cs := &chargingStation{
 		callbacks:       callbackqueue.New(),
-		responseHandler: make(chan ocpp.Response, 1),
+		responseHandler: make(chan responseEnvelope, 1),
 		errorHandler:    make(chan error, 1),
 		stopC:           make(chan struct{}, 1),
 		stopOnce:        &sync.Once{},
@@ -73,8 +73,7 @@ func TestE1cClearCallbacksOnStop(t *testing.T) {
 	// in the handler to dequeue it. Only clearCallbacks() on the stopC arm
 	// can drain it.
 	err := cs.callbacks.TryQueue("main",
-		callbackqueue.RequestType("Heartbeat"),
-		func() error { return nil },
+		func() (string, error) { return "Heartbeat", nil },
 		func(ocpp.Response, error) {})
 	require.NoError(t, err, "TryQueue must succeed")
 
@@ -99,6 +98,6 @@ func TestE1cClearCallbacksOnStop(t *testing.T) {
 	// SINGLE definitive check (not a poll): if the clearCallbacks() mirror
 	// exists, the handler drained callbacks on the stopC arm. If not, the
 	// seeded callback is still registered.
-	_, ok := cs.callbacks.Dequeue("main", "")
+	_, ok := cs.callbacks.Dequeue("main", "Heartbeat")
 	assert.False(t, ok, "callbacks must be drained on stop via the clearCallbacks() mirror on the stopC arm")
 }

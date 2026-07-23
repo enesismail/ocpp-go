@@ -34,9 +34,17 @@ type centralSystem struct {
 	logHandler            logging.CentralSystemHandler
 	securityHandler       security.CentralSystemHandler
 	secureFirmwareHandler securefirmware.CentralSystemHandler
-	callbackQueue         callbackqueue.CallbackQueue
-	disconnectedHandler   ChargePointConnectionHandler
-	errC                  chan error
+	// callbackQueue is a single queue shared across ALL connected charge points.
+	// SendRequestAsync registers a callback while holding the queue's mutex across
+	// the enqueue into the dispatcher; if the shared dispatcher pump is wedged on
+	// one stalled client's Write, that mutex is held facade-wide, stalling every
+	// other client's response/error dequeue and the pump's own canceled-request
+	// dequeue too. This is the server-side twin of the client caveat documented in
+	// charge_point.go, and is pre-existing (unchanged by requestID keying).
+	// DEFERRED: per-client lock striping to decouple clients from one another.
+	callbackQueue       callbackqueue.CallbackQueue
+	disconnectedHandler ChargePointConnectionHandler
+	errC                chan error
 }
 
 func newCentralSystem(server *ocppj.Server) centralSystem {
@@ -52,7 +60,9 @@ func newCentralSystem(server *ocppj.Server) centralSystem {
 
 func (cs *centralSystem) installDisconnectedHandler() {
 	cs.server.SetDisconnectedClientHandler(func(chargePoint ws.Channel) {
-		for cb, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), ""); ok; cb, ok = cs.callbackQueue.Dequeue(chargePoint.ID(), "") {
+		// DrainAll order is not FIFO (see callbackqueue.DrainAll godoc) — harmless
+		// here since every drained callback receives the same disconnect error.
+		for _, cb := range cs.callbackQueue.DrainAll(chargePoint.ID()) {
 			err := ocppj.NewLocalTransportError(ocppj.GenericError, "client disconnected, no response received from client", "")
 			cb(nil, err)
 		}
@@ -545,10 +555,10 @@ func (cs *centralSystem) SendRequestAsync(clientId string, request ocpp.Request,
 		return fmt.Errorf("unsupported action %v on central system, cannot send request", featureName)
 	}
 
-	send := func() error {
+	send := func() (string, error) {
 		return cs.server.SendRequest(clientId, request)
 	}
-	return cs.callbackQueue.TryQueue(clientId, callbackqueue.RequestType(featureName), send, callback)
+	return cs.callbackQueue.TryQueue(clientId, send, callback)
 }
 
 func (cs *centralSystem) Start(listenPort int, listenPath string) {
@@ -718,7 +728,7 @@ func (cs *centralSystem) handleIncomingRequest(chargePoint ChargePointConnection
 }
 
 func (cs *centralSystem) handleIncomingConfirmation(chargePoint ChargePointConnection, confirmation ocpp.Response, requestId string) {
-	if callback, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), callbackqueue.RequestType(confirmation.GetFeatureName())); ok {
+	if callback, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), requestId); ok {
 		// Execute in separate goroutine, so the caller goroutine is available
 		go func() {
 			defer cs.server.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, chargePoint.ID(), confirmation.GetFeatureName(), requestId, false)
@@ -731,7 +741,7 @@ func (cs *centralSystem) handleIncomingConfirmation(chargePoint ChargePointConne
 }
 
 func (cs *centralSystem) handleIncomingError(chargePoint ChargePointConnection, err *ocpp.Error, details interface{}) {
-	if callback, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), ""); ok {
+	if callback, ok := cs.callbackQueue.Dequeue(chargePoint.ID(), err.MessageId); ok {
 		// Execute in separate goroutine, so the caller goroutine is available
 		go func() {
 			defer cs.server.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, chargePoint.ID(), "", err.MessageId, false)
@@ -744,7 +754,7 @@ func (cs *centralSystem) handleIncomingError(chargePoint ChargePointConnection, 
 }
 
 func (cs *centralSystem) handleCanceledRequest(chargePointID string, requestID string, request ocpp.Request, err *ocpp.Error) {
-	if callback, ok := cs.callbackQueue.Dequeue(chargePointID, callbackqueue.RequestType(request.GetFeatureName())); ok {
+	if callback, ok := cs.callbackQueue.Dequeue(chargePointID, requestID); ok {
 		// Execute in separate goroutine, so the caller goroutine is available
 		go func() {
 			defer cs.server.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, chargePointID, request.GetFeatureName(), requestID, false)

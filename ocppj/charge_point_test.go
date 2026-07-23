@@ -41,7 +41,7 @@ func (suite *OcppJTestSuite) TestClientNotStartedError() {
 	t := suite.T()
 	// Start normally
 	req := newMockRequest("somevalue")
-	err := suite.chargePoint.SendRequest(req)
+	_, err := suite.chargePoint.SendRequest(req)
 	require.NotNil(t, err)
 	assert.Equal(t, "ocppj client is not started, couldn't send request", err.Error())
 	require.True(t, suite.clientRequestQueue.IsEmpty())
@@ -65,7 +65,7 @@ func (suite *OcppJTestSuite) TestClientStoppedError() {
 	call.Return(false)
 	assert.False(t, suite.clientDispatcher.IsRunning())
 	req := newMockRequest("somevalue")
-	err = suite.chargePoint.SendRequest(req)
+	_, err = suite.chargePoint.SendRequest(req)
 	assert.Error(t, err, "ocppj client is not started, couldn't send request")
 }
 
@@ -76,7 +76,7 @@ func (suite *OcppJTestSuite) TestChargePointSendRequest() {
 	suite.mockClient.On("Start", mock.AnythingOfType("string")).Return(nil)
 	_ = suite.chargePoint.Start("someUrl")
 	mockRequest := newMockRequest("mockValue")
-	err := suite.chargePoint.SendRequest(mockRequest)
+	_, err := suite.chargePoint.SendRequest(mockRequest)
 	assert.Nil(suite.T(), err)
 }
 
@@ -85,7 +85,7 @@ func (suite *OcppJTestSuite) TestChargePointSendInvalidRequest() {
 	suite.mockClient.On("Start", mock.AnythingOfType("string")).Return(nil)
 	_ = suite.chargePoint.Start("someUrl")
 	mockRequest := newMockRequest("")
-	err := suite.chargePoint.SendRequest(mockRequest)
+	_, err := suite.chargePoint.SendRequest(mockRequest)
 	require.NotNil(suite.T(), err)
 }
 
@@ -97,7 +97,7 @@ func (suite *OcppJTestSuite) TestChargePointSendRequestNoValidation() {
 	// Temporarily disable message validation
 	ocppj.SetMessageValidation(false)
 	defer ocppj.SetMessageValidation(true)
-	err := suite.chargePoint.SendRequest(mockRequest)
+	_, err := suite.chargePoint.SendRequest(mockRequest)
 	assert.Nil(suite.T(), err)
 }
 
@@ -107,7 +107,7 @@ func (suite *OcppJTestSuite) TestChargePointSendInvalidJsonRequest() {
 	_ = suite.chargePoint.Start("someUrl")
 	mockRequest := newMockRequest("somevalue")
 	mockRequest.MockAny = make(chan int)
-	err := suite.chargePoint.SendRequest(mockRequest)
+	_, err := suite.chargePoint.SendRequest(mockRequest)
 	require.Error(suite.T(), err)
 	assert.IsType(suite.T(), &json.UnsupportedTypeError{}, err)
 }
@@ -174,7 +174,7 @@ func (suite *OcppJTestSuite) TestChargePointSendInvalidCall() {
 	mockRequest := newMockRequest("somevalue")
 	// Delete existing profiles and test error
 	suite.chargePoint.Profiles = []*ocpp.Profile{}
-	err := suite.chargePoint.SendRequest(mockRequest)
+	_, err := suite.chargePoint.SendRequest(mockRequest)
 	assert.Error(suite.T(), err, fmt.Sprintf("Couldn't create Call for unsupported action %v", mockRequest.GetFeatureName()))
 }
 
@@ -193,7 +193,7 @@ func (suite *OcppJTestSuite) TestChargePointSendRequestFailed() {
 	})
 	_ = suite.chargePoint.Start("someUrl")
 	mockRequest := newMockRequest("mockValue")
-	err := suite.chargePoint.SendRequest(mockRequest)
+	_, err := suite.chargePoint.SendRequest(mockRequest)
 	// TODO: currently the network error is not returned by SendRequest, but is only generated internally
 	assert.Nil(t, err)
 	// Wait for the Write callback to hand off the call ID (synchronized), then
@@ -441,7 +441,7 @@ func (suite *OcppJTestSuite) TestClientEnqueueRequest() {
 	err := suite.chargePoint.Start("someUrl")
 	require.Nil(t, err)
 	req := newMockRequest("somevalue")
-	err = suite.chargePoint.SendRequest(req)
+	_, err = suite.chargePoint.SendRequest(req)
 	require.Nil(t, err)
 	time.Sleep(500 * time.Millisecond)
 	// Message was sent, but element should still be in queue
@@ -472,7 +472,7 @@ func (suite *OcppJTestSuite) TestClientEnqueueMultipleRequests() {
 	require.Nil(t, err)
 	for i := 0; i < messagesToQueue; i++ {
 		req := newMockRequest(fmt.Sprintf("request-%v", i))
-		err = suite.chargePoint.SendRequest(req)
+		_, err = suite.chargePoint.SendRequest(req)
 		require.Nil(t, err)
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -504,12 +504,12 @@ func (suite *OcppJTestSuite) TestClientRequestQueueFull() {
 	require.Nil(t, err)
 	for i := 0; i < messagesToQueue; i++ {
 		req := newMockRequest(fmt.Sprintf("request-%v", i))
-		err = suite.chargePoint.SendRequest(req)
+		_, err = suite.chargePoint.SendRequest(req)
 		require.Nil(t, err)
 	}
 	// Queue is now full. Trying to send an additional message should throw an error
 	req := newMockRequest("full")
-	err = suite.chargePoint.SendRequest(req)
+	_, err = suite.chargePoint.SendRequest(req)
 	require.NotNil(t, err)
 	assert.Equal(t, "request queue is full, cannot push new element", err.Error())
 }
@@ -528,7 +528,7 @@ func (suite *OcppJTestSuite) TestClientParallelRequests() {
 	for i := 0; i < messagesToQueue; i++ {
 		go func() {
 			req := newMockRequest("someReq")
-			err := suite.chargePoint.SendRequest(req)
+			_, err := suite.chargePoint.SendRequest(req)
 			require.Nil(t, err)
 		}()
 	}
@@ -611,7 +611,7 @@ func (suite *OcppJTestSuite) TestClientRequestFlow() {
 	for i := 0; i < messagesToQueue; i++ {
 		go func(j int) {
 			req := newMockRequest(fmt.Sprintf("%v", j))
-			err := suite.chargePoint.SendRequest(req)
+			_, err := suite.chargePoint.SendRequest(req)
 			require.Nil(t, err)
 		}(i)
 	}
@@ -661,7 +661,7 @@ func (suite *OcppJTestSuite) TestClientDisconnected() {
 	// Send some messages
 	for i := 0; i < messagesToQueue; i++ {
 		req := newMockRequest(fmt.Sprintf("%v", i))
-		err = suite.chargePoint.SendRequest(req)
+		_, err = suite.chargePoint.SendRequest(req)
 		require.NoError(t, err)
 	}
 	// Wait for trigger disconnect after a few responses were returned
@@ -729,7 +729,7 @@ func (suite *OcppJTestSuite) TestClientReconnected() {
 	// Send some messages
 	for i := 0; i < messagesToQueue; i++ {
 		req := newMockRequest(fmt.Sprintf("%v", i))
-		err = suite.chargePoint.SendRequest(req)
+		_, err = suite.chargePoint.SendRequest(req)
 		require.NoError(t, err)
 	}
 	// Wait for trigger disconnect after a few responses were returned
@@ -786,7 +786,7 @@ func (suite *OcppJTestSuite) TestClientResponseTimeout() {
 	// Start normally and send a message
 	err := suite.chargePoint.Start("someUrl")
 	require.NoError(t, err)
-	err = suite.chargePoint.SendRequest(req)
+	_, err = suite.chargePoint.SendRequest(req)
 	require.NoError(t, err)
 	// Wait for request to be enqueued, then check state
 	time.Sleep(50 * time.Millisecond)

@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/enesismail/ocpp-go/internal/callbackqueue"
+	"github.com/enesismail/ocpp-go/internal/testhooks"
 	"github.com/enesismail/ocpp-go/ocpp"
 	"github.com/enesismail/ocpp-go/ocpp1.6/certificates"
 	"github.com/enesismail/ocpp-go/ocpp1.6/core"
@@ -234,7 +235,10 @@ func NewChargePoint(id string, endpoint *ocppj.Client, client ws.Client) ChargeP
 	endpoint.SetOnRequestCanceled(cp.onRequestTimeout)
 
 	cp.client.SetResponseHandler(func(confirmation ocpp.Response, requestId string) {
-		cp.incoming <- incomingMessage{kind: incomingResponse, confirmation: confirmation}
+		if testhooks.ChargePointResponse != nil {
+			testhooks.ChargePointResponse(confirmation, requestId)
+		}
+		cp.incoming <- incomingMessage{kind: incomingResponse, confirmation: confirmation, requestID: requestId}
 	})
 	cp.client.SetErrorHandler(func(err *ocpp.Error, details interface{}) {
 		cp.incoming <- incomingMessage{kind: incomingError, err: err}
@@ -397,6 +401,9 @@ func NewCentralSystem(endpoint *ocppj.Server, server ws.Server) CentralSystem {
 		cs.handleIncomingRequest(client, request, requestId, action)
 	})
 	cs.server.SetResponseHandler(func(client ws.Channel, response ocpp.Response, requestId string) {
+		if testhooks.CentralSystemResponse != nil {
+			testhooks.CentralSystemResponse(client, response, requestId)
+		}
 		cs.handleIncomingConfirmation(client, response, requestId)
 	})
 	cs.server.SetErrorHandler(func(client ws.Channel, err *ocpp.Error, details interface{}) {

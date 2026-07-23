@@ -86,7 +86,7 @@ func (suite *OcppV2TestSuite) TestServerRequestHandlerPanicRecoveredFacade() {
 	// queue. The CSMS handler panics, is recovered, and replies with a
 	// CALL ERROR(InternalError) that the charging station's error handler
 	// receives via completion ownership.
-	err = suite.ocppjClient.SendRequest(provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor))
+	_, err = suite.ocppjClient.SendRequest(provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor))
 	assert.Nil(t, err)
 
 	// 1. The panic must be recovered (no crash) and reported.
