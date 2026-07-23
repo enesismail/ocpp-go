@@ -211,8 +211,18 @@ func TestDuplicatePolicyOldDisconnectDoesNotClobberNew(t *testing.T) {
 	oldClient := newDuplicatePolicyClient(t)
 	defer oldClient.Stop()
 	connectDuplicatePolicyClient(t, oldClient, port)
-	oldChannel, ok := s.GetChannel("testws")
-	require.True(t, ok)
+	// connectDuplicatePolicyClient only awaits the client dial; the server
+	// registers the channel asynchronously, so poll for it rather than reading it
+	// immediately (a slow runner otherwise loses the race here).
+	var oldChannel Channel
+	waitForDuplicatePolicyCondition(t, "old channel registered", func() bool {
+		ch, ok := s.GetChannel("testws")
+		if !ok {
+			return false
+		}
+		oldChannel = ch
+		return true
+	})
 	oldWS := oldChannel.(*webSocket)
 
 	newClient := newDuplicatePolicyClient(t)
