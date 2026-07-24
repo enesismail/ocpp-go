@@ -41,9 +41,8 @@ func (e1cTestResponse) GetFeatureName() string { return "E1cTest" }
 // returns it even if the ctx is already canceled — the non-blocking
 // pre-check (the "prefer-response fast-path") wins.
 func TestE1cAwaitCtxResultPreLoadedResponseWinsOverCanceledCtx(t *testing.T) {
-	cp := &chargePoint{
-		stopC: make(chan struct{}, 1),
-	}
+	cp := &chargePoint{}
+	cp.storeStopC(make(chan struct{}, 1))
 	preloadedResp := e1cTestResponse{}
 
 	// A plain 3-arm select with BOTH a buffered response and a closed ctx.Done()
@@ -57,7 +56,7 @@ func TestE1cAwaitCtxResultPreLoadedResponseWinsOverCanceledCtx(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel() // already-canceled ctx
 
-		resp, err := cp.awaitCtxResult(ctx, "E1cTest", asyncResponseC, cp.stopC)
+		resp, err := cp.awaitCtxResult(ctx, "E1cTest", asyncResponseC, cp.loadStopC())
 		require.NoErrorf(t, err, "iter %d: pre-loaded response must win over canceled ctx", i)
 		require.Equalf(t, preloadedResp, resp, "iter %d: must return the pre-loaded response", i)
 	}
@@ -67,9 +66,8 @@ func TestE1cAwaitCtxResultPreLoadedResponseWinsOverCanceledCtx(t *testing.T) {
 // with an empty asyncResponseC and an already-canceled ctx, awaitCtxResult
 // returns an error matching both ErrRequestCanceled and context.Canceled.
 func TestE1cAwaitCtxResultEmptyChannelCanceledCtxReturnsError(t *testing.T) {
-	cp := &chargePoint{
-		stopC: make(chan struct{}, 1),
-	}
+	cp := &chargePoint{}
+	cp.storeStopC(make(chan struct{}, 1))
 
 	asyncResponseC := make(chan asyncResponse, 1)
 	// Leave empty — no response pre-loaded.
@@ -77,7 +75,7 @@ func TestE1cAwaitCtxResultEmptyChannelCanceledCtxReturnsError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	resp, err := cp.awaitCtxResult(ctx, "E1cTest", asyncResponseC, cp.stopC)
+	resp, err := cp.awaitCtxResult(ctx, "E1cTest", asyncResponseC, cp.loadStopC())
 	assert.Error(t, err, "canceled ctx must produce an error when no response is pre-loaded")
 	assert.Nil(t, resp, "no response expected when ctx is canceled and channel is empty")
 	assert.True(t, errors.Is(err, context.Canceled),

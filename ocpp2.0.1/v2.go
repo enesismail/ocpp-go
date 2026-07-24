@@ -232,6 +232,11 @@ type ChargingStation interface {
 	StartWithRetries(csmsUrl string)
 	// Stops the charging station routine, disconnecting it from the CSMS.
 	// Any pending requests are discarded.
+	//
+	// An inbound message (response or error) that is still in flight when Stop
+	// begins may be dropped rather than delivered, so its callback never fires.
+	// This is deliberate: producers are preemptible on shutdown so Stop cannot
+	// be wedged by an undrained facade channel.
 	Stop()
 	// Returns true if the charging station is currently connected to the CSMS, false otherwise.
 	// While automatically reconnecting to the CSMS, the method returns false.
@@ -288,11 +293,27 @@ func NewChargingStation(id string, endpoint *ocppj.Client, client ws.Client) Cha
 	// Callback invoked by dispatcher, whenever a queued request is canceled, due to timeout.
 	endpoint.SetOnRequestCanceled(cs.onRequestTimeout)
 
+	// Both closures below run on the ws readPump goroutine (one invocation
+	// per inbound message, not once at spawn). Nothing joins the readPump,
+	// so a blocking send with no reader (e.g. the async handler pinned in a
+	// slow callback, or already gone past Stop()) leaks that goroutine
+	// forever - a permanent leak, independent of whether Stop() itself
+	// returns. Each is therefore preemptible against stopC, read fresh via
+	// the accessor on every call. See spec §L2's "wider hazard" / fable
+	// MAJOR-2. (The request handler below is wired directly to
+	// handleIncomingRequest, unaffected - 2.0.1 has no unified incoming
+	// channel for inbound requests.)
 	cs.client.SetResponseHandler(func(confirmation ocpp.Response, requestId string) {
-		cs.responseHandler <- responseEnvelope{response: confirmation, requestID: requestId}
+		select {
+		case cs.responseHandler <- responseEnvelope{response: confirmation, requestID: requestId}:
+		case <-cs.loadStopC():
+		}
 	})
 	cs.client.SetErrorHandler(func(err *ocpp.Error, details interface{}) {
-		cs.errorHandler <- err
+		select {
+		case cs.errorHandler <- err:
+		case <-cs.loadStopC():
+		}
 	})
 	cs.client.SetRequestHandler(cs.handleIncomingRequest)
 	return &cs

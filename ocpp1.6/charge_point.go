@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
+	"sync/atomic"
 
 	"github.com/enesismail/ocpp-go/internal/callbackqueue"
 	"github.com/enesismail/ocpp-go/ocpp"
@@ -61,20 +63,63 @@ type chargePoint struct {
 	certificateHandler            certificates.ChargePointHandler
 	incoming                      chan incomingMessage
 	callbacks                     callbackqueue.CallbackQueue
-	stopC                         chan struct{}
+	stopC                         atomic.Value // holds chan struct{}; see loadStopC/storeStopC
+	stopOnce                      *sync.Once
 	errC                          chan error // external error channel
 }
 
+// loadStopC returns the current generation's stop signal channel, or nil if
+// Start has never been called. atomic.Value (not a plain field) because
+// three independent goroutine families read stopC - the ocppj dispatcher
+// pump (onRequestTimeout), the ws readPump (the forwarding closures wired in
+// NewChargePoint), and SendRequestCtx callers - while Start reassigns it on
+// every call; a plain field read/write pair here is a data race (see
+// TestL2ShutdownRestartStopCRace under -race). This accessor is the ONLY
+// synchronization around stopC: per the HOLD-SCOPE rule
+// (tasks/facade-lifecycle-hardening.md §PR-L2 item 1), no lock is ever held
+// across it, a channel op, client.Stop(), or a join - holding one would
+// recreate the exact three-party deadlock (pump -> hook -> accessor blocks;
+// dispatcher.Stop() waits on the pump; facade Stop() holds the lock waiting
+// on dispatcher.Stop()) this accessor exists to avoid.
+func (cp *chargePoint) loadStopC() chan struct{} {
+	v, _ := cp.stopC.Load().(chan struct{})
+	return v
+}
+
+func (cp *chargePoint) storeStopC(c chan struct{}) {
+	cp.stopC.Store(c)
+}
+
 func (cp *chargePoint) error(err error) {
-	if cp.errC != nil {
-		cp.errC <- err
+	if cp.errC == nil {
+		return
+	}
+	// Preemptible: error() runs on whichever goroutine reports it (the async
+	// handler, or - via sendResponse et al - request-handling code on that
+	// same goroutine). A caller that obtains Errors() and never drains it
+	// would otherwise wedge that goroutine forever inside `cp.errC <- err`,
+	// which is exactly what would block the PR-L1 generation join. See spec
+	// §L2 PR-L2 item 2, "error() on both facades".
+	select {
+	case cp.errC <- err:
+	case <-cp.loadStopC():
 	}
 }
 
 // Callback invoked whenever a queued request is canceled, due to timeout.
 // By default, the callback returns a GenericError to the caller, who sent the original request.
 func (cp *chargePoint) onRequestTimeout(_ string, _ ocpp.Request, err *ocpp.Error) {
-	cp.incoming <- incomingMessage{kind: incomingError, err: err}
+	// Preemptible: runs on the ocppj dispatcher's messagePump goroutine,
+	// sequentially, for every request canceled at Stop()-time or on timeout
+	// (ocppj/dispatcher.go's drain-and-cancel loop). A blocking send into
+	// cp.incoming (cap 1) with no reader wedges the pump - and
+	// DefaultClientDispatcher.Stop() (called from client.Stop()) waits
+	// unconditionally on that pump reaching done, so a wedge here hangs
+	// facade Stop() forever. See spec §L2.
+	select {
+	case cp.incoming <- incomingMessage{kind: incomingError, err: err}:
+	case <-cp.loadStopC():
+	}
 }
 
 // Errors returns a channel for error messages. If it doesn't exist it es created.
@@ -359,7 +404,7 @@ func (cp *chargePoint) SendRequestCtx(ctx context.Context, request ocpp.Request)
 	if err != nil {
 		return nil, err
 	}
-	return cp.awaitCtxResult(ctx, featureName, asyncResponseC, cp.stopC)
+	return cp.awaitCtxResult(ctx, featureName, asyncResponseC, cp.loadStopC())
 }
 
 // awaitCtxResult is the prefer-response-fast-path helper: a non-blocking
@@ -435,7 +480,24 @@ func (cp *chargePoint) asyncCallbackHandler() {
 	// callback caveat also applies to inbound request handlers.
 	//
 	// A blocking cp.error() wedges all response, error, and request handling in
-	// this loop, for example when Errors() is obtained but never drained.
+	// this loop, for example when Errors() is obtained but never drained -
+	// error() is itself preemptible against stopC now (see error()), so this
+	// can no longer wedge past Stop().
+	//
+	// stopC is captured ONCE here, right after Start() has stored it and
+	// before the very first select - not re-read via loadStopC() on every
+	// iteration. This is deliberate: a re-read on every loop turn would let a
+	// generation-1 handler rebind to a generation-2 Start's fresh channel
+	// mid-loop (the exact hazard PR-L1's parameter-passing exists to close);
+	// capturing once pins this goroutine to whichever generation is current at
+	// its FIRST execution — NOT necessarily the one it was spawned for. If the
+	// scheduler delays this goroutine past a full Stop+Start, the load below
+	// returns generation-2's channel and two handlers briefly co-drain
+	// cp.incoming. That residual window is strictly narrower than the
+	// per-iteration field read it replaces (which could rebind on ANY
+	// iteration, and raced outright); closing it fully needs PR-L1's
+	// parameter-passing plus the generation handshake.
+	stopC := cp.loadStopC()
 	for {
 		select {
 		case incoming := <-cp.incoming:
@@ -474,7 +536,7 @@ func (cp *chargePoint) asyncCallbackHandler() {
 					cp.handleIncomingRequest(incoming.request, incoming.requestID, incoming.action)
 				}()
 			}
-		case <-cp.stopC:
+		case <-stopC:
 			// Handler stopped, cleanup callbacks.
 			// No callback invocation, since the user manually stopped the client.
 			// A buffered inbound CALL may be dropped without a CALLERROR.
@@ -528,8 +590,10 @@ func (cp *chargePoint) sendResponse(confirmation ocpp.Response, err error, reque
 }
 
 func (cp *chargePoint) Start(centralSystemUrl string) error {
-	// Start client
-	cp.stopC = make(chan struct{}, 1)
+	// Start client. stopC is close-only (never carries a value), so it is
+	// unbuffered.
+	cp.storeStopC(make(chan struct{}))
+	cp.stopOnce = &sync.Once{}
 	err := cp.client.Start(centralSystemUrl)
 	// Async response handler receives incoming responses/errors and triggers callbacks
 	if err == nil {
@@ -539,13 +603,38 @@ func (cp *chargePoint) Start(centralSystemUrl string) error {
 }
 
 func (cp *chargePoint) Stop() {
-	cp.client.Stop()
-	close(cp.stopC)
-
-	if cp.errC != nil {
-		close(cp.errC)
-		cp.errC = nil
+	// Close stopC BEFORE client.Stop(). client.Stop() blocks inside
+	// dispatcher.Stop() until the messagePump goroutine drains, and every
+	// producer that can wedge that pump (onRequestTimeout, the forwarding
+	// closures wired in NewChargePoint, error()) is now preemptible against
+	// stopC. Closing it AFTER client.Stop() - today's order - makes that
+	// preemption dead code: the pump would already be wedged, waiting on a
+	// signal that has not fired yet. See spec §Sequencing, "Stop()'s order
+	// must change."
+	//
+	// stopOnce/nil-guarded: Stop() before Start() (stopOnce is nil - nothing
+	// to close) and a repeated Stop() (stopOnce already fired) must not
+	// panic - mirrors 2.0.1's existing parity guard.
+	if cp.stopOnce != nil {
+		stopC := cp.loadStopC()
+		cp.stopOnce.Do(func() {
+			if stopC != nil {
+				close(stopC)
+			}
+		})
 	}
+	cp.client.Stop()
+
+	// PR-L2 interim: cp.errC is deliberately NEVER closed here (dropped -
+	// see spec §PR-L2 item 5). Closing it here, now that error() is
+	// preemptible, would race a handler goroutine parked in error()'s
+	// `select { case cp.errC <- err: case <-stopC: }`: both arms could
+	// become ready at once (closed stopC AND a concurrently-closed errC),
+	// and Go's pseudo-random arm choice can pick the errC arm - a send on a
+	// channel closing right now, which panics. A future change reinstates
+	// the close, but only after a successful generation join proves the
+	// handler goroutine is no longer running (see PR-L1 item 4 in the
+	// spec); until then, see the amended Errors() docstring in v16.go.
 }
 
 func (cp *chargePoint) IsConnected() bool {

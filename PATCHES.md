@@ -642,3 +642,46 @@ Guard: `ocpp1.6/configmanager/configmanager_test.go` (dep-strip equivalence,
 error and panic, deep-copy non-aliasing, both wiring helpers + full status
 mapping) + `ocpp1.6_test/configmanager_e2e_test.go` (facade e2e: a real charge
 point delegating to a `ManagerV16`). All green under `-race`.
+
+## Shutdown-preemptible facade producers (client facades)
+
+A blocking or slow user callback could hang `Stop()` forever on both client
+facades, and a `Stop()` racing an inbound message could permanently leak the
+websocket read goroutine. Each facade runs ONE `asyncCallbackHandler` goroutine
+that drains a cap-1 channel and invokes user callbacks inline; producers into
+that channel run on OTHER goroutines — the dispatcher pump (`onRequestTimeout`,
+via `fireRequestCancel`) and the ws read goroutine (the forwarding closures
+wired in `NewChargePoint`/`NewChargingStation`). Those sends were unconditional,
+so a stalled drain wedged the producer. Since `ocppj.Client.Stop()` waits for
+the pump to exit, a wedged pump meant `Stop()` never returned; a wedged read
+goroutine was never joined by anything and leaked for the process lifetime.
+
+Every producer send into a facade-owned channel is now preempted by shutdown —
+`select { case ch <- msg: case <-stopC: }` — covering `onRequestTimeout`, all
+five forwarding closures (1.6 response/error/request, 2.0.1 response/error) and
+`error()` on both facades. `Stop()` is reordered to close `stopC` *before*
+`client.Stop()`; without that the preemption would be unreachable, since
+`client.Stop()` blocks on the wedged pump first. `stopC` becomes an
+`atomic.Value` behind `loadStopC`/`storeStopC`: three goroutine families read it
+while `Start`/`StartWithRetries` reassign it, which was a data race. The 1.6
+facade also gains the `sync.Once` + nil guard 2.0.1 already had, so a double
+`Stop()` or a `Stop()` before `Start()` no longer panics.
+
+Behavior change: an inbound message still in flight when `Stop()` begins may be
+dropped rather than delivered, so its callback never fires (documented on both
+facades' `Stop`). This is shutdown-only — while the client is running `stopC` is
+open, so each select degenerates to the blocking send it replaced. Ordering
+between message classes is unaffected.
+
+Interim: 1.6 no longer closes its `Errors()` channel on `Stop()` (matching
+2.0.1), because with `error()` now preemptible a handler could otherwise take
+the send arm while `Stop()` concurrently closed the channel. Both facades'
+`Errors()` docstrings state the current behavior; a follow-up restores closure
+as a close-after-join once the facades join their handler goroutine.
+
+Guard: `ocpp1.6_test/lifecycle_shutdown_test.go` and
+`ocpp2.0.1_test/lifecycle_shutdown_test.go` — the cancel-hook deadlock (both the
+stop-drain and timeout-arm variants), a dedicated leak test per forwarding
+closure, `error()` preemptibility, the double-`Stop`/`Stop`-before-`Start`
+guards, and the `stopC` restart race. All watchdog-bounded so a regression fails
+fast instead of wedging the suite; green under `-race -count=3`.
