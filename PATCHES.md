@@ -616,3 +616,29 @@ helpers (use `SendRequestAsyncCtx` directly); no per-request timeout override;
 facade's `error()` on a callback-queue `Dequeue` **miss** is still a blocking
 cap-1 `errC` send run synchronously on the pump (pre-existing, unrelated to
 E2c's own delivery path, which always hits).
+
+## OCPP 1.6 configuration store/manager (`ocpp1.6/configmanager`)
+
+New charge-point-side package: a typed OCPP 1.6 configuration store + manager,
+plus two facade-wiring helpers (`OnGetConfiguration`/`OnChangeConfiguration`)
+that let a consumer's `core.ChargePointHandler` answer inbound
+`GetConfiguration`/`ChangeConfiguration` by one-line delegation. Additive and
+non-breaking — a new package, no change to any existing type or interface.
+
+Ported from xBlaz3kx/ocpp-go's `config_manager` (now ChargePi/ocpp-manager,
+MIT) — that project's take on upstream #286. Fork changes over the source:
+all external deps stripped to stdlib (no `samber/lo`, no `go-commons-lang` — no
+new `go.mod` deps); the facade wiring the source lacked, incl. the full
+`ConfigurationStatus` mapping and a `GetConfigurationMaxKeys` default; two
+carried-defect fixes (the discarded-handler-error no-op defer → a shared atomic
+apply→handler→rollback primitive, re-panic-after-rollback on a handler panic;
+the unreachable ISO15118 mandatory-keys branch → an explicit `ISO15118` profile
+sentinel + defaults); and concurrency hardening (every shared-state method
+guarded by one non-reentrant mutex with internal unlocked helpers, deep copies
+at every API boundary). In-memory/process-lifetime, case-sensitive key matching.
+
+Guard: `ocpp1.6/configmanager/configmanager_test.go` (dep-strip equivalence,
+`-race` concurrency, ISO15118 sentinel+defaults, atomic rollback on handler
+error and panic, deep-copy non-aliasing, both wiring helpers + full status
+mapping) + `ocpp1.6_test/configmanager_e2e_test.go` (facade e2e: a real charge
+point delegating to a `ManagerV16`). All green under `-race`.
