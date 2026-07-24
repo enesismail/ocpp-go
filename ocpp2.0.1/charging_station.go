@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"sync/atomic"
 
 	"github.com/enesismail/ocpp-go/internal/callbackqueue"
 	"github.com/enesismail/ocpp-go/ocpp"
@@ -56,7 +57,7 @@ type chargingStation struct {
 	responseHandler      chan responseEnvelope
 	errorHandler         chan error
 	callbacks            callbackqueue.CallbackQueue
-	stopC                chan struct{}
+	stopC                atomic.Value // holds chan struct{}; see loadStopC/storeStopC
 	stopOnce             *sync.Once
 	errC                 chan error // external error channel
 }
@@ -68,9 +69,43 @@ type asyncResponse struct {
 	e error
 }
 
+// loadStopC returns the current generation's stop signal channel, or nil if
+// Start/StartWithRetries has never been called. atomic.Value (not a plain
+// field) because independent goroutine families read stopC - the ocppj
+// dispatcher pump (onRequestTimeout), the ws readPump (the forwarding
+// closures wired in NewChargingStation), and SendRequestCtx callers - while
+// Start/StartWithRetries reassign it on every call; a plain field
+// read/write pair here is a data race (see TestL2ShutdownRestartStopCRace
+// under -race). This accessor is the ONLY synchronization around stopC: per
+// the HOLD-SCOPE rule (tasks/facade-lifecycle-hardening.md §PR-L2 item 1),
+// no lock is ever held across it, a channel op, client.Stop(), or a join -
+// holding one would recreate the exact three-party deadlock this accessor
+// exists to avoid. Note asyncCallbackHandler does NOT use this accessor: it
+// receives stopC by parameter at spawn (deliberately - a generation-1
+// handler must exit on its OWN generation's channel, never an accessor
+// read that could rebind it to a later generation's).
+func (cs *chargingStation) loadStopC() chan struct{} {
+	v, _ := cs.stopC.Load().(chan struct{})
+	return v
+}
+
+func (cs *chargingStation) storeStopC(c chan struct{}) {
+	cs.stopC.Store(c)
+}
+
 func (cs *chargingStation) error(err error) {
-	if cs.errC != nil {
-		cs.errC <- err
+	if cs.errC == nil {
+		return
+	}
+	// Preemptible: error() runs on the async handler goroutine, or (via
+	// sendResponse et al, invoked from the unjoined ws readPump through
+	// handleIncomingRequest) directly on the readPump. A caller that obtains
+	// Errors() and never drains it would otherwise wedge whichever goroutine
+	// called error() forever inside `cs.errC <- err`. See spec §L2 PR-L2
+	// item 2, "error() on both facades".
+	select {
+	case cs.errC <- err:
+	case <-cs.loadStopC():
 	}
 }
 
@@ -85,7 +120,15 @@ func (cs *chargingStation) Errors() <-chan error {
 // Callback invoked whenever a queued request is canceled, due to timeout.
 // By default, the callback returns a GenericError to the caller, who sent the original request.
 func (cs *chargingStation) onRequestTimeout(_ string, _ ocpp.Request, err *ocpp.Error) {
-	cs.errorHandler <- err
+	// Preemptible: runs on the ocppj dispatcher's messagePump goroutine,
+	// sequentially, for every request canceled at Stop()-time or on timeout.
+	// A blocking send into cs.errorHandler (cap 1) with no reader wedges the
+	// pump, which DefaultClientDispatcher.Stop() (called from client.Stop())
+	// waits on unconditionally - hanging facade Stop() forever. See spec §L2.
+	select {
+	case cs.errorHandler <- err:
+	case <-cs.loadStopC():
+	}
 }
 
 func (cs *chargingStation) BootNotification(reason provisioning.BootReason, model string, vendor string, props ...func(request *provisioning.BootNotificationRequest)) (*provisioning.BootNotificationResponse, error) {
@@ -530,7 +573,7 @@ func (cs *chargingStation) SendRequestCtx(ctx context.Context, request ocpp.Requ
 	if err != nil {
 		return nil, err
 	}
-	stopC := cs.stopC
+	stopC := cs.loadStopC()
 	return cs.awaitCtxResult(ctx, featureName, asyncResponseC, stopC)
 }
 
@@ -695,33 +738,45 @@ func (cs *chargingStation) sendResponse(response ocpp.Response, err error, reque
 }
 
 func (cs *chargingStation) Start(csmsUrl string) error {
-	// Start client
-	cs.stopC = make(chan struct{}, 1)
+	// Start client. stopC is close-only (never carries a value), so it is
+	// unbuffered.
+	stopC := make(chan struct{})
+	cs.storeStopC(stopC)
 	cs.stopOnce = &sync.Once{}
 	err := cs.client.Start(csmsUrl)
 	// Async response handler receives incoming responses/errors and triggers callbacks
 	if err == nil {
-		go cs.asyncCallbackHandler(cs.stopC)
+		go cs.asyncCallbackHandler(stopC)
 	}
 	return err
 }
 
 func (cs *chargingStation) StartWithRetries(csmsUrl string) {
 	// Start client
-	cs.stopC = make(chan struct{}, 1)
+	stopC := make(chan struct{})
+	cs.storeStopC(stopC)
 	cs.stopOnce = &sync.Once{}
 	cs.client.StartWithRetries(csmsUrl)
 	// Async response handler receives incoming responses/errors and triggers callbacks
-	go cs.asyncCallbackHandler(cs.stopC)
+	go cs.asyncCallbackHandler(stopC)
 }
 
 func (cs *chargingStation) Stop() {
-	cs.client.Stop()
+	// Close stopC BEFORE client.Stop() - see the sibling 1.6 chargePoint.Stop()
+	// comment (charge_point.go) for the full rationale: client.Stop() blocks
+	// until the dispatcher pump drains, and every producer that can wedge
+	// that pump (onRequestTimeout, the forwarding closures, error()) is now
+	// preemptible against stopC - closing it afterward (today's order) makes
+	// that preemption dead code. See spec §Sequencing.
 	if cs.stopOnce != nil {
+		stopC := cs.loadStopC()
 		cs.stopOnce.Do(func() {
-			close(cs.stopC)
+			if stopC != nil {
+				close(stopC)
+			}
 		})
 	}
+	cs.client.Stop()
 }
 
 func (cs *chargingStation) IsConnected() bool {

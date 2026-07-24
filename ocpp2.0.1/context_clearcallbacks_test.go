@@ -61,12 +61,13 @@ func TestE1cClearCallbacksOnStop(t *testing.T) {
 		callbacks:       callbackqueue.New(),
 		responseHandler: make(chan responseEnvelope, 1),
 		errorHandler:    make(chan error, 1),
-		stopC:           make(chan struct{}, 1),
 		stopOnce:        &sync.Once{},
 		// client is intentionally nil — the handler's stopC arm does not
 		// dereference it, and no rail event will arrive to trigger the
 		// responseHandler/errorHandler branches.
 	}
+	stopC := make(chan struct{}, 1)
+	cs.storeStopC(stopC)
 
 	// Seed a callback with a no-op try: the callback is registered but no
 	// request is actually sent, so no response/error event will ever arrive
@@ -80,13 +81,13 @@ func TestE1cClearCallbacksOnStop(t *testing.T) {
 	// Launch the callback handler (same goroutine pattern as Start).
 	handlerDone := make(chan struct{})
 	go func() {
-		cs.asyncCallbackHandler(cs.stopC)
+		cs.asyncCallbackHandler(stopC)
 		close(handlerDone)
 	}()
 
 	// Trigger exactly what Stop() triggers (minus the network client.Stop()):
 	// close stopC via stopOnce.
-	cs.stopOnce.Do(func() { close(cs.stopC) })
+	cs.stopOnce.Do(func() { close(stopC) })
 
 	// Wait for the handler to exit.
 	select {

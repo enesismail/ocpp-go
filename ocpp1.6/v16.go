@@ -179,12 +179,21 @@ type ChargePoint interface {
 	Start(centralSystemUrl string) error
 	// Stops the charge point routine, disconnecting it from the central system.
 	// Any pending requests are discarded.
+	//
+	// An inbound message (response, error, or request) that is still in flight
+	// when Stop begins may be dropped rather than delivered, so its callback or
+	// handler never fires. This is deliberate: producers are preemptible on
+	// shutdown so Stop cannot be wedged by an undrained facade channel.
 	Stop()
 	// Returns true if the charge point is currently connected to the central system, false otherwise.
 	// While automatically reconnecting to the central system, the method returns false.
 	IsConnected() bool
 	// Errors returns a channel for error messages. If it doesn't exist it is created.
-	// The channel is closed by the charge point when stopped.
+	// PR-L2 interim: unlike before, the channel is NOT closed when the charge
+	// point stops (a future change reinstates closure as a post-join "fully
+	// stopped" signal - see tasks/facade-lifecycle-hardening.md PR-L1 item 4).
+	// Until then, do not rely on channel closure to detect a stopped charge
+	// point.
 	Errors() <-chan error
 }
 
@@ -234,17 +243,36 @@ func NewChargePoint(id string, endpoint *ocppj.Client, client ws.Client) ChargeP
 	// Callback invoked by dispatcher, whenever a queued request is canceled, due to timeout.
 	endpoint.SetOnRequestCanceled(cp.onRequestTimeout)
 
+	// All three closures below run on the ws readPump goroutine (one
+	// invocation per inbound message, not once at spawn) and forward into
+	// cp.incoming (cap 1). Nothing joins the readPump, so a blocking send
+	// with no reader (e.g. the async handler pinned in a slow callback, or
+	// already gone past Stop()) leaks that goroutine forever - a permanent
+	// leak, independent of whether Stop() itself returns. Each is therefore
+	// preemptible against stopC, read fresh via the accessor on every call
+	// (unlike asyncCallbackHandler's one-time capture: these must observe
+	// whichever generation is current at delivery time). See spec §L2's
+	// "wider hazard" / fable MAJOR-2.
 	cp.client.SetResponseHandler(func(confirmation ocpp.Response, requestId string) {
 		if testhooks.ChargePointResponse != nil {
 			testhooks.ChargePointResponse(confirmation, requestId)
 		}
-		cp.incoming <- incomingMessage{kind: incomingResponse, confirmation: confirmation, requestID: requestId}
+		select {
+		case cp.incoming <- incomingMessage{kind: incomingResponse, confirmation: confirmation, requestID: requestId}:
+		case <-cp.loadStopC():
+		}
 	})
 	cp.client.SetErrorHandler(func(err *ocpp.Error, details interface{}) {
-		cp.incoming <- incomingMessage{kind: incomingError, err: err}
+		select {
+		case cp.incoming <- incomingMessage{kind: incomingError, err: err}:
+		case <-cp.loadStopC():
+		}
 	})
 	cp.client.SetRequestHandler(func(request ocpp.Request, requestId string, action string) {
-		cp.incoming <- incomingMessage{kind: incomingRequest, request: request, requestID: requestId, action: action}
+		select {
+		case cp.incoming <- incomingMessage{kind: incomingRequest, request: request, requestID: requestId, action: action}:
+		case <-cp.loadStopC():
+		}
 	})
 	return &cp
 }
