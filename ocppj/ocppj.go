@@ -130,12 +130,16 @@ func (a *atomicLogger) delegate() logging.Logger {
 	return l
 }
 
-func (a *atomicLogger) Debug(args ...interface{})                 { a.delegate().Debug(args...) }
-func (a *atomicLogger) Debugf(format string, args ...interface{}) { a.delegate().Debugf(format, args...) }
-func (a *atomicLogger) Info(args ...interface{})                  { a.delegate().Info(args...) }
-func (a *atomicLogger) Infof(format string, args ...interface{})  { a.delegate().Infof(format, args...) }
-func (a *atomicLogger) Error(args ...interface{})                 { a.delegate().Error(args...) }
-func (a *atomicLogger) Errorf(format string, args ...interface{}) { a.delegate().Errorf(format, args...) }
+func (a *atomicLogger) Debug(args ...interface{}) { a.delegate().Debug(args...) }
+func (a *atomicLogger) Debugf(format string, args ...interface{}) {
+	a.delegate().Debugf(format, args...)
+}
+func (a *atomicLogger) Info(args ...interface{})                 { a.delegate().Info(args...) }
+func (a *atomicLogger) Infof(format string, args ...interface{}) { a.delegate().Infof(format, args...) }
+func (a *atomicLogger) Error(args ...interface{})                { a.delegate().Error(args...) }
+func (a *atomicLogger) Errorf(format string, args ...interface{}) {
+	a.delegate().Errorf(format, args...)
+}
 
 var EscapeHTML atomic.Bool
 
