@@ -572,18 +572,20 @@ Mechanism — generalizes the existing per-request timeout watcher
   error constructor E1c/E2a already use, matching both
   `ErrRequestCanceled` and `context.Canceled`/`DeadlineExceeded`.
 
-**Breaking — two additive interface methods** (facade-level; the
-`ServerDispatcher`/`ClientDispatcher` interfaces are unchanged by E2c):
+**New public surface — one concrete method plus two additive interface
+methods.** Only the two interface additions are breaking, and only for external
+**implementors** of `CentralSystem`/`CSMS` (not for callers); `Server.SendRequestCtx`
+is a concrete method and breaks nothing. The `ServerDispatcher`/`ClientDispatcher`
+interfaces are unchanged by E2c:
 
-| File | Symbol | Change |
-|------|--------|--------|
-| `ocppj/server.go` | `Server.SendRequestCtx(ctx, clientID, request) (string, error)` | new; `SendRequest` delegates with `context.Background()` |
-| `ocpp1.6/v16.go` | `CentralSystem.SendRequestAsyncCtx(ctx, clientId, request, callback) error` | new; `SendRequestAsync` delegates with `context.Background()` |
-| `ocpp2.0.1/v2.go` | `CSMS.SendRequestAsyncCtx(ctx, clientId, request, callback) error` | new; `SendRequestAsync` delegates with `context.Background()` |
+| File | Symbol | Breaking? | Change |
+|------|--------|-----------|--------|
+| `ocppj/server.go` | `Server.SendRequestCtx(ctx, clientID, request) (string, error)` | no (concrete method) | new; `SendRequest` delegates with `context.Background()` |
+| `ocpp1.6/v16.go` | `CentralSystem.SendRequestAsyncCtx(ctx, clientId, request, callback) error` | yes (implementors) | new; `SendRequestAsync` delegates with `context.Background()` |
+| `ocpp2.0.1/v2.go` | `CSMS.SendRequestAsyncCtx(ctx, clientId, request, callback) error` | yes (implementors) | new; `SendRequestAsync` delegates with `context.Background()` |
 
-Breaking only for external **implementors** of `CentralSystem`/`CSMS` (not
-callers) — same shape/precedent as E1c's `ChargePoint`/`ChargingStation`
-additions. No mock regeneration was needed: neither interface has a generated
+Same shape/precedent as E1c's `ChargePoint`/`ChargingStation` additions. No mock
+regeneration was needed: neither interface has a generated
 mock in this repo (`mock_ocpp16.go`'s `CentralSystem`/`ChargePoint` entries in
 `.mockery.yaml` were never actually emitted; only the unrelated
 `ChargePointConnectionHandler` func-type mock exists there).
