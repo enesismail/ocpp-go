@@ -360,6 +360,10 @@ type CentralSystem interface {
 	// This result is propagated via a callback, called asynchronously.
 	// In case of network issues (i.e. the remote host couldn't be reached), the function returns an error directly. In this case, the callback is never called.
 	SendRequestAsync(clientId string, request ocpp.Request, callback func(ocpp.Response, error)) error
+	// SendRequestAsyncCtx sends an asynchronous request to the charge point,
+	// carrying a per-request context for cancellation. A nil ctx is treated
+	// as context.Background().
+	SendRequestAsyncCtx(ctx context.Context, clientId string, request ocpp.Request, callback func(ocpp.Response, error)) error
 	// Starts running the central system on the specified port and URL.
 	// The central system runs as a daemon and handles incoming charge point connections and messages.
 

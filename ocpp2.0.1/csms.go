@@ -783,6 +783,15 @@ func (cs *csms) SetChargingStationDisconnectedHandler(handler ChargingStationCon
 }
 
 func (cs *csms) SendRequestAsync(clientId string, request ocpp.Request, callback func(response ocpp.Response, err error)) error {
+	return cs.SendRequestAsyncCtx(context.Background(), clientId, request, callback)
+}
+
+// SendRequestAsyncCtx sends an asynchronous request to the charging station,
+// carrying a per-request context for cancellation propagation. A nil ctx is
+// treated as context.Background(). See ocppj.Server.SendRequestCtx for the
+// full cancellation semantics (dispatched vs. queued requests, and the
+// simultaneous-timeout-and-cancel caveat).
+func (cs *csms) SendRequestAsyncCtx(ctx context.Context, clientId string, request ocpp.Request, callback func(response ocpp.Response, err error)) error {
 	featureName := request.GetFeatureName()
 	if _, found := cs.server.GetProfileForFeature(featureName); !found {
 		return fmt.Errorf("feature %v is unsupported on CSMS (missing profile), cannot send request", featureName)
@@ -834,7 +843,7 @@ func (cs *csms) SendRequestAsync(clientId string, request ocpp.Request, callback
 	}
 
 	send := func() (string, error) {
-		return cs.server.SendRequest(clientId, request)
+		return cs.server.SendRequestCtx(ctx, clientId, request)
 	}
 	return cs.callbackQueue.TryQueue(clientId, send, callback)
 }
