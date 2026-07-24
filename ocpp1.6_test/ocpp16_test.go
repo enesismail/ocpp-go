@@ -605,8 +605,12 @@ func testUnsupportedRequestFromCentralSystem(suite *OcppV16TestSuite, request oc
 	require.Error(t, err)
 	assert.Equal(t, expectedError, err.Error())
 	// 2. Test receiving an unsupported request on the other endpoint and receiving an error
-	// Mark mocked request as pending, otherwise response will be ignored
+	// Mark mocked request as pending, otherwise response will be ignored. Also push
+	// a matching queue bundle (so CompleteRequest owns the completion via
+	// front-match PopIf, per PR-E2a's atomic completion) - mirroring
+	// testUnsupportedRequestFromChargePoint's identical treatment above.
 	suite.ocppjCentralSystem.RequestState.AddPendingRequest(wsId, messageId, request)
+	require.NoError(t, suite.serverRequestQueueMap.GetOrCreate(wsId).Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: messageId}}))
 	err = suite.mockWsClient.MessageHandler([]byte(requestJson))
 	assert.Nil(t, err)
 	_, ok := <-resultChannel
@@ -645,16 +649,17 @@ func ExecuteGenericTestTable(t *testing.T, testTable []GenericTestEntry) {
 // ---------------------- TESTS ----------------------
 type OcppV16TestSuite struct {
 	suite.Suite
-	ocppjChargePoint   *ocppj.Client
-	ocppjCentralSystem *ocppj.Server
-	mockWsServer       *MockWebsocketServer
-	mockWsClient       *MockWebsocketClient
-	chargePoint        ocpp16.ChargePoint
-	centralSystem      ocpp16.CentralSystem
-	messageIdGenerator TestRandomIdGenerator
-	clientRequestQueue ocppj.RequestQueue
-	clientDispatcher   ocppj.ClientDispatcher
-	serverDispatcher   ocppj.ServerDispatcher
+	ocppjChargePoint      *ocppj.Client
+	ocppjCentralSystem    *ocppj.Server
+	mockWsServer          *MockWebsocketServer
+	mockWsClient          *MockWebsocketClient
+	chargePoint           ocpp16.ChargePoint
+	centralSystem         ocpp16.CentralSystem
+	messageIdGenerator    TestRandomIdGenerator
+	clientRequestQueue    ocppj.RequestQueue
+	clientDispatcher      ocppj.ClientDispatcher
+	serverDispatcher      ocppj.ServerDispatcher
+	serverRequestQueueMap ocppj.ServerQueueMap
 }
 
 type TestRandomIdGenerator struct {
@@ -684,7 +689,8 @@ func (suite *OcppV16TestSuite) SetupTest() {
 	suite.mockWsServer = &mockServer
 	suite.clientRequestQueue = ocppj.NewFIFOClientQueue(queueCapacity)
 	suite.clientDispatcher = ocppj.NewDefaultClientDispatcher(suite.clientRequestQueue)
-	suite.serverDispatcher = ocppj.NewDefaultServerDispatcher(ocppj.NewFIFOQueueMap(queueCapacity))
+	suite.serverRequestQueueMap = ocppj.NewFIFOQueueMap(queueCapacity)
+	suite.serverDispatcher = ocppj.NewDefaultServerDispatcher(suite.serverRequestQueueMap)
 	suite.ocppjChargePoint = ocppj.NewClient(
 		"test_id",
 		suite.mockWsClient,

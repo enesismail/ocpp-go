@@ -442,6 +442,25 @@ func (q *d2BlockingPopQueue) Pop() interface{} {
 	return el
 }
 
+// PopIf mirrors Pop's block-after-pop hook. PR-E2a routes server completion
+// through the atomic RequestQueue.PopIf (completeRequestOwned) instead of a
+// bare Pop, so this is now the actual interception point exercised by
+// CompleteRequest below: it blocks (once, only on an actual match) after the
+// underlying atomic pop has released the queue's own lock but before
+// completeRequestOwned's caller proceeds to delete pending state - the same
+// "popped but not yet marked complete" window the Pop hook above used to
+// capture.
+func (q *d2BlockingPopQueue) PopIf(predicate func(interface{}) bool) (interface{}, bool) {
+	el, ok := q.RequestQueue.PopIf(predicate)
+	if ok {
+		q.once.Do(func() {
+			close(q.popped)
+			<-q.release
+		})
+	}
+	return el, ok
+}
+
 func TestD2TimeoutDuringCompletePopPendingWindowDoesNotDispatchNextEarly(t *testing.T) {
 	runD2TimeoutDuringCompletePopPendingWindowDoesNotDispatchNextEarly(t)
 }
