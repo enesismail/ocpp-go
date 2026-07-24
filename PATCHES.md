@@ -460,3 +460,69 @@ Dequeue-blocks-on-TryQueue race, DrainAll exactly-once + outer-map cleanup, dupl
 `ocpp1.6_test/e2_0_cross_delivery_test.go` (client + server cross-delivery regressions [same- and
 different-type cascade], wire CALL_ERROR routing by ID). All green under `-race`; the four facade
 regression tests pass under `-race -count=10`.
+
+## Server completion ownership (E2a)
+
+Server-side mirror of the client completion-ownership work (E1a). Hardens
+`DefaultServerDispatcher`'s completion path, fixing three pre-existing bugs that
+exist independently of any context/cancellation feature:
+
+- **A1 — pump self-deadlock.** On a `Write` error, `dispatchNextRequest` (running
+  ON the pump) called the public `CompleteRequest`, which ends in a blocking send
+  to the cap-1 `readyForDispatch` — a channel the pump alone reads. If an off-pump
+  completion had already filled the buffer, the pump blocked forever, stalling
+  **all** clients. Plausibly related to upstream #136 (@utsavanand2, "server
+  becomes unresponsive after a while") — flagged as a hypothesis, not a claim.
+- **A2 — non-atomic completion.** `CompleteRequest` did `Peek`→compare→`Pop` with
+  no lock spanning the steps; a response racing a timeout on the same request
+  could double-pop, silently discarding the next queued request. Same family as
+  #294 / #363 / #67 (callback confusion between requests) that the requestID-keyed
+  callback queue only mitigated at the callback layer.
+- **A3 — `SetTimeout(0)` re-dispatch.** The dispatch guard lacked a
+  `HasPendingRequest` check (unlike the client), so with no timeout the in-flight
+  front request was re-written on the next send.
+
+The fix introduces an atomic `completeRequestOwned` (backed by the existing
+`RequestQueue.PopIf`) that every completion site routes through; only the call
+that atomically wins ownership advances the queue and fires anything.
+
+**Breaking — one interface method:**
+
+| File | Symbol | Change |
+|------|--------|--------|
+| `ocppj/dispatcher.go` | `ServerDispatcher.CompleteRequest(clientID, requestID)` | now returns `bool` (won ownership); was `void` |
+
+Breaking only for external **implementors** of `ServerDispatcher` (not callers).
+Exact precedent: E1a made the same change to `ClientDispatcher`. On-pump
+completion sites use the unexported non-signaling `completeRequestOwned`; the
+public `CompleteRequest` (off-pump only, from `server.go`'s ws-read-goroutine
+CALL_RESULT/CALL_ERROR handlers) additionally signals `readyForDispatch` when it
+wins. Those two handlers now fire `responseHandler`/`errorHandler` only on a win.
+
+**Behavior change:** a genuine CALL_RESULT/CALL_ERROR that arrives after the
+server has already removed the client's queue (a response racing a disconnect)
+is now suppressed — the caller receives the facade's disconnect-drain error
+instead of a late, now-ownerless response. Strictly better (exactly one
+notification; previously the unconditional handler plus the facade dequeue could
+double-touch), but a visible delta for a raw-`ocppj` consumer.
+
+Also folds the write-error re-entry (the pump loops the dispatch step, bounded by
+queue length, so a client's next request still dispatches after a failed write
+without the removed `readyForDispatch` self-send) and generation-pinned
+`waitForTimeout` (its `stoppedC`/`timerC` are passed as parameters at spawn and
+its send is shutdown-safe `select`, so a stale watcher after a `Stop`→`Start`
+cycle can neither race the field reassignment nor misdeliver into a new
+generation).
+
+Out of scope / DEFERRED: server `readyForDispatch` remains a blocking send
+(cross-client contention, bounded; the client uses a non-blocking coalesced
+send); the `deleteAck` purge lacks queue-identity awareness (a fast reconnect
+inside the re-entry loop can cancel a fresh request's timeout watcher — bounded);
+`Stop()` still does not fire cancels for outstanding server requests.
+
+**Guard:** `ocppj/e2a_completion_ownership_test.go` (A1 pump-survival via a
+pre-filled `readyForDispatch` + blocking writer; A2 timeout/response double-pop
+race; A3 `SetTimeout(0)` exactly-one-write; the `CompleteRequest` bool contract;
+the write-error same-client re-entry; B2/B3 stale-watcher no-cross-delivery /
+no-leak). All green under `-race`; the timeout-race and watcher tests pass under
+`-race -count=5`.

@@ -1040,8 +1040,12 @@ func testUnsupportedRequestFromCentralSystem(suite *OcppV2TestSuite, request ocp
 	require.Error(t, err)
 	assert.Equal(t, expectedError, err.Error())
 	// 2. Test receiving an unsupported request on the other endpoint and receiving an error
-	// Mark mocked request as pending, otherwise response will be ignored
+	// Mark mocked request as pending, otherwise response will be ignored. Also push
+	// a matching queue bundle (so CompleteRequest owns the completion via
+	// front-match PopIf, per PR-E2a's atomic completion) - mirroring
+	// testUnsupportedRequestFromChargingStation's identical treatment above.
 	suite.ocppjServer.RequestState.AddPendingRequest(wsId, messageId, request)
+	require.NoError(t, suite.serverRequestQueueMap.GetOrCreate(wsId).Push(ocppj.RequestBundle{Call: &ocppj.Call{UniqueId: messageId}}))
 	// Run response test
 	err = suite.mockWsClient.MessageHandler([]byte(requestJson))
 	assert.Nil(t, err)
@@ -1072,16 +1076,17 @@ func ExecuteGenericTestTable(t *testing.T, testTable []GenericTestEntry) {
 
 type OcppV2TestSuite struct {
 	suite.Suite
-	ocppjClient        *ocppj.Client
-	ocppjServer        *ocppj.Server
-	mockWsServer       *MockWebsocketServer
-	mockWsClient       *MockWebsocketClient
-	chargingStation    ocpp2.ChargingStation
-	csms               ocpp2.CSMS
-	messageIdGenerator TestRandomIdGenerator
-	clientRequestQueue ocppj.RequestQueue
-	clientDispatcher   ocppj.ClientDispatcher
-	serverDispatcher   ocppj.ServerDispatcher
+	ocppjClient           *ocppj.Client
+	ocppjServer           *ocppj.Server
+	mockWsServer          *MockWebsocketServer
+	mockWsClient          *MockWebsocketClient
+	chargingStation       ocpp2.ChargingStation
+	csms                  ocpp2.CSMS
+	messageIdGenerator    TestRandomIdGenerator
+	clientRequestQueue    ocppj.RequestQueue
+	clientDispatcher      ocppj.ClientDispatcher
+	serverDispatcher      ocppj.ServerDispatcher
+	serverRequestQueueMap ocppj.ServerQueueMap
 }
 
 type TestRandomIdGenerator struct {
@@ -1117,7 +1122,8 @@ func (suite *OcppV2TestSuite) SetupTest() {
 	suite.mockWsServer = &mockServer
 	suite.clientRequestQueue = ocppj.NewFIFOClientQueue(queueCapacity)
 	suite.clientDispatcher = ocppj.NewDefaultClientDispatcher(suite.clientRequestQueue)
-	suite.serverDispatcher = ocppj.NewDefaultServerDispatcher(ocppj.NewFIFOQueueMap(queueCapacity))
+	suite.serverRequestQueueMap = ocppj.NewFIFOQueueMap(queueCapacity)
+	suite.serverDispatcher = ocppj.NewDefaultServerDispatcher(suite.serverRequestQueueMap)
 	suite.ocppjClient = ocppj.NewClient("test_id", suite.mockWsClient, suite.clientDispatcher, nil, securityProfile, provisioningProfile, authProfile, availabilityProfile, reservationProfile, diagnosticsProfile, dataProfile, displayProfile, firmwareProfile, isoProfile, localAuthProfile, meterProfile, remoteProfile, smartChargingProfile, tariffProfile, transactionsProfile)
 	suite.ocppjServer = ocppj.NewServer(suite.mockWsServer, suite.serverDispatcher, nil, securityProfile, provisioningProfile, authProfile, availabilityProfile, reservationProfile, diagnosticsProfile, dataProfile, displayProfile, firmwareProfile, isoProfile, localAuthProfile, meterProfile, remoteProfile, smartChargingProfile, tariffProfile, transactionsProfile)
 	suite.chargingStation = ocpp2.NewChargingStation("test_id", suite.ocppjClient, suite.mockWsClient)

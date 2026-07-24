@@ -309,23 +309,33 @@ func (s *Server) ocppMessageHandler(wsChannel ws.Channel, data []byte) error {
 		case CALL_RESULT:
 			callResult := message.(*CallResult)
 			log.Debugf("handling incoming CALL RESULT [%s] from %s", callResult.UniqueId, wsChannel.ID())
-			s.dispatcher.CompleteRequest(wsChannel.ID(), callResult.GetUniqueId())
-			if s.responseHandler != nil {
-				func() {
-					defer recoverHandler(ResponseHandlerKind, wsChannel.ID(), "", callResult.UniqueId, s.onHandlerPanic, nil)
-					s.responseHandler(wsChannel, callResult.Payload, callResult.UniqueId)
-				}()
+			// E2a shape B: fire the response handler ONLY when CompleteRequest
+			// atomically wins ownership of this request. A response that races a
+			// timeout/write-error completion (which already popped the request)
+			// loses here and must NOT deliver — otherwise two notifications (a
+			// cancel and a response) fire for one request at the ocppj layer.
+			// Previously this handler fired unconditionally, which let a
+			// stale/losing completion double-notify (the #294/#363 residue).
+			if s.dispatcher.CompleteRequest(wsChannel.ID(), callResult.GetUniqueId()) {
+				if s.responseHandler != nil {
+					func() {
+						defer recoverHandler(ResponseHandlerKind, wsChannel.ID(), "", callResult.UniqueId, s.onHandlerPanic, nil)
+						s.responseHandler(wsChannel, callResult.Payload, callResult.UniqueId)
+					}()
+				}
 			}
 		case CALL_ERROR:
 			callError := message.(*CallError)
 			log.Debugf("handling incoming CALL ERROR [%s] from %s", callError.UniqueId, wsChannel.ID())
-			s.dispatcher.CompleteRequest(wsChannel.ID(), callError.GetUniqueId())
-			if s.errorHandler != nil {
-				ocppErr := ocpp.NewError(callError.ErrorCode, callError.ErrorDescription, callError.UniqueId)
-				func() {
-					defer recoverHandler(ErrorHandlerKind, wsChannel.ID(), "", callError.UniqueId, s.onHandlerPanic, nil)
-					s.errorHandler(wsChannel, ocppErr, callError.ErrorDetails)
-				}()
+			// Guarded on the completion win, same as CALL_RESULT above.
+			if s.dispatcher.CompleteRequest(wsChannel.ID(), callError.GetUniqueId()) {
+				if s.errorHandler != nil {
+					ocppErr := ocpp.NewError(callError.ErrorCode, callError.ErrorDescription, callError.UniqueId)
+					func() {
+						defer recoverHandler(ErrorHandlerKind, wsChannel.ID(), "", callError.UniqueId, s.onHandlerPanic, nil)
+						s.errorHandler(wsChannel, ocppErr, callError.ErrorDetails)
+					}()
+				}
 			}
 		}
 	}

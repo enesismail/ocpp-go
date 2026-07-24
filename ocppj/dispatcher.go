@@ -536,7 +536,11 @@ type ServerDispatcher interface {
 	// for a specific client.
 	// The dispatcher takes care of removing the request marked by the requestID from
 	// that client's pending requests. It will then attempt to process the next queued request.
-	CompleteRequest(clientID string, requestID string)
+	//
+	// Returns true if this call atomically popped the matching request from that
+	// client's queue (i.e. it "owns" the completion), false if the request was
+	// already completed or the front element does not match the given ID.
+	CompleteRequest(clientID string, requestID string) bool
 	// Sets a callback to be invoked when a request gets canceled, due to network timeouts.
 	// The callback passes the original client ID, message ID, and request struct of the failed request,
 	// along with an error.
@@ -604,6 +608,29 @@ type serverTimeoutToken struct {
 	clientID string
 	ctx      context.Context
 }
+
+// dispatchStatus reports the outcome of a single dispatchNextRequest call, so
+// the pump can decide whether it needs to loop the dispatch step for the
+// same client (see dispatchCompletedNoWrite below / spec MAJOR-2).
+type dispatchStatus int
+
+const (
+	// dispatchIdle: nothing was dispatched and nothing was completed (no
+	// queue for clientID, or a malformed/missing queue front). The pump must
+	// not retry — retrying would spin forever on the same broken entry.
+	dispatchIdle dispatchStatus = iota
+	// dispatchWritten: the request was written to the network and is now
+	// in-flight (pending state set, and a timeout watcher spawned if active).
+	dispatchWritten
+	// dispatchCompletedNoWrite: the request was popped/completed WITHOUT ever
+	// being written (Write returned an error). There is no readyForDispatch
+	// self-send driving re-entry to this client's next queued request (the
+	// A1 fix forbids that blocking self-send from the pump goroutine), so the
+	// pump must loop the dispatch step itself while the client's queue
+	// remains non-empty. Bounded by queue length: each dispatchCompletedNoWrite
+	// pops exactly one entry.
+	dispatchCompletedNoWrite
+)
 
 // Handler function to be invoked when a request gets canceled (either due to timeout or to other external factors).
 type CanceledRequestHandler func(clientID string, requestID string, request ocpp.Request, err *ocpp.Error)
@@ -842,46 +869,27 @@ func (d *DefaultServerDispatcher) messagePump() {
 			clientContextMap[clientID] = clientTimeoutContext{}
 			delete(dispatchedRequestIDMap, clientID)
 			if d.pendingRequestState.HasPendingRequest(clientID) {
-				// Current request for client timed out. Removing request and triggering cancel callback
-				q, found := d.queueMap.Get(clientID)
-				if !found {
-					// Possible race condition: queue was already removed
-					log.Errorf("dispatcher timeout for client %s triggered, but no request queue found", clientID)
+				// Current request for client timed out. Complete it via the
+				// shared atomic primitive (on-pump, non-signaling: it does
+				// NOT send to readyForDispatch, since messagePump is the sole
+				// reader of that channel and sending to it here could
+				// self-deadlock if the buffer is already full — A1 fix). The
+				// atomic PopIf underneath means only one of {timeout,
+				// response, write-error} can ever win this completion — A2
+				// fix: a losing call here (front already popped by a racing
+				// completion) is a no-op, not a double-pop.
+				bundle, won := d.completeRequestOwned(clientID, timedOutRequestID)
+				if !won {
 					continue
 				}
-				el := q.Peek()
-				if el == nil {
-					// Should never happen
-					log.Error("dispatcher timeout for client %s triggered, but no pending request found", clientID)
-					continue
-				}
-
-				bundle, _ := el.(RequestBundle)
-				if bundle.Call == nil {
-					log.Errorf("dispatcher timeout for client %s failed; nil Call attribute", clientID)
-					continue
-				}
-				if bundle.Call.GetUniqueId() != timedOutRequestID {
-					clientQueue = nil
-					rdy = false
-					continue
-				}
-
-				if bundle.Data == nil {
-					log.Errorf("dispatcher timeout for client for %s; nil Data attribute", clientID)
-					continue
-				}
-
-				// Complete the request inline instead of calling CompleteRequest,
-				// which sends to readyForDispatch. Since messagePump is the sole
-				// reader of that channel, sending to it here would self-deadlock
-				// if the buffer is already full from a previous iteration.
-				q.Pop()
-				d.pendingRequestState.DeletePendingRequest(clientID, bundle.Call.GetUniqueId())
-				delete(dispatchedRequestIDMap, clientID)
 				log.Debugf("completed request %s for %s", bundle.Call.GetUniqueId(), clientID)
 				// Mark this client as ready for its next queued request
-				clientQueue = q
+				q, found := d.queueMap.Get(clientID)
+				if found {
+					clientQueue = q
+				} else {
+					clientQueue = nil
+				}
 				rdy = true
 				log.Infof("request %v for %v timed out", bundle.Call.GetUniqueId(), clientID)
 				d.fireRequestCancel(clientID, bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
@@ -915,57 +923,84 @@ func (d *DefaultServerDispatcher) messagePump() {
 			log.Debugf("%v ready to transmit again", clientID)
 		}
 
-		// Only dispatch request if able to send and request queue isn't empty
-		if rdy && clientQueue != nil && !clientQueue.IsEmpty() {
-			// Send request & set new context
-			var requestID string
-			clientCtx, requestID = d.dispatchNextRequest(clientID)
-			clientContextMap[clientID] = clientCtx
-			if requestID != "" && d.pendingRequestState.HasPendingRequest(clientID) {
-				dispatchedRequestIDMap[clientID] = requestID
-			} else {
-				delete(dispatchedRequestIDMap, clientID)
+		// Only dispatch request if able to send, queue isn't empty, and no
+		// request is currently pending for this client. The HasPendingRequest
+		// check is the A3 fix (mirrors the client pump's identical guard):
+		// without it, SetTimeout(0) never activates clientCtx, so `rdy` is
+		// permanently true and a second SendRequest for the same client would
+		// re-write the still in-flight front to the wire, since
+		// dispatchNextRequest only Peeks.
+		if rdy && clientQueue != nil && !clientQueue.IsEmpty() && !d.pendingRequestState.HasPendingRequest(clientID) {
+			// Send request & set new context. Looped (bounded by queue
+			// length) so a write-error completion — which pops/completes a
+			// request WITHOUT writing and therefore without any
+			// readyForDispatch self-send to drive re-entry — still reaches
+			// this client's next queued request with no external stimulus
+			// (spec MAJOR-2).
+			for {
+				var requestID string
+				var status dispatchStatus
+				clientCtx, requestID, status = d.dispatchNextRequest(clientID)
+				clientContextMap[clientID] = clientCtx
+				if requestID != "" && d.pendingRequestState.HasPendingRequest(clientID) {
+					dispatchedRequestIDMap[clientID] = requestID
+				} else {
+					delete(dispatchedRequestIDMap, clientID)
+				}
+				if clientCtx.isActive() {
+					go d.waitForTimeout(clientID, clientCtx, d.stoppedC, d.timerC)
+				}
+				// Update ready state
+				rdy = false
+				if status != dispatchCompletedNoWrite {
+					break
+				}
+				q, found := d.queueMap.Get(clientID)
+				if !found || q.IsEmpty() {
+					break
+				}
 			}
-			if clientCtx.isActive() {
-				go d.waitForTimeout(clientID, clientCtx)
-			}
-			// Update ready state
-			rdy = false
 		}
 	}
 }
 
-func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCtx clientTimeoutContext, requestID string) {
+func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCtx clientTimeoutContext, requestID string, status dispatchStatus) {
 	// Get first element in queue
 	q, ok := d.queueMap.Get(clientID)
 	if !ok {
 		log.Errorf("failed to dispatch next request for %s, no request queue available", clientID)
-		return
+		return clientCtx, "", dispatchIdle
 	}
 	el := q.Peek()
 	bundle, _ := el.(RequestBundle)
 	if bundle.Call == nil {
 		log.Errorf("failed to dispatch next request for %s; nil Call attribute", clientID)
-		return
+		return clientCtx, "", dispatchIdle
 	}
 
 	if bundle.Data == nil {
 		log.Errorf("failed to dispatch next request for %s; nil Data attribute", clientID)
-		return
+		return clientCtx, "", dispatchIdle
 	}
 
 	jsonMessage := bundle.Data
 	callID := bundle.Call.GetUniqueId()
-	requestID = callID
 	d.pendingRequestState.AddPendingRequest(clientID, callID, bundle.Call.Payload)
 	err := d.network.Write(clientID, jsonMessage)
 	if err != nil {
 		log.Errorf("error while sending message: %v", err)
 		// TODO: handle retransmission instead of removing pending request
-		d.CompleteRequest(clientID, callID)
-		d.fireRequestCancel(clientID, bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
-			NewLocalTransportError(InternalError, err.Error(), bundle.Call.UniqueId))
-		return
+		// On-pump completion: use the non-signaling primitive directly (A1
+		// fix) instead of the public, signaling CompleteRequest — calling
+		// that from the pump goroutine risks a self-deadlock on the cap-1
+		// readyForDispatch if an off-pump completion already filled it.
+		if _, won := d.completeRequestOwned(clientID, callID); won {
+			d.fireRequestCancel(clientID, bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
+				NewLocalTransportError(InternalError, err.Error(), bundle.Call.UniqueId))
+		}
+		// Nothing was written; the caller (messagePump) loops the dispatch
+		// step for this client while its queue remains non-empty (MAJOR-2).
+		return clientTimeoutContext{}, "", dispatchCompletedNoWrite
 	}
 	// Create and return context (only if timeout is set)
 	if d.timeout > 0 {
@@ -974,55 +1009,98 @@ func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCt
 	}
 	log.Infof("dispatched request %s for %s", callID, clientID)
 	log.Debugf("sent JSON message to %s: %s", clientID, string(jsonMessage))
-	return
+	return clientCtx, callID, dispatchWritten
 }
 
-func (d *DefaultServerDispatcher) waitForTimeout(clientID string, clientCtx clientTimeoutContext) {
+// waitForTimeout watches a single dispatched request's clientCtx and, on a
+// genuine deadline expiry, notifies messagePump via timerC. stoppedC/timerC
+// are passed as PARAMETERS (not read from d.stoppedC/d.timerC) so this
+// goroutine stays pinned to the generation it was spawned under (B3):
+// watcher goroutines are never joined by Stop(), and Start() reassigns those
+// fields on every generation, so reading them dynamically here would both
+// race Start()'s reassignment and risk a stale watcher posting into a NEW
+// generation's timerC after a Stop->Start cycle.
+func (d *DefaultServerDispatcher) waitForTimeout(clientID string, clientCtx clientTimeoutContext, stoppedC chan struct{}, timerC chan serverTimeoutToken) {
 	defer clientCtx.cancel()
 	log.Debugf("started timeout timer for %s", clientID)
 	select {
 	case <-clientCtx.ctx.Done():
 		err := clientCtx.ctx.Err()
 		if err == context.DeadlineExceeded {
-			// Timeout triggered, notifying messagePump.
-			// Check running state under lock, but release before the channel
-			// send. Holding RLock during a potentially blocking send can cause
-			// a deadlock: if timerC is full, this goroutine blocks while
-			// holding RLock, preventing any Lock() caller from proceeding.
-			d.mutex.RLock()
-			running := d.running
-			d.mutex.RUnlock()
-			if running {
-				d.timerC <- serverTimeoutToken{clientID: clientID, ctx: clientCtx.ctx}
+			// Timeout triggered, notifying messagePump. Shutdown-safe send
+			// (B2): select against the SAME (pinned) generation's stoppedC,
+			// so a stale watcher always has an escape regardless of timerC's
+			// buffer state, instead of a bare guarded send that can park
+			// forever once the buffer fills after a Stop->Start cycle.
+			select {
+			case timerC <- serverTimeoutToken{clientID: clientID, ctx: clientCtx.ctx}:
+			case <-stoppedC:
 			}
 		} else {
 			log.Debugf("timeout canceled for %s", clientID)
 		}
-	case <-d.stoppedC:
+	case <-stoppedC:
 		// server was stopped, every pending timeout gets canceled
 	}
 }
 
-func (d *DefaultServerDispatcher) CompleteRequest(clientID string, requestID string) {
+// completeRequestOwned atomically pops the front of clientID's queue iff it
+// is requestID (via the client queue's atomic PopIf), and clears pending
+// state. Returns the popped bundle and whether THIS call won ownership. It
+// does NOT signal readyForDispatch — callers choose: on-pump callers (the
+// timeout arm, the write-error path) set clientQueue/rdy locally instead,
+// since messagePump is the sole reader of readyForDispatch and a blocking
+// self-send from the pump goroutine would risk a self-deadlock (A1); the
+// public, off-pump CompleteRequest signals after a win.
+//
+// The atomic PopIf is also the A2 fix: only one of {timeout, response,
+// write-error} can ever win a given request's completion, so the next queued
+// request is never silently discarded by a non-atomic Peek-then-Pop race.
+func (d *DefaultServerDispatcher) completeRequestOwned(clientID, requestID string) (RequestBundle, bool) {
 	q, ok := d.queueMap.Get(clientID)
 	if !ok {
 		log.Errorf("attempting to complete request for client %v, but no matching queue found", clientID)
-		return
+		return RequestBundle{}, false
 	}
-	el := q.Peek()
-	if el == nil {
-		log.Errorf("attempting to pop front of queue, but queue is empty")
-		return
+	el, popped := q.PopIf(func(el interface{}) bool {
+		bundle, ok := el.(RequestBundle)
+		return ok && bundle.Call != nil && bundle.Call.GetUniqueId() == requestID
+	})
+	if !popped {
+		return RequestBundle{}, false
 	}
-	bundle, _ := el.(RequestBundle)
-	callID := bundle.Call.GetUniqueId()
-	if callID != requestID {
-		log.Errorf("internal state mismatch: processing response for %v but expected response for %v", requestID, callID)
-		return
-	}
-	q.Pop()
+	bundle := el.(RequestBundle)
 	d.pendingRequestState.DeletePendingRequest(clientID, requestID)
-	log.Debugf("completed request %s for %s", callID, clientID)
-	// Signal that next message in queue may be sent
+	log.Debugf("completed request %s for %s", requestID, clientID)
+	return bundle, true
+}
+
+// CompleteRequest notifies the dispatcher that a request has been completed
+// for a specific client (i.e. a response/error was received off-pump, on a
+// ws read goroutine). It atomically pops the request iff it is still the
+// front of that client's queue (completeRequestOwned) and, only when THIS
+// call won ownership, signals messagePump via the blocking readyForDispatch
+// send. Returns whether this call won — callers (server.go's CALL_RESULT/
+// CALL_ERROR handling) must guard firing any handler on the returned bool, so
+// a losing/stale completion cannot deliver a duplicate notification.
+func (d *DefaultServerDispatcher) CompleteRequest(clientID string, requestID string) bool {
+	_, won := d.completeRequestOwned(clientID, requestID)
+	if !won {
+		return false
+	}
+	// Signal that next message in queue may be sent. Safe to block here: this
+	// method is only ever called off-pump (server.go's read-goroutine
+	// handlers); on-pump callers use completeRequestOwned directly and never
+	// reach this send (the A1 self-deadlock guard).
+	//
+	// DEFERRED (pre-existing, not an E2a regression): readyForDispatch is cap-1,
+	// so two off-pump completions for DIFFERENT clients contend — the second read
+	// goroutine blocks until the pump drains one token. Bounded by a single pump
+	// iteration, but that is not necessarily instantaneous: if the pump is mid
+	// d.network.Write to a backed-up peer, the block lasts up to the ws WriteWait
+	// (default ~10s) before that Write errors. The client dispatcher avoids this
+	// with a non-blocking coalesced send; the server could adopt the same. Left
+	// as-is because the block is bounded and the change is orthogonal to E2a.
 	d.readyForDispatch <- serverReadyToken{clientID: clientID, requestID: requestID}
+	return true
 }
