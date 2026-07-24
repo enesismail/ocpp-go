@@ -526,3 +526,91 @@ race; A3 `SetTimeout(0)` exactly-one-write; the `CompleteRequest` bool contract;
 the write-error same-client re-entry; B2/B3 stale-watcher no-cross-delivery /
 no-leak). All green under `-race`; the timeout-race and watcher tests pass under
 `-race -count=5`.
+
+## Server-side context-aware send (`SendRequestCtx`, E2c)
+
+Server (CSMS/central-system) mirror of the client-side `SendRequestCtx` (E1c) —
+a caller passes a `context.Context` to a server→client send; canceling it
+cancels the outstanding request. Rides E2a's atomic `completeRequestOwned`/
+`CompleteRequest`→`bool` completion ownership as the single-winner basis for
+exactly-once cancel delivery, and E2-0's requestID-keyed callback queue (no
+callback aliasing possible). Addresses the same upstream use-case as E1c
+(**[#105](https://github.com/lorenzodonini/ocpp-go/pull/105)** /
+**[#153](https://github.com/lorenzodonini/ocpp-go/issues/153)**), server side.
+
+Mechanism — generalizes the existing per-request timeout watcher
+(`waitForTimeout`) rather than inventing a new one:
+
+- `waitForTimeout` grows two parameters (`requestID string`, `userCtx
+  context.Context`) and a new `cancelC chan serverCancelToken` (cap 10,
+  matching `timerC`'s B4 bound), all passed at spawn — generation-pinned like
+  `stoppedC`/`timerC` (B3). It now selects on three arms: the internal
+  timeout-tracking `clientCtx.ctx.Done()` (deadline → posts to `timerC`, as
+  before), the caller's `userCtx.Done()` (cancel → posts a
+  `serverCancelToken{clientID, requestID, ctx}` to `cancelC`), and `stoppedC`.
+  Both sends are shutdown-safe `select`s against `stoppedC` (B2).
+- A `clientCtx` (the internal timeout-tracking context) is now created
+  whenever `d.timeout > 0` (unchanged, `context.WithTimeout`) **or** the
+  bundle's own ctx is cancelable (`Done() != nil`, via `context.WithCancel`)
+  — B1. This is what lets every existing completion path (the pump's
+  `readyForDispatch`-token arm, `DeleteClient`) reap a spawned watcher on
+  normal completion via the same `clientCtx.cancel()` call; without it, a
+  completed request under `SetTimeout(0)` would leak one goroutine per
+  completion. A ctx-less send (`Background`, `Done() == nil`) with
+  `SetTimeout(0)` still creates no `clientCtx` and spawns no watcher.
+  `dispatchNextRequest` also gained a **pre-write drop** (C3): a queued
+  request whose ctx has already fired when it reaches the front is completed
+  and canceled without ever being written, reusing E2a's write-error
+  drain-loop re-entry (`dispatchStatus`/`dispatchCompletedNoWrite`) so the
+  pump advances to the next queued front in the same re-entry.
+- A new pump arm, structurally identical to the existing timeout arm:
+  identity-guards on `dispatchedRequestIDMap[clientID] == token.requestID`
+  (stale ⇒ no-op), then calls the same on-pump, non-signaling
+  `completeRequestOwned` E2a introduced; only the winner cancels the internal
+  `clientCtx`, clears pump-local state, marks the client ready, and fires
+  `onRequestCanceled` with `newRequestCanceledError(id, ctx.Err())` — the same
+  error constructor E1c/E2a already use, matching both
+  `ErrRequestCanceled` and `context.Canceled`/`DeadlineExceeded`.
+
+**Breaking — two additive interface methods** (facade-level; the
+`ServerDispatcher`/`ClientDispatcher` interfaces are unchanged by E2c):
+
+| File | Symbol | Change |
+|------|--------|--------|
+| `ocppj/server.go` | `Server.SendRequestCtx(ctx, clientID, request) (string, error)` | new; `SendRequest` delegates with `context.Background()` |
+| `ocpp1.6/v16.go` | `CentralSystem.SendRequestAsyncCtx(ctx, clientId, request, callback) error` | new; `SendRequestAsync` delegates with `context.Background()` |
+| `ocpp2.0.1/v2.go` | `CSMS.SendRequestAsyncCtx(ctx, clientId, request, callback) error` | new; `SendRequestAsync` delegates with `context.Background()` |
+
+Breaking only for external **implementors** of `CentralSystem`/`CSMS` (not
+callers) — same shape/precedent as E1c's `ChargePoint`/`ChargingStation`
+additions. No mock regeneration was needed: neither interface has a generated
+mock in this repo (`mock_ocpp16.go`'s `CentralSystem`/`ChargePoint` entries in
+`.mockery.yaml` were never actually emitted; only the unrelated
+`ChargePointConnectionHandler` func-type mock exists there).
+
+**Documented semantics (`SendRequestCtx` godoc):** canceling a request that is
+still *queued* behind an in-flight one is only *delivered* when that front
+request completes and this one reaches the front (or on disconnect) — with
+`SetTimeout(0)` and a silent peer that delivery is unbounded (client-side
+parity, not a new limitation). If a deadline and a user cancel land at
+(approximately) the same instant, exactly one terminal error is delivered but
+which sentinel wins is not guaranteed.
+
+**Guard:** `ocppj/e2c_context_send_test.go` (dispatched-cancel exactly-once;
+queued-cancel pre-write-drop with a flushed front; cancel-vs-genuine-CALL_RESULT
+exactly-one-winner, `-race -count=10`; stale cancel token no-op; already-canceled
+ctx at send time; `SetTimeout(0)` + cancelable ctx watcher spawn/cancel/no-panic/
+no-leak-on-normal-completion; nil-ctx == `Background`; multi-client isolation;
+cancel-during-`Stop` no dead send/no leak; `Stop`→`Start` cross-generation no
+delivery; same-client in-flight-cancel-during-drain-loop ordering);
+`ocpp{1.6,2.0.1}_test/e2c_context_send_test.go` (facade e2e: dispatched cancel,
+queued cancel with C7.15 flush, nil-ctx == Background + `SendRequestAsync`
+regression). All green under `-race`.
+
+Out of scope / DEFERRED (unchanged from the spec, not new): no queue scanning /
+eviction of canceled non-front requests; no ctx variants of the ~40 typed
+helpers (use `SendRequestAsyncCtx` directly); no per-request timeout override;
+`Stop()` still does not fire cancels for outstanding server-side requests; the
+facade's `error()` on a callback-queue `Dequeue` **miss** is still a blocking
+cap-1 `errC` send run synchronously on the pump (pre-existing, unrelated to
+E2c's own delivery path, which always hits).

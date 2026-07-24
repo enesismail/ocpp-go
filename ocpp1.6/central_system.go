@@ -534,6 +534,15 @@ func (cs *centralSystem) SetChargePointDisconnectedHandler(handler ChargePointCo
 }
 
 func (cs *centralSystem) SendRequestAsync(clientId string, request ocpp.Request, callback func(confirmation ocpp.Response, err error)) error {
+	return cs.SendRequestAsyncCtx(context.Background(), clientId, request, callback)
+}
+
+// SendRequestAsyncCtx sends an asynchronous request to the charge point,
+// carrying a per-request context for cancellation propagation. A nil ctx is
+// treated as context.Background(). See ocppj.Server.SendRequestCtx for the
+// full cancellation semantics (dispatched vs. queued requests, and the
+// simultaneous-timeout-and-cancel caveat).
+func (cs *centralSystem) SendRequestAsyncCtx(ctx context.Context, clientId string, request ocpp.Request, callback func(confirmation ocpp.Response, err error)) error {
 	featureName := request.GetFeatureName()
 	if _, found := cs.server.GetProfileForFeature(featureName); !found {
 		return fmt.Errorf("feature %v is unsupported on central system (missing profile), cannot send request", featureName)
@@ -556,7 +565,7 @@ func (cs *centralSystem) SendRequestAsync(clientId string, request ocpp.Request,
 	}
 
 	send := func() (string, error) {
-		return cs.server.SendRequest(clientId, request)
+		return cs.server.SendRequestCtx(ctx, clientId, request)
 	}
 	return cs.callbackQueue.TryQueue(clientId, send, callback)
 }

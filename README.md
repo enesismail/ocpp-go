@@ -1,3 +1,5 @@
+> ⚠️ **Breaking change:** the `CentralSystem` and `CSMS` interfaces now include a `SendRequestAsyncCtx` method for context-aware, cancelable server→client sends — breaking only for external implementors of those interfaces, not for callers; see [#34](https://github.com/enesismail/ocpp-go/pull/34).
+
 > **Community-maintained friendly fork** of [`lorenzodonini/ocpp-go`](https://github.com/lorenzodonini/ocpp-go) (MIT licensed). The upstream project is the canonical one — this fork is not official.
 >
 > **Why this fork exists**, in priority order:

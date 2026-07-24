@@ -585,13 +585,18 @@ type DefaultServerDispatcher struct {
 	pendingRequestState ServerState
 	timeout             time.Duration
 	timerC              chan serverTimeoutToken
-	running             bool
-	stoppedC            chan struct{}
-	doneC               chan struct{}
-	onRequestCancel     CanceledRequestHandler
-	onHandlerPanic      func(HandlerPanic)
-	network             ws.Server
-	mutex               sync.RWMutex
+	// cancelC carries serverCancelToken notifications from a per-request
+	// watcher (waitForTimeout) when the CALLER's context (as opposed to the
+	// internal timeout-tracking clientCtx watched via timerC) fires. Buffered
+	// cap 10, matching timerC (B4).
+	cancelC         chan serverCancelToken
+	running         bool
+	stoppedC        chan struct{}
+	doneC           chan struct{}
+	onRequestCancel CanceledRequestHandler
+	onHandlerPanic  func(HandlerPanic)
+	network         ws.Server
+	mutex           sync.RWMutex
 }
 
 type serverDispatchRequest struct {
@@ -607,6 +612,17 @@ type serverReadyToken struct {
 type serverTimeoutToken struct {
 	clientID string
 	ctx      context.Context
+}
+
+// serverCancelToken is posted by a per-request watcher (waitForTimeout) onto
+// cancelC when the CALLER's context (SendRequestCtx's ctx, distinct from the
+// internal timeout-tracking clientCtx) fires. requestID lets the pump's
+// identity guard (dispatchedRequestIDMap[clientID] == requestID) detect a
+// stale token for a request that has already completed by some other path.
+type serverCancelToken struct {
+	clientID  string
+	requestID string
+	ctx       context.Context
 }
 
 // dispatchStatus reports the outcome of a single dispatchNextRequest call, so
@@ -662,6 +678,7 @@ func (d *DefaultServerDispatcher) Start() {
 	defer d.mutex.Unlock()
 	d.requestChannel = make(chan serverDispatchRequest, 20)
 	d.timerC = make(chan serverTimeoutToken, 10)
+	d.cancelC = make(chan serverCancelToken, 10)
 	d.stoppedC = make(chan struct{}, 1)
 	d.doneC = make(chan struct{})
 	d.running = true
@@ -921,6 +938,52 @@ func (d *DefaultServerDispatcher) messagePump() {
 				rdy = true
 			}
 			log.Debugf("%v ready to transmit again", clientID)
+		case cancelTok := <-d.cancelC:
+			// A dispatched request's CALLER context (as opposed to the
+			// internal timeout-tracking clientCtx handled by the timerC arm
+			// above) fired. Structurally identical to the timeout arm:
+			// identity guard, then completeRequestOwned (on-pump,
+			// non-signaling — the A1/A4 invariant), then only the WINNER
+			// advances client state and fires the cancel notification (§C2).
+			clientID = cancelTok.clientID
+			if dispatchedRequestIDMap[clientID] != cancelTok.requestID {
+				// Stale token: the request already completed by some other
+				// path (response, timeout, disconnect) before this cancel
+				// was delivered. No-op. Nulling the loop-persistent rdy/
+				// clientQueue here is defensive hygiene, NOT load-bearing: a
+				// continue targets the enclosing for and skips this iteration's
+				// dispatch guard entirely, and every arm that later falls
+				// through to the guard reassigns rdy first — so no stale value
+				// can reach it. Kept for local clarity in a dense pump.
+				rdy = false
+				clientQueue = nil
+				continue
+			}
+			bundle, won := d.completeRequestOwned(clientID, cancelTok.requestID)
+			if !won {
+				// Lost the atomic completion race (e.g. a genuine
+				// CALL_RESULT popped the front first). The winner's own path
+				// already advances client state; nothing to do here. The rdy/
+				// clientQueue nulling is defensive hygiene for the same reason
+				// as the stale-token path above (continue skips the guard).
+				rdy = false
+				clientQueue = nil
+				continue
+			}
+			clientCtx = clientContextMap[clientID]
+			if clientCtx.isActive() {
+				clientCtx.cancel()
+			}
+			clientContextMap[clientID] = clientTimeoutContext{}
+			delete(dispatchedRequestIDMap, clientID)
+			clientQueue, ok = d.queueMap.Get(clientID)
+			if !ok {
+				clientQueue = nil
+			}
+			rdy = true
+			log.Infof("request %v for %v canceled by caller context", bundle.Call.GetUniqueId(), clientID)
+			d.fireRequestCancel(clientID, bundle.Call.Action, bundle.Call.GetUniqueId(), bundle.Call.Payload,
+				newRequestCanceledError(bundle.Call.GetUniqueId(), cancelTok.ctx.Err()))
 		}
 
 		// Only dispatch request if able to send, queue isn't empty, and no
@@ -940,7 +1003,8 @@ func (d *DefaultServerDispatcher) messagePump() {
 			for {
 				var requestID string
 				var status dispatchStatus
-				clientCtx, requestID, status = d.dispatchNextRequest(clientID)
+				var userCtx context.Context
+				clientCtx, requestID, userCtx, status = d.dispatchNextRequest(clientID)
 				clientContextMap[clientID] = clientCtx
 				if requestID != "" && d.pendingRequestState.HasPendingRequest(clientID) {
 					dispatchedRequestIDMap[clientID] = requestID
@@ -948,7 +1012,7 @@ func (d *DefaultServerDispatcher) messagePump() {
 					delete(dispatchedRequestIDMap, clientID)
 				}
 				if clientCtx.isActive() {
-					go d.waitForTimeout(clientID, clientCtx, d.stoppedC, d.timerC)
+					go d.waitForTimeout(clientID, requestID, clientCtx, userCtx, d.stoppedC, d.timerC, d.cancelC)
 				}
 				// Update ready state
 				rdy = false
@@ -964,23 +1028,40 @@ func (d *DefaultServerDispatcher) messagePump() {
 	}
 }
 
-func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCtx clientTimeoutContext, requestID string, status dispatchStatus) {
+func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCtx clientTimeoutContext, requestID string, userCtx context.Context, status dispatchStatus) {
 	// Get first element in queue
 	q, ok := d.queueMap.Get(clientID)
 	if !ok {
 		log.Errorf("failed to dispatch next request for %s, no request queue available", clientID)
-		return clientCtx, "", dispatchIdle
+		return clientCtx, "", nil, dispatchIdle
 	}
 	el := q.Peek()
 	bundle, _ := el.(RequestBundle)
 	if bundle.Call == nil {
 		log.Errorf("failed to dispatch next request for %s; nil Call attribute", clientID)
-		return clientCtx, "", dispatchIdle
+		return clientCtx, "", nil, dispatchIdle
 	}
 
 	if bundle.Data == nil {
 		log.Errorf("failed to dispatch next request for %s; nil Data attribute", clientID)
-		return clientCtx, "", dispatchIdle
+		return clientCtx, "", nil, dispatchIdle
+	}
+
+	userCtx = bundleCtx(bundle)
+	// C3 pre-write drop: a request whose caller ctx already fired (e.g. it
+	// was canceled/expired while still queued behind an in-flight front) is
+	// never written to the wire. Complete it via the same atomic, non-
+	// signaling primitive the write-error path below uses, and report
+	// dispatchCompletedNoWrite so messagePump's bounded drain loop advances
+	// to the next queued front on this same re-entry (spec MAJOR-2 loop,
+	// reused here for C3 per the spec).
+	if userCtx.Err() != nil {
+		callID := bundle.Call.GetUniqueId()
+		if _, won := d.completeRequestOwned(clientID, callID); won {
+			d.fireRequestCancel(clientID, bundle.Call.Action, callID, bundle.Call.Payload,
+				newRequestCanceledError(callID, userCtx.Err()))
+		}
+		return clientTimeoutContext{}, "", nil, dispatchCompletedNoWrite
 	}
 
 	jsonMessage := bundle.Data
@@ -1000,27 +1081,51 @@ func (d *DefaultServerDispatcher) dispatchNextRequest(clientID string) (clientCt
 		}
 		// Nothing was written; the caller (messagePump) loops the dispatch
 		// step for this client while its queue remains non-empty (MAJOR-2).
-		return clientTimeoutContext{}, "", dispatchCompletedNoWrite
+		return clientTimeoutContext{}, "", nil, dispatchCompletedNoWrite
 	}
-	// Create and return context (only if timeout is set)
+	// Create the internal timeout-tracking context. Always created when
+	// d.timeout > 0 (unchanged). B1: ALSO created (via WithCancel, since
+	// there is no real deadline) when d.timeout == 0 but the bundle's own
+	// ctx is cancelable (Done() != nil) — this is what makes every existing
+	// completion path (the readyToken arm's clientCtx.cancel(), the
+	// DeleteClient branch) reap the watcher spawned for this request on
+	// normal completion, instead of leaking it. A ctx-less send (Background,
+	// Done() == nil) with d.timeout == 0 still creates no clientCtx and
+	// spawns no watcher — the common case stays free of a per-request
+	// goroutine.
 	if d.timeout > 0 {
 		ctx, cancel := context.WithTimeout(context.TODO(), d.timeout)
+		clientCtx = clientTimeoutContext{ctx: ctx, cancel: cancel}
+	} else if userCtx.Done() != nil {
+		ctx, cancel := context.WithCancel(context.TODO())
 		clientCtx = clientTimeoutContext{ctx: ctx, cancel: cancel}
 	}
 	log.Infof("dispatched request %s for %s", callID, clientID)
 	log.Debugf("sent JSON message to %s: %s", clientID, string(jsonMessage))
-	return clientCtx, callID, dispatchWritten
+	return clientCtx, callID, userCtx, dispatchWritten
 }
 
-// waitForTimeout watches a single dispatched request's clientCtx and, on a
-// genuine deadline expiry, notifies messagePump via timerC. stoppedC/timerC
-// are passed as PARAMETERS (not read from d.stoppedC/d.timerC) so this
-// goroutine stays pinned to the generation it was spawned under (B3):
-// watcher goroutines are never joined by Stop(), and Start() reassigns those
-// fields on every generation, so reading them dynamically here would both
-// race Start()'s reassignment and risk a stale watcher posting into a NEW
-// generation's timerC after a Stop->Start cycle.
-func (d *DefaultServerDispatcher) waitForTimeout(clientID string, clientCtx clientTimeoutContext, stoppedC chan struct{}, timerC chan serverTimeoutToken) {
+// waitForTimeout watches a single dispatched request's clientCtx (the
+// internal timeout-tracking context, always present when this goroutine is
+// spawned — see the B1 comment in dispatchNextRequest) and userCtx (the
+// caller-supplied context passed to SendRequestCtx, or context.Background()
+// for a ctx-less send, whose nil Done() keeps that arm permanently inert).
+// On a genuine deadline expiry it notifies messagePump via timerC; on a
+// caller cancellation it notifies messagePump via cancelC. clientID and
+// requestID identify the watched request for the pump's identity guards
+// (dispatchedRequestIDMap[clientID] == requestID), since — unlike the
+// timeout arm, which is intrinsically racing exactly one dispatched request
+// per client and is content with a bare ctx-identity check — the cancel
+// token needs its own requestID to detect staleness.
+//
+// stoppedC/timerC/cancelC are passed as PARAMETERS (not read from
+// d.stoppedC/d.timerC/d.cancelC) so this goroutine stays pinned to the
+// generation it was spawned under (B3): watcher goroutines are never joined
+// by Stop(), and Start() reassigns those fields on every generation, so
+// reading them dynamically here would both race Start()'s reassignment and
+// risk a stale watcher posting into a NEW generation's channel after a
+// Stop->Start cycle.
+func (d *DefaultServerDispatcher) waitForTimeout(clientID, requestID string, clientCtx clientTimeoutContext, userCtx context.Context, stoppedC chan struct{}, timerC chan serverTimeoutToken, cancelC chan serverCancelToken) {
 	defer clientCtx.cancel()
 	log.Debugf("started timeout timer for %s", clientID)
 	select {
@@ -1037,10 +1142,20 @@ func (d *DefaultServerDispatcher) waitForTimeout(clientID string, clientCtx clie
 			case <-stoppedC:
 			}
 		} else {
+			// clientCtx was explicitly canceled — either by a completion
+			// path reaping this watcher on normal response/cancel-win (B1),
+			// or by DeleteClient. Not a real timeout: nothing to post.
 			log.Debugf("timeout canceled for %s", clientID)
 		}
+	case <-userCtx.Done():
+		// The CALLER's context fired (SendRequestCtx's ctx.Cancel/deadline).
+		// Same shutdown-safe send shape as the timeout arm (B2).
+		select {
+		case cancelC <- serverCancelToken{clientID: clientID, requestID: requestID, ctx: userCtx}:
+		case <-stoppedC:
+		}
 	case <-stoppedC:
-		// server was stopped, every pending timeout gets canceled
+		// server was stopped, every pending timeout/cancel watch gets dropped
 	}
 }
 

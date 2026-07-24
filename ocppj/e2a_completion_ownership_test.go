@@ -1075,13 +1075,20 @@ func TestE2aB2B3StopStartOldGenerationWatcherNoCrossDelivery(t *testing.T) {
 	d.Start()
 	require.True(t, d.IsRunning())
 
-	// Capture generation 1's own stoppedC/timerC - exactly what a real spawn
-	// at this point in time would have captured as parameters, before any
-	// Stop/Start cycle.
+	// Capture generation 1's own stoppedC/timerC/cancelC - exactly what a
+	// real spawn at this point in time would have captured as parameters,
+	// before any Stop/Start cycle. cancelC is PR-E2c's addition (waitForTimeout
+	// grew a cancelC parameter alongside a requestID/userCtx pair); this test
+	// predates E2c but must still compile and pass against the generalized
+	// signature, so a requestID and a never-firing userCtx (Background) are
+	// supplied - this test is only exercising the TIMEOUT (timerC) arm's
+	// generation-pinning, not the cancel arm.
 	gen1StoppedC := d.stoppedC
 	gen1TimerC := d.timerC
+	gen1CancelC := d.cancelC
 
 	clientID := "e2a-b2b3-client"
+	requestID := "e2a-b2b3-request"
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	clientCtx := clientTimeoutContext{ctx: ctx, cancel: cancel}
@@ -1090,7 +1097,7 @@ func TestE2aB2B3StopStartOldGenerationWatcherNoCrossDelivery(t *testing.T) {
 	go func() {
 		// PR-E2a: pinned (generation-captured) parameters, not the dynamic
 		// d.stoppedC / d.timerC fields.
-		d.waitForTimeout(clientID, clientCtx, gen1StoppedC, gen1TimerC)
+		d.waitForTimeout(clientID, requestID, clientCtx, context.Background(), gen1StoppedC, gen1TimerC, gen1CancelC)
 		close(watcherDone)
 	}()
 
@@ -1165,7 +1172,7 @@ func TestE2aB2B3StopStartOldGenerationWatcherNoCrossDelivery(t *testing.T) {
 		staleClientCtx := clientTimeoutContext{ctx: expiredCtx, cancel: expiredCancel}
 		go func() {
 			// Pinned to the SAME stale gen1 channels as the phase-1 watcher.
-			d.waitForTimeout(clientID, staleClientCtx, gen1StoppedC, gen1TimerC)
+			d.waitForTimeout(clientID, requestID, staleClientCtx, context.Background(), gen1StoppedC, gen1TimerC, gen1CancelC)
 			staleDone <- struct{}{}
 		}()
 	}

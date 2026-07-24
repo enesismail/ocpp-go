@@ -173,6 +173,41 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // On success it returns the generated OCPP message ID (Call.UniqueId); on error
 // it returns an empty string.
 func (s *Server) SendRequest(clientID string, request ocpp.Request) (string, error) {
+	return s.SendRequestCtx(context.Background(), clientID, request)
+}
+
+// SendRequestCtx sends an OCPP Request to a client identified by clientID,
+// carrying a per-request context for cancellation propagation. A nil ctx is
+// treated as context.Background().
+//
+// Canceling ctx cancels the request: if the request is currently dispatched
+// (in flight, awaiting a response), the cancellation is delivered promptly
+// via the CanceledRequestHandler set with SetCanceledRequestHandler, with an
+// error matching both ErrRequestCanceled and the ctx's own error (e.g.
+// context.Canceled). If the request is still queued behind another in-flight
+// request for the same client, cancellation is only DELIVERED once that
+// front request completes (response, timeout, or disconnect) and this one
+// reaches the front — with no fixed dispatcher timeout and a silent peer,
+// that delivery is unbounded. This is client-side parity (the client
+// dispatcher's own SendRequestCtx has the identical lazy-cancellation
+// behavior for a queued request) — callers should not assume ctx.Cancel is
+// prompt for a request that is merely queued, not yet dispatched.
+//
+// If a deadline/timeout set via SetTimeout and ctx's own cancellation land
+// at (approximately) the same instant, exactly one terminal error is
+// delivered, but which sentinel wins (ErrRequestTimeout vs
+// ErrRequestCanceled) is not guaranteed in that narrow window.
+//
+// The function does NOT fast-fail on an already-expired context; the bundle
+// is enqueued and the dispatcher's pre-write drop is the single cancellation
+// path for a request that is already queued when written.
+//
+// On success it returns the generated OCPP message ID (Call.UniqueId); on error
+// it returns an empty string.
+func (s *Server) SendRequestCtx(ctx context.Context, clientID string, request ocpp.Request) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !s.dispatcher.IsRunning() {
 		return "", fmt.Errorf("ocppj server is not started, couldn't send request")
 	}
@@ -185,7 +220,7 @@ func (s *Server) SendRequest(clientID string, request ocpp.Request) (string, err
 		return "", err
 	}
 	// Will not send right away. Queuing message and let it be processed by dedicated requestPump routine
-	if err = s.dispatcher.SendRequest(clientID, RequestBundle{Call: call, Data: jsonMessage}); err != nil {
+	if err = s.dispatcher.SendRequest(clientID, RequestBundle{Call: call, Data: jsonMessage, Ctx: ctx}); err != nil {
 		log.Errorf("error dispatching request [%s, %s] to %s: %v", call.UniqueId, call.Action, clientID, err)
 		return "", err
 	}
