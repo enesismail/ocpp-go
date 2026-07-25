@@ -78,12 +78,12 @@ func TestE1cClearCallbacksOnStop(t *testing.T) {
 		func(ocpp.Response, error) {})
 	require.NoError(t, err, "TryQueue must succeed")
 
-	// Launch the callback handler (same goroutine pattern as Start).
+	// Launch the callback handler (same goroutine pattern as Start). Since
+	// PR-L1, asyncCallbackHandler takes handlerDone as a parameter and
+	// closes it itself (via defer) on exit - no wrapper goroutine needed to
+	// signal completion.
 	handlerDone := make(chan struct{})
-	go func() {
-		cs.asyncCallbackHandler(stopC)
-		close(handlerDone)
-	}()
+	go cs.asyncCallbackHandler(stopC, handlerDone)
 
 	// Trigger exactly what Stop() triggers (minus the network client.Stop()):
 	// close stopC via stopOnce.

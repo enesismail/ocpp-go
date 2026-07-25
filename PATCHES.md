@@ -685,3 +685,53 @@ stop-drain and timeout-arm variants), a dedicated leak test per forwarding
 closure, `error()` preemptibility, the double-`Stop`/`Stop`-before-`Start`
 guards, and the `stopC` restart race. All watchdog-bounded so a regression fails
 fast instead of wedging the suite; green under `-race -count=3`.
+
+## Client facade generation handshake and bounded shutdown (`StopCtx`)
+
+Neither client facade joined the async callback-handler goroutine it spawns per
+`Start`. A fast `Start`→`Stop`→`Start` could therefore leave the previous
+generation's handler alive alongside the new one, racing on shared state — and
+the old generation's `clearCallbacks()` could drain the *new* generation's
+freshly registered callbacks. A second `Start*` with no intervening `Stop` was
+worse: it overwrote the fields that reach the old generation, orphaning that
+handler for the process lifetime.
+
+`Stop` now joins the handler before returning, via a per-`Start` `handlerDone`
+channel closed by the handler on exit. Because a join waits on user code, an
+additive `StopCtx(ctx) error` bounds it; `Stop()` is `StopCtx(context.Background())`.
+On ctx expiry `StopCtx` returns `ctx.Err()` — `stopC` is already closed by then,
+so a retry reaches a clean stop. `handlerDone` is pre-closed in the constructors,
+so `Stop` before `Start`, and `Stop` after a failed `Start`, stay non-blocking
+rather than selecting on a nil channel forever.
+
+A second `Start*` now retires the previous generation first — closing its
+`stopC` and joining its handler — uniformly across `Start` on both facades and
+`StartWithRetries`. Rejecting a second start was not viable: `StartWithRetries`
+returns nothing and so cannot report a rejection. Retirement reuses the same
+teardown as `Stop`, including the underlying client: sharing one `ocppj.Client`
+across generations otherwise leaves a new `Start` reassigning dispatcher state
+while the previous message pump still reads it.
+
+Also in this change: the 1.6 handler takes its `stopC` by parameter (closing a
+residual window where a handler spawned late could bind to a later generation's
+channel); `awaitCtxResult`'s `stopC` arm re-checks for an already-delivered
+response before reporting the client stopped, so a completed response is not
+lost to a concurrent shutdown (the `ctx.Done()` arm deliberately does not — the
+caller asked to cancel); `Errors()` creation is synchronised; and both facades
+document that the error channel is never closed and is process-lifetime, not
+per-generation.
+
+Behavior change: with a user callback in flight, `Stop()` now blocks until it
+returns, and calling `Stop`/`StopCtx` from inside a callback self-joins and
+deadlocks. Both are documented on the interfaces, along with the same caveat for
+`Start`/`StartWithRetries`, which block on a restart for the same reason.
+
+Guard: `ocpp{1.6,2.0.1}_test/lifecycle_join_test.go` and
+`lifecycle_join_stopctx_test.go` (join, orphan retirement on all three start
+paths, the close-AND-join contract, `StopCtx` expiry and retry, `Errors()`
+race), plus white-box `ocpp{1.6,2.0.1}/lifecycle_l3_test.go` for the
+response-vs-shutdown tie. The shutdown-preemption tests from the previous change
+are restated in terms of the new contract — they now assert `StopCtx` returns
+`DeadlineExceeded` while a callback is pinned, rather than releasing the pin,
+which would have masked the very regression they exist to catch. Green under
+`-race -count=3`.
