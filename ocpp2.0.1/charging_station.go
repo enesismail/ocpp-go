@@ -60,6 +60,28 @@ type chargingStation struct {
 	stopC                atomic.Value // holds chan struct{}; see loadStopC/storeStopC
 	stopOnce             *sync.Once
 	errC                 chan error // external error channel
+	// mu is the PR-L1 lifecycle mutex. Scope is deliberately narrow: it
+	// guards ONLY errC's lazy creation (Errors()/error()) and handlerDone
+	// bookkeeping (loadHandlerDone/storeHandlerDone) - stopC stays lock-free
+	// atomic.Value (loadStopC/storeStopC), unchanged from PR-L2.
+	//
+	// HOLD-SCOPE RULE (mandatory): mu must NEVER be held across
+	// client.Stop(), the handlerDone join, or any channel send/receive -
+	// every critical section below is a field copy only, with the lock
+	// released before the channel op it enables. Violating this recreates a
+	// three-party deadlock: the ocppj dispatcher pump -> onRequestTimeout (or
+	// error(), called from the pump/handler) blocks trying to take mu;
+	// dispatcher.Stop() waits on the pump to finish; facade Stop() holds mu
+	// waiting on dispatcher.Stop(). See
+	// tasks/facade-lifecycle-hardening.md §5 for the full derivation.
+	mu sync.Mutex
+	// handlerDone is the CURRENT generation's "asyncCallbackHandler has
+	// exited" signal, closed by the handler itself (never by Stop/StopCtx)
+	// on its way out. Pre-closed in NewChargingStation - NEVER nil - and
+	// replaced with a fresh, open channel by Start/StartWithRetries alongside
+	// a freshly spawned handler (see Start, retirePreviousGeneration,
+	// joinHandler).
+	handlerDone chan struct{}
 }
 
 // asyncResponse wraps an asynchronous response for delivery via a channel
@@ -93,28 +115,64 @@ func (cs *chargingStation) storeStopC(c chan struct{}) {
 	cs.stopC.Store(c)
 }
 
+// loadHandlerDone and storeHandlerDone are the mu-guarded accessors for
+// handlerDone (see the mu field doc's HOLD-SCOPE RULE): the lock is held only
+// long enough to copy/assign the field, never across the channel op the
+// caller goes on to perform.
+func (cs *chargingStation) loadHandlerDone() chan struct{} {
+	cs.mu.Lock()
+	hd := cs.handlerDone
+	cs.mu.Unlock()
+	return hd
+}
+
+func (cs *chargingStation) storeHandlerDone(hd chan struct{}) {
+	cs.mu.Lock()
+	cs.handlerDone = hd
+	cs.mu.Unlock()
+}
+
 func (cs *chargingStation) error(err error) {
-	if cs.errC == nil {
+	// errC is read as a field copy under mu, then the lock is released
+	// before the channel op below - this is what makes it safe against
+	// Errors()' lazy creation (spec §5; see
+	// TestL1ErrorsLazyCreationRaceSameChannel) without violating the
+	// HOLD-SCOPE rule on the mu field doc.
+	cs.mu.Lock()
+	errC := cs.errC
+	cs.mu.Unlock()
+	if errC == nil {
 		return
 	}
 	// Preemptible: error() runs on the async handler goroutine, or (via
 	// sendResponse et al, invoked from the unjoined ws readPump through
 	// handleIncomingRequest) directly on the readPump. A caller that obtains
 	// Errors() and never drains it would otherwise wedge whichever goroutine
-	// called error() forever inside `cs.errC <- err`. See spec §L2 PR-L2
+	// called error() forever inside `errC <- err`. See spec §L2 PR-L2
 	// item 2, "error() on both facades".
 	select {
-	case cs.errC <- err:
+	case errC <- err:
 	case <-cs.loadStopC():
 	}
 }
 
-// Errors returns a channel for error messages. If it doesn't exist it es created.
+// Errors returns a channel for error messages. If it doesn't exist it is
+// created. See the ChargingStation interface godoc (v2.go) for the full
+// contract - in short: errC is NEVER closed and is process-lifetime, not
+// per-generation.
+//
+// errC's lazy creation is guarded by mu so two concurrent first-callers
+// cannot each create a different channel and silently lose one (spec §5).
+// The lock is held only for the field check/create/copy, never across a
+// channel op (HOLD-SCOPE rule on the mu field doc).
 func (cs *chargingStation) Errors() <-chan error {
+	cs.mu.Lock()
 	if cs.errC == nil {
 		cs.errC = make(chan error, 1)
 	}
-	return cs.errC
+	errC := cs.errC
+	cs.mu.Unlock()
+	return errC
 }
 
 // Callback invoked whenever a queued request is canceled, due to timeout.
@@ -600,8 +658,30 @@ func (cs *chargingStation) awaitCtxResult(ctx context.Context, featureName strin
 		}
 		return ar.r, ar.e
 	case <-stopC:
+		// L3 residual guard (spec §4): Go's select has no priority among
+		// simultaneously-ready cases, so if the callback delivers into
+		// asyncResponseC in the same instant stopC is closed, this arm can
+		// "win" the tie even though a real response is already sitting in
+		// the channel one line away. Re-check it, non-blocking, before
+		// conceding to the stopped error - if it is genuinely empty, stop
+		// legitimately won and the error below is correct.
+		select {
+		case ar, ok := <-asyncResponseC:
+			if !ok {
+				return nil, fmt.Errorf("internal error while receiving result for %v request", featureName)
+			}
+			return ar.r, ar.e
+		default:
+		}
 		return nil, fmt.Errorf("charging station stopped while awaiting response to %v request", featureName)
 	case <-ctx.Done():
+		// Deliberately NO re-check here - asymmetric with the stopC arm
+		// above, and intentionally so. The caller explicitly asked to cancel
+		// via ctx, so honoring that by returning ctx.Err() is standard Go
+		// practice and is pre-existing E1c behavior. stopC differs because
+		// nobody asked for THAT outcome - it is an internal shutdown signal
+		// racing a response that may have already arrived, which is exactly
+		// what the re-check above exists to catch.
 		return nil, ocppj.NewRequestCanceledError("", ctx.Err())
 	}
 }
@@ -658,7 +738,25 @@ func (cs *chargingStation) SendRequestAsyncCtx(ctx context.Context, request ocpp
 	return err
 }
 
-func (cs *chargingStation) asyncCallbackHandler(stopC chan struct{}) {
+// asyncCallbackHandler drains cs.responseHandler/cs.errorHandler for exactly
+// one generation, exiting when stopC closes. stopC and handlerDone are
+// received as PARAMETERS - the exact local variables Start/StartWithRetries
+// just created - never re-derived via loadStopC()/loadHandlerDone() inside
+// this function (spec §3's "real parameter-passing"; this facade already did
+// this for stopC pre-PR-L1, handlerDone is the PR-L1 addition). Passing the
+// parameters (rather than reading a shared field/accessor) pins this
+// goroutine to the ONE generation it was spawned for, for its entire
+// lifetime, regardless of scheduling delay - a delayed spawn can never rebind
+// to a later generation's channels mid-loop, which is what would let two
+// handlers briefly co-drain, or let generation-1's clearCallbacks() drain
+// generation-2's freshly registered callbacks (cs.callbacks is shared across
+// generations).
+func (cs *chargingStation) asyncCallbackHandler(stopC chan struct{}, handlerDone chan struct{}) {
+	// Closed on every exit path (today there is only one, the <-stopC arm
+	// below) so Stop/StopCtx's join - and Start/StartWithRetries' implicit
+	// retirePreviousGeneration join - can observe that this generation has
+	// fully exited. See joinHandler.
+	defer close(handlerDone)
 	for {
 		select {
 		case env := <-cs.responseHandler:
@@ -737,46 +835,193 @@ func (cs *chargingStation) sendResponse(response ocpp.Response, err error, reque
 	}
 }
 
+// closeStopC closes the CURRENT generation's stopC exactly once (stopOnce-
+// guarded, mirroring the pre-PR-L1 inline logic this replaces). A no-op if
+// Start/StartWithRetries has never been called (stopOnce nil) or has already
+// fired for this generation. Shared by the explicit Stop/StopCtx path and by
+// Start/StartWithRetries' implicit retirement of the PREVIOUS generation
+// (retirePreviousGeneration).
+func (cs *chargingStation) closeStopC() {
+	if cs.stopOnce == nil {
+		return
+	}
+	stopC := cs.loadStopC()
+	cs.stopOnce.Do(func() {
+		if stopC != nil {
+			close(stopC)
+		}
+	})
+}
+
+// joinHandler blocks until the CURRENT generation's handlerDone closes (i.e.
+// asyncCallbackHandler has exited), bounded by ctx. handlerDone is
+// pre-closed in NewChargingStation and is left at its last-closed value
+// whenever no handler is spawned (a failed Start - see Start), so this
+// returns immediately (nil) whenever there is no live handler to wait for.
+// That matters concretely: Stop()-before-Start() and
+// Stop()-after-failed-Start() both rely on handlerDone being non-nil here -
+// `select { case <-handlerDone: case <-ctx.Done(): }` with a NIL
+// handlerDone selects on two nil channels and hangs forever, which is
+// exactly the hang this function (and the constructor's pre-closed
+// initialization) exists to prevent.
+func (cs *chargingStation) joinHandler(ctx context.Context) error {
+	select {
+	case <-cs.loadHandlerDone():
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// retirePreviousGeneration closes and joins the CURRENT generation before a
+// new one is installed - the generation-orphan remedy spec §2 decides on for
+// ALL THREE Start* paths (this facade's Start AND StartWithRetries, plus
+// ocpp1.6's Start). Without it, a second Start*/StartWithRetries leaves the
+// prior generation's handler parked forever on a stopC no future Stop() can
+// reach (Stop() only ever closes loadStopC()'s CURRENT value via the
+// accessor), and lets that orphaned handler's clearCallbacks() drain
+// callbacks the new generation just registered - cs.callbacks is shared
+// across generations.
+//
+// Reuses StopCtx verbatim (spec §2: "reuse the §2 join for the implicit
+// stop... the guarantee is the same one Stop() gives") rather than only
+// closing stopC and joining the handler. Calling cs.client.Stop() here is
+// NOT optional: cs.client is one long-lived *ocppj.Client shared across
+// every generation, and its dispatcher cannot safely have two overlapping
+// Start()/messagePump lifetimes - ocppj/dispatcher.go's Start() reassigns
+// d.timer (and d.requestChannel/d.doneC) unguarded against a still-running
+// PREVIOUS messagePump goroutine reading them, which a plain facade-level
+// retirement (close+join only, no client.Stop()) leaves running whenever the
+// previous generation's handler was pinned. Confirmed empirically: an
+// earlier version of this function omitted client.Stop() and
+// go test -race caught the exact d.timer read/write race on the sibling
+// 1.6 facade's TestL1GenerationOrphanSecondStartJoinsPreviousGeneration.
+// Calling StopCtx's full sequence (close stopC, client.Stop(), join)
+// guarantees the previous generation's dispatcher has FULLY exited
+// (client.Stop() blocks on dispatcher.Stop()'s <-done) before
+// Start/StartWithRetries proceeds to call client.Start()/StartWithRetries()
+// again below.
+//
+// Guarded on stopOnce == nil (Start*/StartWithRetries has never been
+// called): with no previous generation there is nothing to retire, and -
+// unlike closeStopC and joinHandler, which both degrade to safe no-ops on a
+// fresh facade - StopCtx unconditionally calls cs.client.Stop() too, which
+// is NOT a no-op against a real (or mocked) network client. Skipping the
+// whole retirement here, rather than relying on StopCtx's inner no-ops,
+// avoids an extra, surprising client.Stop()/IsConnected() call on every very
+// first Start*() - which most callers (and most of this repo's existing
+// Start()-only tests, which do not mock Stop()/IsConnected() at all) do not
+// expect.
+func (cs *chargingStation) retirePreviousGeneration() {
+	if cs.stopOnce == nil {
+		return
+	}
+	_ = cs.StopCtx(context.Background())
+}
+
 func (cs *chargingStation) Start(csmsUrl string) error {
-	// Start client. stopC is close-only (never carries a value), so it is
-	// unbuffered.
+	// Generation-orphan remedy (spec §2): retire the PREVIOUS generation, if
+	// any, before installing a new one. See retirePreviousGeneration.
+	cs.retirePreviousGeneration()
+
+	// stopC/handlerDone are close-only (never carry a value), so both are
+	// unbuffered. Created here as LOCAL variables and passed directly to the
+	// spawned handler below (spec §3's real parameter-passing) - never
+	// re-derived via the accessors, which is what would reopen the
+	// delayed-spawn rebind window (see asyncCallbackHandler's doc comment).
 	stopC := make(chan struct{})
+	handlerDone := make(chan struct{})
 	cs.storeStopC(stopC)
 	cs.stopOnce = &sync.Once{}
 	err := cs.client.Start(csmsUrl)
-	// Async response handler receives incoming responses/errors and triggers callbacks
+	// Async response handler receives incoming responses/errors and triggers
+	// callbacks - wired up, and handlerDone replaced, ONLY on success. On
+	// failure there is no handler to join, so handlerDone must be left at
+	// its previous (already-closed) value; unconditionally storing a fresh,
+	// OPEN handlerDone here would make a subsequent Stop()/StopCtx() join
+	// forever on a handler that was never spawned (see
+	// TestL1StopAfterFailedStartReturns).
 	if err == nil {
-		go cs.asyncCallbackHandler(stopC)
+		cs.storeHandlerDone(handlerDone)
+		go cs.asyncCallbackHandler(stopC, handlerDone)
 	}
 	return err
 }
 
 func (cs *chargingStation) StartWithRetries(csmsUrl string) {
-	// Start client
+	// Generation-orphan remedy (spec §2): retire the PREVIOUS generation, if
+	// any, before installing a new one. See retirePreviousGeneration. This is
+	// the path spec §2 names explicitly as the reason the decided remedy is
+	// "close-previous" rather than "reject-second-start": StartWithRetries
+	// returns void, so a rejection could not be reported through it.
+	cs.retirePreviousGeneration()
+
+	// stopC/handlerDone: see the identical comment in Start.
 	stopC := make(chan struct{})
+	handlerDone := make(chan struct{})
 	cs.storeStopC(stopC)
 	cs.stopOnce = &sync.Once{}
 	cs.client.StartWithRetries(csmsUrl)
-	// Async response handler receives incoming responses/errors and triggers callbacks
-	go cs.asyncCallbackHandler(stopC)
+	// Async response handler receives incoming responses/errors and triggers
+	// callbacks. Unlike Start, StartWithRetries has no failure path to guard
+	// against - the underlying client retries in the background and always
+	// "succeeds" from the facade's perspective - so handlerDone/the handler
+	// are unconditionally installed, matching the pre-PR-L1 behavior.
+	cs.storeHandlerDone(handlerDone)
+	go cs.asyncCallbackHandler(stopC, handlerDone)
 }
 
+// Stop is StopCtx bounded by context.Background(): it always waits for the
+// in-flight handler generation to fully exit, however long that takes. See
+// the ChargingStation interface's Stop/StopCtx godocs (v2.go) for the
+// hazards this join introduces.
 func (cs *chargingStation) Stop() {
-	// Close stopC BEFORE client.Stop() - see the sibling 1.6 chargePoint.Stop()
-	// comment (charge_point.go) for the full rationale: client.Stop() blocks
-	// until the dispatcher pump drains, and every producer that can wedge
-	// that pump (onRequestTimeout, the forwarding closures, error()) is now
-	// preemptible against stopC - closing it afterward (today's order) makes
-	// that preemption dead code. See spec §Sequencing.
-	if cs.stopOnce != nil {
-		stopC := cs.loadStopC()
-		cs.stopOnce.Do(func() {
-			if stopC != nil {
-				close(stopC)
-			}
-		})
+	_ = cs.StopCtx(context.Background())
+}
+
+// StopCtx is the context-bounded variant of Stop. See the ChargingStation
+// interface godoc (v2.go) for the full consumer-facing contract.
+func (cs *chargingStation) StopCtx(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	// Close stopC BEFORE client.Stop() (via closeStopC) - see the sibling
+	// 1.6 chargePoint.StopCtx comment (charge_point.go) for the full
+	// rationale: client.Stop() blocks until the dispatcher pump drains, and
+	// every producer that can wedge that pump (onRequestTimeout, the
+	// forwarding closures, error()) is preemptible against stopC. Closing it
+	// AFTER client.Stop() would make that preemption dead code. See spec
+	// §Sequencing.
+	//
+	// closeStopC is stopOnce/nil-guarded: Stop() before Start() (stopOnce is
+	// nil - nothing to close) and a repeated Stop()/StopCtx() (stopOnce
+	// already fired) must not panic.
+	cs.closeStopC()
 	cs.client.Stop()
+
+	// The join (spec §2): wait for the in-flight handler generation to fully
+	// exit, bounded by ctx. This is the ONLY part of Stop/StopCtx that can
+	// legitimately run long - client.Stop() above is already fast regardless
+	// of the handler's state (every producer it drains through is
+	// preemptible against the now-closed stopC); the join instead waits on
+	// USER code (an in-flight SendRequestAsync callback, or an inbound
+	// request handler on the readPump) that may run arbitrarily long. On
+	// ctx expiry this returns ctx.Err() without waiting further - stopC is
+	// already closed regardless, so a RETRY StopCtx (even with a fresh
+	// context) is the supported way to reach a clean stop afterwards: the
+	// handler will have exited (or will shortly) and the retry's join
+	// succeeds immediately.
+	//
+	// cs.errC is deliberately NEVER closed here, or anywhere (spec §1, user
+	// decision - supersedes an earlier "close after a successful join" plan
+	// that turned out to be unsafe even with the join in place: error()
+	// guards on errC == nil, not closedness, so a LATER generation's
+	// error() would send on a closed channel and panic on an internally-
+	// spawned goroutine the consumer cannot recover; and a RETRY StopCtx
+	// joins a handlerDone that is already closed (closed stays closed), so
+	// it would double-close errC too). See the Errors() godoc (v2.go) for
+	// the full, permanent contract.
+	return cs.joinHandler(ctx)
 }
 
 func (cs *chargingStation) IsConnected() bool {

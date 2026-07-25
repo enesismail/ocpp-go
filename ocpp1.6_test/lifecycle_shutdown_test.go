@@ -9,7 +9,10 @@ package ocpp16_test
 // NewChargePoint, and error()) must become preemptible against stopC, and
 // Stop() must be reordered to close stopC before client.Stop(). It does NOT
 // test PR-L1 (StopCtx, the generation handshake/join, errC close-after-join,
-// the L3 residual guard) - that surface does not exist yet.
+// the L3 residual guard) - those live in
+// lifecycle_join_test.go. NOTE: PR-L1 has since landed, so the teardown
+// assertions here are stated in terms of its contract (StopCtx + the join)
+// via *StopCtxWhilePinned - see that helper for why.
 //
 // RED-first discipline: every test below either hangs or panics against
 // today's code. Since Stop() hangs forever / panics in the RED state, every
@@ -22,6 +25,7 @@ package ocpp16_test
 // waitOrFail.
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
@@ -66,6 +70,68 @@ func l2BoundedStop(t *testing.T, s stopper) {
 		}
 	case <-time.After(l2Bound):
 		t.Fatal("Stop() did not return within the bounded deadline (deadlock)")
+	}
+}
+
+// l2BoundedStopCtxWhilePinned tears a facade down while its asyncCallbackHandler
+// is deliberately pinned inside a blocking user callback, and asserts the
+// PR-L1 contract for that situation.
+//
+// Why not l2BoundedStop (plain Stop) any more: PR-L1's Stop() JOINS the handler
+// (spec §2), so with a callback pinned it blocks until that callback returns -
+// by design, and documented on the interface. The nine tests in this file were
+// written pre-join and asserted the opposite (Stop returns while pinned), so
+// they must be restated in terms of the new contract rather than have the pin
+// released early.
+//
+// Why NOT release the pin shortly before/after Stop (the obvious alternative):
+// it destroys exactly the regression these tests exist to catch. With the pump
+// wedged in a producer send and stopC NOT yet closed (the Stop-ordering
+// regression PR-L2 fixed), an unpinned handler's select has exactly ONE ready
+// case - the buffered message - so it deterministically drains, the parked
+// sender completes, the pump finishes and Stop() goes green. That masks the
+// ordering regression ~100% of the time, at any -count.
+//
+// What this asserts instead: StopCtx must RETURN (bounded) with
+// context.DeadlineExceeded. Green state: stopC closes, client.Stop() completes
+// fast because every producer is preemptible, then the join hits the inner
+// deadline -> DeadlineExceeded. Regressed state: a non-preemptible producer
+// wedges the pump, client.Stop() (which is NOT ctx-bounded) hangs, StopCtx
+// never reaches the join, and the OUTER watchdog fires - so the wedge is still
+// detected, deterministically.
+func l2BoundedStopCtxWhilePinned(t *testing.T, s interface {
+	StopCtx(context.Context) error
+}) {
+	t.Helper()
+	// Inner deadline bounds only the join. Keep it >= ~300ms: it also has to
+	// cover client.Stop() on loaded CI. A slow client.Stop() only delays the
+	// result, it cannot flip it - joinHandler returns ctx.Err() immediately on
+	// an already-expired context.
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+
+	type res struct {
+		err error
+		r   interface{}
+	}
+	done := make(chan res, 1)
+	go func() {
+		var out res
+		defer func() { out.r = recover(); done <- out }()
+		out.err = s.StopCtx(ctx)
+	}()
+
+	// Outer watchdog: in the regressed state StopCtx never returns at all, so
+	// asserting on its error alone would wedge the suite.
+	select {
+	case got := <-done:
+		if got.r != nil {
+			t.Fatalf("StopCtx() panicked: %v", got.r)
+		}
+		require.ErrorIs(t, got.err, context.DeadlineExceeded,
+			"with a callback pinned, StopCtx must return DeadlineExceeded from the bounded join - a different (or nil) error means the join did not happen")
+	case <-time.After(l2Bound):
+		t.Fatal("StopCtx() did not return within the bounded deadline - the dispatcher pump is wedged (a producer send is not preemptible against stopC)")
 	}
 }
 
@@ -216,14 +282,18 @@ func (suite *OcppV16TestSuite) TestL2ShutdownCancelHookDeadlock() {
 	startStandaloneChargePoint(suite, writeC)
 
 	gateC := make(chan struct{})
+	var gateOnce sync.Once
+	closeGate := func() { gateOnce.Do(func() { close(gateC) }) }
 	// Release the blocked callback on the way out, whatever happens above,
 	// so a pinned asyncCallbackHandler goroutine cannot wedge the rest of the
 	// suite even if this test fails.
-	defer close(gateC)
+	defer closeGate()
 
 	l2PinHandlerWithTwoOutstanding(suite, writeC, "l2t1", gateC)
 
-	l2BoundedStop(t, suite.chargePoint)
+	// Handler stays pinned: see l2BoundedStopCtxWhilePinned for why releasing it early would mask the
+	// very regression this test exists to catch.
+	l2BoundedStopCtxWhilePinned(t, suite.chargePoint)
 }
 
 // ============================================================================
@@ -279,7 +349,9 @@ func (suite *OcppV16TestSuite) TestL2ShutdownCancelHookDeadlockTimeoutArm() {
 	startStandaloneChargePoint(suite, writeC)
 
 	gateC := make(chan struct{})
-	defer close(gateC)
+	var gateOnce sync.Once
+	closeGate := func() { gateOnce.Do(func() { close(gateC) }) }
+	defer closeGate()
 
 	l2PinHandlerWithTwoOutstanding(suite, writeC, "l2t1b", gateC)
 
@@ -291,7 +363,9 @@ func (suite *OcppV16TestSuite) TestL2ShutdownCancelHookDeadlockTimeoutArm() {
 	// Stop()-manufactured one.
 	l2WaitForGoroutineCountAtLeast(t, "(*chargePoint).onRequestTimeout(", 1)
 
-	l2BoundedStop(t, suite.chargePoint)
+	// Handler stays pinned: see l2BoundedStopCtxWhilePinned for why releasing it early would mask the
+	// very regression this test exists to catch.
+	l2BoundedStopCtxWhilePinned(t, suite.chargePoint)
 }
 
 // ============================================================================
@@ -454,7 +528,9 @@ func (suite *OcppV16TestSuite) TestL2ShutdownReadPumpForwardingLeak() {
 	startStandaloneChargePoint(suite, writeC)
 
 	gateC := make(chan struct{})
-	defer close(gateC)
+	var gateOnce sync.Once
+	closeGate := func() { gateOnce.Do(func() { close(gateC) }) }
+	defer closeGate()
 
 	// --- R0: pin the sole drainer forever (in today's code - no preemption exists). ---
 	pinnedC := make(chan struct{})
@@ -526,11 +602,9 @@ func (suite *OcppV16TestSuite) TestL2ShutdownReadPumpForwardingLeak() {
 		t.Fatalf("positive control failed: goroutine stack filter %q matched nothing (got %d) - the filter is stale", "NewChargePoint.func", got)
 	}
 
-	// Both readPump-analog goroutines are now paused, before either has
-	// touched cp.incoming. Stop the charge point first (it does not depend
-	// on the readPump or the handler at all, so it must return promptly
-	// regardless of what happens to R1/R2 below).
-	l2BoundedStop(t, suite.chargePoint)
+	// Handler stays pinned: see l2BoundedStopCtxWhilePinned for why releasing it early would mask the
+	// very regression this test exists to catch.
+	l2BoundedStopCtxWhilePinned(t, suite.chargePoint)
 
 	// Release both paused forwards together: they race cp.incoming (cap 1,
 	// currently empty - asyncCallbackHandler has been permanently pinned in
@@ -589,7 +663,9 @@ func (suite *OcppV16TestSuite) TestL2ShutdownErrorForwardingLeak() {
 	startStandaloneChargePoint(suite, writeC)
 
 	gateC := make(chan struct{})
-	defer close(gateC)
+	var gateOnce sync.Once
+	closeGate := func() { gateOnce.Do(func() { close(gateC) }) }
+	defer closeGate()
 
 	// R0 pins the sole drainer, so cp.incoming is never read again.
 	pinnedC := make(chan struct{})
@@ -635,7 +711,9 @@ func (suite *OcppV16TestSuite) TestL2ShutdownErrorForwardingLeak() {
 	// the leak assertion below passing vacuously.
 	l2WaitForGoroutineCountAtLeast(t, "NewChargePoint.func", baseline+1)
 
-	l2BoundedStop(t, suite.chargePoint)
+	// Handler stays pinned: see l2BoundedStopCtxWhilePinned for why releasing it early would mask the
+	// very regression this test exists to catch.
+	l2BoundedStopCtxWhilePinned(t, suite.chargePoint)
 	l2WaitForGoroutineCountAtMost(t, "NewChargePoint.func", baseline)
 	select {
 	case <-blockedC:
@@ -661,7 +739,9 @@ func (suite *OcppV16TestSuite) TestL2ShutdownRequestForwardingLeak() {
 	startStandaloneChargePoint(suite, writeC)
 
 	gateC := make(chan struct{})
-	defer close(gateC)
+	var gateOnce sync.Once
+	closeGate := func() { gateOnce.Do(func() { close(gateC) }) }
+	defer closeGate()
 
 	pinnedC := make(chan struct{})
 	err := suite.chargePoint.SendRequestAsync(core.NewHeartbeatRequest(), func(confirmation ocpp.Response, err error) {
@@ -692,7 +772,9 @@ func (suite *OcppV16TestSuite) TestL2ShutdownRequestForwardingLeak() {
 	// load-bearing); doubles as the stale-stack-filter positive control.
 	l2WaitForGoroutineCountAtLeast(t, "NewChargePoint.func", baseline+1)
 
-	l2BoundedStop(t, suite.chargePoint)
+	// Handler stays pinned: see l2BoundedStopCtxWhilePinned for why releasing it early would mask the
+	// very regression this test exists to catch.
+	l2BoundedStopCtxWhilePinned(t, suite.chargePoint)
 	l2WaitForGoroutineCountAtMost(t, "NewChargePoint.func", baseline)
 	select {
 	case <-blockedC:

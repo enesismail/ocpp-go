@@ -169,8 +169,15 @@ type ChargePoint interface {
 	// context for cancellation. A nil ctx is treated as context.Background().
 	SendRequestAsyncCtx(ctx context.Context, request ocpp.Request, callback func(confirmation ocpp.Response, protoError error)) error
 	// Connects to the central system and starts the charge point routine.
-	// The function doesn't block and returns right away, after having attempted to open a connection to the central system.
-	// If the connection couldn't be opened, an error is returned.
+	// The function returns after having attempted to open a connection to the
+	// central system; if the connection couldn't be opened, an error is returned.
+	//
+	// It does not block waiting for network activity - with ONE exception: if
+	// the charge point was already started, Start first retires the previous
+	// generation, which JOINS its async callback handler (see Stop/StopCtx).
+	// A restart therefore blocks until any in-flight user callback returns.
+	// Stop the charge point with StopCtx first if you need that bounded, and
+	// never restart from inside a callback (it self-joins and deadlocks).
 	//
 	// Optional client options must be set before calling this function. Refer to NewClient.
 	//
@@ -184,16 +191,53 @@ type ChargePoint interface {
 	// when Stop begins may be dropped rather than delivered, so its callback or
 	// handler never fires. This is deliberate: producers are preemptible on
 	// shutdown so Stop cannot be wedged by an undrained facade channel.
+	//
+	// Stop joins the current generation's async handler goroutine before
+	// returning - it blocks until any in-flight user callback (a
+	// SendRequestAsync callback, or an inbound request handler) has returned,
+	// however long that takes; the join is bounded by context.Background(),
+	// i.e. not bounded at all. Use StopCtx to bound that wait.
+	//
+	// Calling Stop or StopCtx from WITHIN a callback self-joins and
+	// deadlocks: the callback cannot return until the join completes, and
+	// the join cannot complete until the callback returns. Never call
+	// Stop/StopCtx synchronously from a callback or an inbound request
+	// handler; dispatch it to a goroutine instead.
 	Stop()
+	// StopCtx is the context-bounded variant of Stop: it performs the exact
+	// same shutdown and join as Stop, bounded by ctx. Stop() is equivalent to
+	// StopCtx(context.Background()). A nil ctx is treated as
+	// context.Background().
+	//
+	// If ctx expires before the join completes, StopCtx returns ctx.Err();
+	// the connection is still torn down either way (stopC is closed and the
+	// underlying client is stopped unconditionally, before the bounded
+	// wait) - only the join itself is cut short, so the async handler
+	// goroutine from before the call may still be finishing up when StopCtx
+	// returns. A retry StopCtx (even with a fresh context) is the supported
+	// way to reach a fully clean stop afterwards: stopC is already closed,
+	// so the in-flight handler will eventually exit and the retry's join
+	// succeeds. The same self-join deadlock warned about on Stop applies
+	// here too.
+	StopCtx(ctx context.Context) error
 	// Returns true if the charge point is currently connected to the central system, false otherwise.
 	// While automatically reconnecting to the central system, the method returns false.
 	IsConnected() bool
-	// Errors returns a channel for error messages. If it doesn't exist it is created.
-	// PR-L2 interim: unlike before, the channel is NOT closed when the charge
-	// point stops (a future change reinstates closure as a post-join "fully
-	// stopped" signal - see tasks/facade-lifecycle-hardening.md PR-L1 item 4).
-	// Until then, do not rely on channel closure to detect a stopped charge
-	// point.
+	// Errors returns a channel for error messages. If it doesn't exist it is
+	// created.
+	//
+	// The channel is NEVER closed by the charge point, at any point in its
+	// lifecycle - not by Stop(), StopCtx(), or a Start/Stop restart. It is
+	// process-lifetime, not per-generation: it is created once, lazily, on
+	// the first Errors() call, and the SAME channel is reused across every
+	// subsequent Stop/Start cycle - so an error buffered but not yet read
+	// can survive a Stop/Start restart and be delivered to a later
+	// generation's caller. The consumer is responsible for draining it: an
+	// error reported while nobody is reading may be silently dropped rather
+	// than delivered, if it races a shutdown (error() is itself preemptible
+	// against a Stop/StopCtx in progress - see the error() implementation).
+	// Do not rely on channel closure to detect a stopped charge point; use
+	// StopCtx's return value, or IsConnected, instead.
 	Errors() <-chan error
 }
 
@@ -234,10 +278,23 @@ func NewChargePoint(id string, endpoint *ocppj.Client, client ws.Client) ChargeP
 	}
 	endpoint.SetDialect(ocpp.V16)
 
+	// handlerDone MUST start PRE-CLOSED, not nil: Stop()/StopCtx() before the
+	// first Start() (and after a failed Start()) join on it via
+	// `select { case <-handlerDone: case <-ctx.Done(): }`. With
+	// context.Background() that is a select on two nil channels if
+	// handlerDone were left at its zero value - which blocks forever, the
+	// exact hang the generation handshake exists to prevent. Starting it
+	// pre-closed makes that join return immediately (nil) until Start
+	// spawns a real handler and replaces it with a fresh, open channel. See
+	// tasks/facade-lifecycle-hardening.md §2.
+	preClosedHandlerDone := make(chan struct{})
+	close(preClosedHandlerDone)
+
 	cp := chargePoint{
-		client:    endpoint,
-		incoming:  make(chan incomingMessage, 1),
-		callbacks: callbackqueue.New(),
+		client:      endpoint,
+		incoming:    make(chan incomingMessage, 1),
+		callbacks:   callbackqueue.New(),
+		handlerDone: preClosedHandlerDone,
 	}
 
 	// Callback invoked by dispatcher, whenever a queued request is canceled, due to timeout.
@@ -250,9 +307,11 @@ func NewChargePoint(id string, endpoint *ocppj.Client, client ws.Client) ChargeP
 	// already gone past Stop()) leaks that goroutine forever - a permanent
 	// leak, independent of whether Stop() itself returns. Each is therefore
 	// preemptible against stopC, read fresh via the accessor on every call
-	// (unlike asyncCallbackHandler's one-time capture: these must observe
-	// whichever generation is current at delivery time). See spec §L2's
-	// "wider hazard" / fable MAJOR-2.
+	// (unlike asyncCallbackHandler, which since PR-L1 receives stopC as a
+	// parameter and is pinned to ONE generation for its whole lifetime -
+	// these closures instead must observe whichever generation is current at
+	// delivery time, since they run once per inbound message, not once per
+	// generation). See spec §L2's "wider hazard" / fable MAJOR-2.
 	cp.client.SetResponseHandler(func(confirmation ocpp.Response, requestId string) {
 		if testhooks.ChargePointResponse != nil {
 			testhooks.ChargePointResponse(confirmation, requestId)
