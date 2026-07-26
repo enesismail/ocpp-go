@@ -55,16 +55,15 @@ const e1cClearCallbacksBound = 2 * time.Second
 // survives because the stopC arm just returns without draining. With the
 // mirror, close(stopC) causes the handler's stopC arm to call
 // cs.clearCallbacks() (the Dequeue-drain loop, mirroring 1.6's
-// charge_point.go:441), which drains the callback → Dequeue returns false.
+// charge_point.go:640), which drains the callback → Dequeue returns false.
 func TestE1cClearCallbacksOnStop(t *testing.T) {
 	cs := &chargingStation{
-		callbacks:       callbackqueue.New(),
-		responseHandler: make(chan responseEnvelope, 1),
-		errorHandler:    make(chan error, 1),
-		stopOnce:        &sync.Once{},
+		callbacks: callbackqueue.New(),
+		incoming:  make(chan incomingMessage, 1),
+		stopOnce:  &sync.Once{},
 		// client is intentionally nil — the handler's stopC arm does not
 		// dereference it, and no rail event will arrive to trigger the
-		// responseHandler/errorHandler branches.
+		// incomingResponse/incomingError/incomingRequest arms.
 	}
 	stopC := make(chan struct{}, 1)
 	cs.storeStopC(stopC)

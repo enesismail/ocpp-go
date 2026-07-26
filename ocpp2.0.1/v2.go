@@ -200,10 +200,33 @@ type ChargingStation interface {
 	// In case of network issues (i.e. the remote host couldn't be reached), the function also returns an error.
 	//
 	// The request is synchronous blocking.
+	//
+	// MUST NOT be called synchronously from inside an inbound request handler
+	// (a SetXHandler callback serving a CSMS-initiated CALL): the response can
+	// only be delivered by the goroutine that is currently running that
+	// handler, so the send blocks until Stop/StopCtx closes stopC, at which
+	// point it returns a "charging station stopped while awaiting response to
+	// <feature> request" error.
+	// Dispatch it to a goroutine, or use SendRequestAsync. The same applies to
+	// a SendRequestAsync callback, for the same reason. This is inherent to
+	// serving inbound messages on one ordered goroutine (the same constraint
+	// holds on the 1.6 facade) - not a limitation of the send itself.
+	//
+	// This anti-pattern degraded more gently before inbound requests were
+	// moved onto the shared handler goroutine: the dispatcher's request
+	// timeout (30s by default) was still deliverable, so the send returned a
+	// "Request timed out" GenericError and the station carried on. It now
+	// blocks instead, because the only goroutine that could deliver that
+	// timeout error is the one parked in the handler.
 	SendRequest(request ocpp.Request) (ocpp.Response, error)
 	// SendRequestCtx sends a synchronous request carrying a per-request context
 	// for cancellation and deadline propagation. A nil ctx is treated as
 	// context.Background(). The ctx-first parameter order follows Go convention.
+	//
+	// Carries the same "never call synchronously from inside an inbound request
+	// handler or a callback" constraint as SendRequest - except that here ctx
+	// expiry also releases the wait, so a bounded ctx degrades the deadlock to
+	// a timeout rather than a hang until Stop.
 	SendRequestCtx(ctx context.Context, request ocpp.Request) (ocpp.Response, error)
 	// Sends an asynchronous request to the CSMS.
 	// The CSMS will respond with a confirmation message, or with an error if the request was invalid or could not be processed.
@@ -352,39 +375,49 @@ func NewChargingStation(id string, endpoint *ocppj.Client, client ws.Client) Cha
 	close(preClosedHandlerDone)
 
 	cs := chargingStation{
-		client:          endpoint,
-		responseHandler: make(chan responseEnvelope, 1),
-		errorHandler:    make(chan error, 1),
-		callbacks:       callbackqueue.New(),
-		handlerDone:     preClosedHandlerDone,
+		client:      endpoint,
+		incoming:    make(chan incomingMessage, 1),
+		callbacks:   callbackqueue.New(),
+		handlerDone: preClosedHandlerDone,
 	}
 
 	// Callback invoked by dispatcher, whenever a queued request is canceled, due to timeout.
 	endpoint.SetOnRequestCanceled(cs.onRequestTimeout)
 
-	// Both closures below run on the ws readPump goroutine (one invocation
-	// per inbound message, not once at spawn). Nothing joins the readPump,
-	// so a blocking send with no reader (e.g. the async handler pinned in a
-	// slow callback, or already gone past Stop()) leaks that goroutine
-	// forever - a permanent leak, independent of whether Stop() itself
-	// returns. Each is therefore preemptible against stopC, read fresh via
-	// the accessor on every call. See spec §L2's "wider hazard" / fable
-	// MAJOR-2. (The request handler below is wired directly to
-	// handleIncomingRequest, unaffected - 2.0.1 has no unified incoming
-	// channel for inbound requests.)
+	// All three closures below run on the ws readPump goroutine (one
+	// invocation per inbound message, not once at spawn) and forward into
+	// cs.incoming (cap 1). Nothing joins the readPump, so a blocking send
+	// with no reader (e.g. the async handler pinned in a slow callback, or
+	// already gone past Stop()) leaks that goroutine forever - a permanent
+	// leak, independent of whether Stop() itself returns. Each is therefore
+	// preemptible against stopC, read fresh via the accessor on every call
+	// (unlike asyncCallbackHandler, which since PR-L1 receives stopC as a
+	// parameter and is pinned to ONE generation for its whole lifetime -
+	// these closures instead must observe whichever generation is current at
+	// delivery time, since they run once per inbound message, not once per
+	// generation). See spec §L2's "wider hazard". The
+	// request closure below moves handleIncomingRequest off ocppj's own
+	// goroutine, which is why asyncCallbackHandler's incomingRequest arm
+	// (charging_station.go) wraps the call in its own
+	// RecoverPanicGoroutine guard - see that arm's comment.
 	cs.client.SetResponseHandler(func(confirmation ocpp.Response, requestId string) {
 		select {
-		case cs.responseHandler <- responseEnvelope{response: confirmation, requestID: requestId}:
+		case cs.incoming <- incomingMessage{kind: incomingResponse, response: confirmation, requestID: requestId}:
 		case <-cs.loadStopC():
 		}
 	})
 	cs.client.SetErrorHandler(func(err *ocpp.Error, details interface{}) {
 		select {
-		case cs.errorHandler <- err:
+		case cs.incoming <- incomingMessage{kind: incomingError, err: err}:
 		case <-cs.loadStopC():
 		}
 	})
-	cs.client.SetRequestHandler(cs.handleIncomingRequest)
+	cs.client.SetRequestHandler(func(request ocpp.Request, requestId string, action string) {
+		select {
+		case cs.incoming <- incomingMessage{kind: incomingRequest, request: request, requestID: requestId, action: action}:
+		case <-cs.loadStopC():
+		}
+	})
 	return &cs
 }
 

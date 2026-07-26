@@ -29,11 +29,28 @@ import (
 	"github.com/enesismail/ocpp-go/ocppj"
 )
 
-// responseEnvelope wraps a response together with its OCPP message ID
-// so the asyncCallbackHandler can dequeue the correct callback.
-type responseEnvelope struct {
+// incomingKind discriminates the three kinds of inbound event that flow
+// through chargingStation.incoming - mirrors ocpp1.6/charge_point.go's
+// incomingKind exactly (S3b, tasks/s3b-2.0.1-ordering-unification.md).
+type incomingKind int
+
+const (
+	incomingResponse incomingKind = iota
+	incomingError
+	incomingRequest
+)
+
+// incomingMessage is the single envelope carried on chargingStation.incoming
+// for all three inbound event kinds - mirrors ocpp1.6/charge_point.go's
+// incomingMessage, except the response field is named "response" (not
+// "confirmation") to match this package's existing naming.
+type incomingMessage struct {
+	kind      incomingKind
 	response  ocpp.Response
+	err       error
+	request   ocpp.Request
 	requestID string
+	action    string
 }
 
 type chargingStation struct {
@@ -54,12 +71,36 @@ type chargingStation struct {
 	diagnosticsHandler   diagnostics.ChargingStationHandler
 	displayHandler       display.ChargingStationHandler
 	dataHandler          data.ChargingStationHandler
-	responseHandler      chan responseEnvelope
-	errorHandler         chan error
-	callbacks            callbackqueue.CallbackQueue
-	stopC                atomic.Value // holds chan struct{}; see loadStopC/storeStopC
-	stopOnce             *sync.Once
-	errC                 chan error // external error channel
+	// incoming carries all inbound events - responses, errors and requests -
+	// on ONE ordered channel drained by the single asyncCallbackHandler, so an
+	// inbound CALL cannot overtake a CALL_RESULT/CALL_ERROR that arrived
+	// earlier on the wire (S3b; mirrors ocpp1.6's cp.incoming).
+	//
+	// Cap 1 deliberately, matching 1.6. Two honest consequences of the merge,
+	// neither a new hazard class:
+	//   - Cross-kind buffering drops from 2 slots to 1. The previous separate
+	//     cap-1 responseHandler/errorHandler could hold a response AND an
+	//     error at once; now a second inbound frame of any kind blocks the ws
+	//     readPump until the drainer frees the slot. Two frames of the SAME
+	//     kind already blocked it before, so this widens an existing stall
+	//     rather than introducing one.
+	//   - Producers contending for that one slot rise from 3 across two
+	//     channels (responseHandler had 1: the response closure; errorHandler
+	//     had 2: the error closure plus onRequestTimeout, which runs on the
+	//     ocppj dispatcher's messagePump) to 4 on one channel - the same three
+	//     readPump forwarding closures, now including requests, plus
+	//     onRequestTimeout. So a slow user request handler occupying the
+	//     drainer can now also delay outbound dispatch via a blocked
+	//     onRequestTimeout, where before it only stalled the readPump.
+	// Every send is preemptible against stopC, so none of this can outlive
+	// Stop/StopCtx. Do NOT raise the capacity: the merged shutdown leak tests'
+	// fill arithmetic depends on cap 1, and a larger buffer weakens leak
+	// detection (cap N needs N+1 deliveries before one blocks).
+	incoming  chan incomingMessage
+	callbacks callbackqueue.CallbackQueue
+	stopC     atomic.Value // holds chan struct{}; see loadStopC/storeStopC
+	stopOnce  *sync.Once
+	errC      chan error // external error channel
 	// mu is the PR-L1 lifecycle mutex. Scope is deliberately narrow: it
 	// guards ONLY errC's lazy creation (Errors()/error()) and handlerDone
 	// bookkeeping (loadHandlerDone/storeHandlerDone) - stopC stays lock-free
@@ -180,11 +221,11 @@ func (cs *chargingStation) Errors() <-chan error {
 func (cs *chargingStation) onRequestTimeout(_ string, _ ocpp.Request, err *ocpp.Error) {
 	// Preemptible: runs on the ocppj dispatcher's messagePump goroutine,
 	// sequentially, for every request canceled at Stop()-time or on timeout.
-	// A blocking send into cs.errorHandler (cap 1) with no reader wedges the
+	// A blocking send into cs.incoming (cap 1) with no reader wedges the
 	// pump, which DefaultClientDispatcher.Stop() (called from client.Stop())
 	// waits on unconditionally - hanging facade Stop() forever. See spec §L2.
 	select {
-	case cs.errorHandler <- err:
+	case cs.incoming <- incomingMessage{kind: incomingError, err: err}:
 	case <-cs.loadStopC():
 	}
 }
@@ -738,12 +779,12 @@ func (cs *chargingStation) SendRequestAsyncCtx(ctx context.Context, request ocpp
 	return err
 }
 
-// asyncCallbackHandler drains cs.responseHandler/cs.errorHandler for exactly
-// one generation, exiting when stopC closes. stopC and handlerDone are
-// received as PARAMETERS - the exact local variables Start/StartWithRetries
-// just created - never re-derived via loadStopC()/loadHandlerDone() inside
-// this function (spec §3's "real parameter-passing"; this facade already did
-// this for stopC pre-PR-L1, handlerDone is the PR-L1 addition). Passing the
+// asyncCallbackHandler drains cs.incoming for exactly one generation,
+// exiting when stopC closes. stopC and handlerDone are received as
+// PARAMETERS - the exact local variables Start/StartWithRetries just
+// created - never re-derived via loadStopC()/loadHandlerDone() inside this
+// function (spec §3's "real parameter-passing"; this facade already did this
+// for stopC pre-PR-L1, handlerDone is the PR-L1 addition). Passing the
 // parameters (rather than reading a shared field/accessor) pins this
 // goroutine to the ONE generation it was spawned for, for its entire
 // lifetime, regardless of scheduling delay - a delayed spawn can never rebind
@@ -759,33 +800,58 @@ func (cs *chargingStation) asyncCallbackHandler(stopC chan struct{}, handlerDone
 	defer close(handlerDone)
 	for {
 		select {
-		case env := <-cs.responseHandler:
-			// Get and invoke callback
-			if callback, ok := cs.callbacks.Dequeue("main", env.requestID); ok {
+		case incoming := <-cs.incoming:
+			switch incoming.kind {
+			case incomingResponse:
+				// Get and invoke callback
+				if callback, ok := cs.callbacks.Dequeue("main", incoming.requestID); ok {
+					func() {
+						defer cs.client.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, incoming.response.GetFeatureName(), "", false)
+						callback(incoming.response, nil)
+					}()
+				} else {
+					cs.error(fmt.Errorf("no callback available for incoming response %v", incoming.response.GetFeatureName()))
+				}
+			case incomingError:
+				// Get and invoke callback by exact request ID
+				requestID := ""
+				if ocppError, ok := incoming.err.(*ocpp.Error); ok {
+					requestID = ocppError.MessageId
+				}
+				if requestID == "" {
+					cs.error(fmt.Errorf("cannot route error with no message id: %v", incoming.err))
+				} else if callback, ok := cs.callbacks.Dequeue("main", requestID); ok {
+					func() {
+						defer cs.client.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, "", requestID, false)
+						callback(nil, incoming.err)
+					}()
+				} else {
+					cs.error(fmt.Errorf("no callback available for incoming error %w", incoming.err))
+				}
+			case incomingRequest:
+				// Moving request handling off ocppj's own goroutine (see the
+				// forwarding closure in v2.go) silently drops ocppj's own
+				// panic-isolation guard around SetRequestHandler
+				// (ocppj/client.go's recoverHandler covers only the trivial
+				// forwarding closure now). RecoverPanicGoroutine here
+				// reinstates the SAME guard - same kind, action, requestID,
+				// onHandlerPanic sink, and sendCallError=true so the peer
+				// still gets a CALLERROR instead of hanging. See spec's
+				// "THE CRITICAL HAZARD" - omitting this reintroduces exactly
+				// the crash class S6 was created to fix.
 				func() {
-					defer cs.client.RecoverPanicGoroutine(ocppj.ResponseHandlerKind, env.response.GetFeatureName(), "", false)
-					callback(env.response, nil)
+					defer cs.client.RecoverPanicGoroutine(ocppj.RequestHandlerKind, incoming.action, incoming.requestID, true)
+					cs.handleIncomingRequest(incoming.request, incoming.requestID, incoming.action)
 				}()
-			} else {
-				cs.error(fmt.Errorf("no callback available for incoming response %v", env.response.GetFeatureName()))
-			}
-		case protoError := <-cs.errorHandler:
-			// Get and invoke callback by exact request ID
-			requestID := ""
-			if ocppError, ok := protoError.(*ocpp.Error); ok {
-				requestID = ocppError.MessageId
-			}
-			if requestID == "" {
-				cs.error(fmt.Errorf("cannot route error with no message id: %v", protoError))
-			} else if callback, ok := cs.callbacks.Dequeue("main", requestID); ok {
-				func() {
-					defer cs.client.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, "", requestID, false)
-					callback(nil, protoError)
-				}()
-			} else {
-				cs.error(fmt.Errorf("no callback available for incoming error %w", protoError))
 			}
 		case <-stopC:
+			// Handler stopped, cleanup callbacks.
+			// No callback invocation, since the user manually stopped the client.
+			// A buffered inbound CALL may be dropped without a CALLERROR: the
+			// peer that sent it simply times out waiting for a response.
+			// Deliberate - see spec §"The change" item 3: draining-and-replying
+			// at stop time would re-introduce a blocking send to a possibly-
+			// unreachable peer inside Stop().
 			cs.clearCallbacks()
 			return
 		}
@@ -1004,8 +1070,10 @@ func (cs *chargingStation) StopCtx(ctx context.Context) error {
 	// legitimately run long - client.Stop() above is already fast regardless
 	// of the handler's state (every producer it drains through is
 	// preemptible against the now-closed stopC); the join instead waits on
-	// USER code (an in-flight SendRequestAsync callback, or an inbound
-	// request handler on the readPump) that may run arbitrarily long. On
+	// USER code (an in-flight SendRequestAsync callback, or - since S3b - an
+	// inbound request handler, which now runs on this same joined handler
+	// goroutine rather than the unjoined readPump) that may run arbitrarily
+	// long. On
 	// ctx expiry this returns ctx.Err() without waiting further - stopC is
 	// already closed regardless, so a RETRY StopCtx (even with a fresh
 	// context) is the supported way to reach a clean stop afterwards: the

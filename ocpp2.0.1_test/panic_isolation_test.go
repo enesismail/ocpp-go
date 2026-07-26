@@ -2,6 +2,7 @@ package ocpp2_test
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -201,8 +202,10 @@ func (suite *OcppV2TestSuite) TestServerResponseCallbackPanicRecoveredFacade() {
 // callback never invoked.
 //
 // Note: per the S6 spec, hp.RequestID is intentionally NOT asserted here -
-// responseHandler is a chan ocpp.Response carrying no request id at that
-// point, exactly mirroring the merged ocpp1.6 charge_point.go behavior.
+// the incomingResponse arm of cs.incoming's switch passes an empty string
+// as RecoverPanicGoroutine's requestID argument, regardless of what
+// incoming.requestID holds, exactly mirroring the merged ocpp1.6
+// charge_point.go behavior.
 func (suite *OcppV2TestSuite) TestClientResponseCallbackPanicRecoveredFacade() {
 	t := suite.T()
 	wsId := "test_id"
@@ -439,12 +442,13 @@ func (suite *OcppV2TestSuite) TestServerCanceledCallbackPanicRecoveredFacade() {
 // TestClientErrorCallbackPanicRecoveredFacade asserts that a panic in the
 // user-provided callback for a charging-station-initiated request that receives
 // a CALL ERROR — invoked inside the long-lived asyncCallbackHandler goroutine's
-// ERROR branch (ocpp2.0.1/charging_station.go, `case protoError := <-cs.errorHandler`)
-// — is recovered. This is the symmetric client-side companion of the server
-// error-callback test: an impl guarding only the confirmation branch would leave
-// this crash vector open. Unlike the confirmation branch, the error branch DOES
-// carry the request id (protoError.(*ocpp.Error).MessageId), so RequestID is
-// asserted. The loop must survive (a second request's callback still fires).
+// ERROR branch (ocpp2.0.1/charging_station.go, `case incomingError:` of the
+// switch on cs.incoming's kind) — is recovered. This is the symmetric client-side
+// companion of the server error-callback test: an impl guarding only the
+// confirmation branch would leave this crash vector open. Unlike the
+// confirmation branch, the error branch DOES carry the request id
+// (protoError.(*ocpp.Error).MessageId), so RequestID is asserted. The loop
+// must survive (a second request's callback still fires).
 func (suite *OcppV2TestSuite) TestClientErrorCallbackPanicRecoveredFacade() {
 	t := suite.T()
 	wsId := "test_id"
@@ -514,4 +518,154 @@ func (suite *OcppV2TestSuite) TestClientErrorCallbackPanicRecoveredFacade() {
 	case <-time.After(panicWaitTimeout):
 		t.Fatal("timed out waiting for the second callback; asyncCallbackHandler loop did not survive the error-branch panic")
 	}
+}
+
+// TestClientRequestHandlerPanicRecoveredFacade guards the CRITICAL HAZARD
+// documented in tasks/s3b-2.0.1-ordering-unification.md ("THE CRITICAL
+// HAZARD - do not miss this"): moving handleIncomingRequest off the ws read
+// goroutine (which S3b's channel-unification change does) silently removes
+// its panic isolation unless the new request arm in asyncCallbackHandler
+// adds its own guard - specifically
+// `defer cs.client.RecoverPanicGoroutine(ocppj.RequestHandlerKind, msg.action, msg.requestID, true)`.
+//
+// IMPORTANT: this test is expected to be GREEN TODAY, and that is correct,
+// not a mistake. Today ocpp2.0.1/v2.go:387 wires
+// SetRequestHandler(cs.handleIncomingRequest) DIRECTLY, so the request is
+// still invoked from inside ocppj's own read-loop guard
+// (ocppj/client.go:336-342's recoverHandler, wrapping the CALL branch of
+// ocppMessageHandler) - a panic there is already recovered, reported, and
+// answered with a CALL ERROR by ocppj itself, with no facade involvement at
+// all. This test is therefore a REGRESSION GUARD, not a red-first test: its
+// job is to fail LATER, the moment S3b moves handleIncomingRequest onto the
+// facade's own goroutine (via the unified cs.incoming channel) without also
+// adding the RecoverPanicGoroutine guard the spec mandates. That omission
+// is called out in the spec as "the spec's single biggest hazard" and would
+// silently reintroduce exactly the crash class S6 was created to fix - a
+// charging station whose request handler panics taking down the process.
+//
+// All FOUR assertions below matter and must stay together: (a) the process
+// must not crash, (b) SetOnHandlerPanic must report Kind=RequestHandlerKind
+// with the correct Action/RequestID, (c) the peer must still receive a
+// CALL ERROR(InternalError) on the wire, and (d) the drain loop must survive
+// so later messages are still handled. A version that only checked (a)/(b)
+// would go green post-change even with sendCallError wired to false, silently
+// leaving the CSMS to time out on every panicking request - (c) is what
+// exercises that argument. A version that checked (a)/(b)/(c) but not (d)
+// would go green on a guard that recovers correctly yet kills the drain loop
+// - see (d)'s comment for that exact botch.
+func (suite *OcppV2TestSuite) TestClientRequestHandlerPanicRecoveredFacade() {
+	t := suite.T()
+	writtenC := make(chan []byte, 8)
+	// No deterministic message-ID generator here: this test sends no outbound
+	// request, so nothing ever calls the generator. Both inbound CALLs carry
+	// explicit ids ("reqpanic-call-1"/"-2") and the CALL ERROR and CALL RESULT
+	// echo those back, so the assertions below do not depend on generated ids.
+	l2StartStandaloneChargingStation(suite, writtenC)
+
+	panicValue := "boom: OnChangeAvailability panic"
+	messageId := "reqpanic-call-1"
+	operationalStatus := availability.OperationalStatusOperative
+
+	// Deliberately NOT a testify mock - see lightweightAvailabilityListener's
+	// doc comment (inbound_ordering_test.go) for why.
+	//
+	// Only the FIRST inbound request panics; the second is served normally,
+	// so step (d) below can prove the request-handling path survived. The
+	// counter is atomic because the two invocations are not guaranteed to
+	// share a goroutine across the change: today both run inline on the
+	// delivering goroutine, but post-S3b both run on asyncCallbackHandler's.
+	var callCount atomic.Int32
+	changeAvailabilityResponse := availability.NewChangeAvailabilityResponse(availability.ChangeAvailabilityStatusAccepted)
+	listener := &lightweightAvailabilityListener{
+		onChangeAvailability: func(request *availability.ChangeAvailabilityRequest) (*availability.ChangeAvailabilityResponse, error) {
+			if callCount.Add(1) == 1 {
+				panic(panicValue)
+			}
+			return changeAvailabilityResponse, nil
+		},
+	}
+	suite.chargingStation.SetAvailabilityHandler(listener)
+
+	panicC := make(chan ocppj.HandlerPanic, 1)
+	suite.chargingStation.SetOnHandlerPanic(func(hp ocppj.HandlerPanic) {
+		panicC <- hp
+	})
+
+	callJson := fmt.Sprintf(`[2,"%v","%v",{"operationalStatus":"%v"}]`, messageId, availability.ChangeAvailabilityFeatureName, operationalStatus)
+	err := suite.mockWsClient.MessageHandler([]byte(callJson))
+	require.NoError(t, err)
+
+	// (a) + (b): the panic must be recovered (no crash) and reported.
+	var hp ocppj.HandlerPanic
+	select {
+	case hp = <-panicC:
+	case <-time.After(panicWaitTimeout):
+		t.Fatal("timed out waiting for panic callback")
+	}
+	assert.Equal(t, ocppj.RequestHandlerKind, hp.Kind)
+	assert.Equal(t, "", hp.ClientID)
+	assert.Equal(t, availability.ChangeAvailabilityFeatureName, hp.Action)
+	assert.Equal(t, messageId, hp.RequestID)
+	assert.Equal(t, panicValue, hp.Value)
+	assert.NotEmpty(t, hp.Stack)
+
+	// The callback must fire exactly once for this single panic.
+	select {
+	case extra := <-panicC:
+		t.Fatalf("callback fired more than once: %+v", extra)
+	default:
+	}
+
+	// (c): the charging station must still reply with the auto CALL
+	// ERROR(InternalError) in place of the crashed response, so the peer is
+	// not left awaiting one.
+	errorDescription := "internal error while handling request"
+	expectedErrorJson := []byte(fmt.Sprintf(`[4,"%v","%v","%v",{}]`, messageId, ocppj.InternalError, errorDescription))
+	select {
+	case written := <-writtenC:
+		assert.Equal(t, expectedErrorJson, written)
+	case <-time.After(panicWaitTimeout):
+		t.Fatal("timed out waiting for the auto CALL ERROR")
+	}
+
+	// (d) CRUCIAL: prove the request-handling path SURVIVED the panic. A
+	// second, non-panicking inbound CALL must still be handled and answered.
+	// Mirrors the step the 1.6 original labels "Crucial"
+	// (ocpp1.6_test/inbound_ordering_test.go:504-523) and the same probe in
+	// this file's response/error siblings (:263-275, :504-516).
+	//
+	// Without this, a guard that recovers correctly but KILLS THE DRAIN LOOP
+	// passes (a)+(b)+(c) and ships a silently-dead facade. The concrete
+	// botch is writing the spec's mandated guard without its
+	// immediately-invoked wrapper:
+	//
+	//	case incomingRequest:
+	//	    defer cs.client.RecoverPanicGoroutine(...)   // WRONG: function-scoped
+	//	    cs.handleIncomingRequest(...)
+	//
+	// A defer in a case arm belongs to asyncCallbackHandler, not the arm, so
+	// the panic unwinds the WHOLE handler: recover() stops it (with correct
+	// action/requestID, since defer args evaluate at registration - so (b)
+	// still passes) and emits the CALLERROR (c still passes), then the
+	// function RETURNS and `defer close(handlerDone)` fires. Every later
+	// response, error and inbound CALL for this station is then dropped
+	// silently. It is deterministic, so -count=N cannot catch it, and each
+	// suite test gets a fresh station so nothing downstream notices either.
+	//
+	// Post-change a dead loop leaves this CALL sitting in cs.incoming with
+	// nothing to drain it, so the wait below times out at panicWaitTimeout -
+	// a bounded red, not a hang.
+	secondMessageId := "reqpanic-call-2"
+	secondCallJson := fmt.Sprintf(`[2,"%v","%v",{"operationalStatus":"%v"}]`, secondMessageId, availability.ChangeAvailabilityFeatureName, operationalStatus)
+	err = suite.mockWsClient.MessageHandler([]byte(secondCallJson))
+	require.NoError(t, err)
+
+	expectedResultJson := []byte(fmt.Sprintf(`[3,"%v",{"status":"%v"}]`, secondMessageId, availability.ChangeAvailabilityStatusAccepted))
+	select {
+	case written := <-writtenC:
+		assert.Equal(t, expectedResultJson, written)
+	case <-time.After(panicWaitTimeout):
+		t.Fatal("timed out waiting for the second request's response; the request-handling path did not survive the panic")
+	}
+	assert.Equal(t, int32(2), callCount.Load(), "the availability handler must have been invoked exactly twice")
 }

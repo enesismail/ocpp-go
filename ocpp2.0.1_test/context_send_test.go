@@ -16,9 +16,14 @@ package ocpp2_test
 // ocpp2.0.1/context_awaitresult_test.go (package ocpp2) — the e2e version
 // was a false-pass (canceled after result already arrived).
 //
-// NOTE: the 2.0.1 facade uses separate responseHandler/errorHandler channels,
-// so the ordering between a raced late response and a cancel is nondeterministic
-// on 2.0.1 (exactly-one still holds via CompleteRequest). Tests here do not
+// NOTE: since S3b (tasks/s3b-2.0.1-ordering-unification.md), the 2.0.1
+// facade routes responses, errors, and inbound requests through a single
+// cs.incoming channel drained by asyncCallbackHandler - but a raced late
+// response (forwarded from the ws readPump) and a cancel (forwarded from
+// onRequestTimeout on the ocppj dispatcher's messagePump, a SEPARATE
+// producer goroutine) are still nondeterministically ordered against each
+// other, because the unified channel only orders messages from the SAME
+// producer (exactly-one still holds via CompleteRequest). Tests here do not
 // assume response-before-cancel ordering.
 
 import (
