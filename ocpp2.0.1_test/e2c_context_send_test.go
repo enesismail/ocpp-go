@@ -15,9 +15,11 @@ package ocpp2_test
 // Spec tests implemented (facade minimum per the task brief): C7.1, C7.2 (+
 // C7.15 flush), C7.7.
 //
-// NOTE: the 2.0.1 facade uses separate responseHandler/errorHandler channels
-// (see context_send_test.go's own note), so tests here do not assume any
-// particular internal ordering beyond what each assertion states.
+// NOTE: see context_send_test.go's own note on the client-side facade's
+// cs.incoming unification (S3b) and why a raced response/cancel is still
+// nondeterministically ordered; this server-side (CSMS) facade is unrelated
+// to that change. Tests here do not assume any particular internal ordering
+// beyond what each assertion states.
 
 import (
 	"context"

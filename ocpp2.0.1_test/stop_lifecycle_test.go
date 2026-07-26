@@ -113,7 +113,7 @@ func waitForGoroutineCount(t *testing.T, substr string, want int) {
 // would let CompleteRequest silently no-op (log+return, no pop) if the
 // dispatcher hadn't actually dispatched yet; Stop's drain would then still
 // find the request in the queue, fire a cancel, and unblock SendRequest via
-// the EXISTING drain->errorHandler->callback path regardless of whether the
+// the EXISTING drain->cs.incoming->callback path regardless of whether the
 // stopC arm exists — a false pass that would hide a missing fix. That is
 // why Write is set up here directly instead of via
 // setupDefaultChargingStationHandlers' built-in (unsignalled) Write mock.
@@ -196,26 +196,31 @@ func (suite *OcppV2TestSuite) TestStopUnblocksBlockedSyncSendRequest() {
 // unlike the other tests in this file, which pop/empty the queue first. Do
 // NOT pre-empty the queue here: the outstanding requests are the point.
 //
-// This specifically guards the close(cs.stopC)-AFTER-cs.client.Stop()
-// ordering: the dispatcher's Stop-drain fires a cancel for EVERY outstanding
-// request, and each cancel does a BLOCKING send to the cap-1 cs.errorHandler
-// channel. With two or more outstanding requests, the second (and later)
-// blocking sends can only complete if asyncCallbackHandler is still alive to
-// drain the channel. If a broken implementation closed cs.stopC BEFORE
-// cs.client.Stop() (instead of after), the handler could exit early via its
-// `case <-cs.stopC: return` arm, and the second blocking send would then
-// wedge forever with no reader — hanging Stop() itself, not just the
-// caller's SendRequest. A single outstanding request would NOT catch this
-// (a lone send to an empty cap-1 channel never needs a reader to succeed),
-// which is why this test deliberately queues two.
+// What this guards is the PAIRING of two decisions that are only safe
+// together. The dispatcher's Stop-drain fires a cancel for EVERY outstanding
+// request, and each cancel forwards an incomingError into the cap-1
+// cs.incoming channel via onRequestTimeout. Current behaviour, both parts
+// deliberate:
+//   - StopCtx closes stopC BEFORE cs.client.Stop()
+//     (charging_station.go:1065-1066),
+//     so the preemption below is reachable at all; closing it after would make
+//     that preemption dead code, since client.Stop() blocks on the dispatcher
+//     pump first.
+//   - Every such send is preemptible against stopC
+//     (charging_station.go:227-230), so a cancel whose slot is already taken
+//     escapes instead of blocking.
 //
-// NOTE on expected status: today (pre-PR-E1b), Stop() never touches stopC at
-// all, so this specific ordering bug cannot yet manifest — the existing
-// drain -> errorHandler -> asyncCallbackHandler -> callback chain already
-// works, and both requests unblock normally. This test is therefore a
-// forward-looking regression guard (like TestStopBeforeStartDoesNotPanic /
-// TestDoubleStopDoesNotPanic below): it is expected to PASS today, and it
-// exists to catch a specific wrong-order PR-E1b implementation.
+// With two or more outstanding requests the second cancel finds the single
+// slot occupied, which is exactly the case that needs the escape hatch. On a
+// regressed build that dropped the preemption and kept the stopC-first
+// ordering, the handler exits on its `case <-stopC` arm and that second send
+// wedges forever with no reader — hanging Stop() itself, not just the
+// caller's SendRequest. A single outstanding request would NOT catch it (a
+// lone send into an empty cap-1 channel never needs a reader), which is why
+// this test deliberately queues two.
+//
+// Expected GREEN today and after: this is a regression guard on a shipped
+// invariant, not a red-first test.
 func (suite *OcppV2TestSuite) TestStopWithOutstandingRequestsDoesNotDeadlock() {
 	t := suite.T()
 	wsURL := "someUrl"

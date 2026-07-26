@@ -658,7 +658,8 @@ goroutine was never joined by anything and leaked for the process lifetime.
 
 Every producer send into a facade-owned channel is now preempted by shutdown —
 `select { case ch <- msg: case <-stopC: }` — covering `onRequestTimeout`, all
-five forwarding closures (1.6 response/error/request, 2.0.1 response/error) and
+six forwarding closures (1.6 and 2.0.1 response/error/request; 2.0.1 gained its
+request closure with the inbound ordering unification below) and
 `error()` on both facades. `Stop()` is reordered to close `stopC` *before*
 `client.Stop()`; without that the preemption would be unreachable, since
 `client.Stop()` blocks on the wedged pump first. `stopC` becomes an
@@ -735,3 +736,71 @@ are restated in terms of the new contract — they now assert `StopCtx` returns
 `DeadlineExceeded` while a callback is pinned, rather than releasing the pin,
 which would have masked the very regression they exist to catch. Green under
 `-race -count=3`.
+
+## Inbound message ordering on the 2.0.1 client facade
+
+The 2.0.1 charging-station facade drained two cap-1 channels (`responseHandler`,
+`errorHandler`) with its single `asyncCallbackHandler` goroutine, but wired
+`SetRequestHandler` *directly* to `handleIncomingRequest` — so an inbound CALL
+ran inline on the websocket read goroutine, concurrently with, and in no defined
+order relative to, the response and error callbacks. A CALL that arrived on the
+wire *after* a CALL_RESULT could be handled *before* that result's callback.
+
+All three inbound kinds now flow through one `incoming chan incomingMessage`
+(cap 1) carrying a `kind` discriminator, drained by that same goroutine. This
+brings 2.0.1 to parity with the 1.6 facade, which has had this shape since its
+own ordering fix.
+
+**Guarantee, stated precisely:** inbound CALL / CALL_RESULT / CALL_ERROR are
+handled in **wire order**. This is not a total order over everything the facade
+does — `onRequestTimeout` produces errors on the ocppj dispatcher's message pump,
+an independent producer goroutine, so its errors are not ordered against inbound
+frames. The 1.6 facade has the same shape and the same scope.
+
+Behavior changes, all user-visible:
+
+- Inbound request handlers now run on the facade's single `asyncCallbackHandler`
+  goroutine, serialized with response and error callbacks — no longer concurrent
+  with them, and no longer on the websocket read goroutine. Code relying on a
+  request handler running in parallel with a response callback is affected.
+- `Stop()`/`StopCtx` now genuinely join an in-flight request handler, and calling
+  `Stop`/`StopCtx` from inside one self-deadlocks. The interface godoc already
+  promised both; before this change the handler ran on the unjoined read
+  goroutine, so neither was actually true.
+- A synchronous `SendRequest` from inside an inbound request handler previously
+  returned a `GenericError "Request timed out"` after the dispatcher's request
+  timeout (30s default) and the station recovered. It now blocks until
+  `Stop`/`StopCtx` — or until `ctx` expiry, with `SendRequestCtx` — because the
+  only goroutine that could deliver that timeout error is the one parked in the
+  handler. Documented on `SendRequest`/`SendRequestCtx`; the same was already
+  true of a sync send from inside a `SendRequestAsync` callback.
+- An inbound CALL still buffered in `incoming` when shutdown begins is dropped
+  without a CALLERROR, so the peer times out. Deliberate: draining and replying
+  at stop time would reintroduce a blocking send to a possibly-unreachable peer
+  inside `Stop()`.
+- Request-handler panic recovery moves from `ocppj`'s inline guard to the
+  facade's own `RecoverPanicGoroutine` (same kind, action, requestID, panic sink
+  and CALLERROR) — externally identical, but the facade guard is now what
+  provides it, since `ocppj`'s wraps only the forwarding closure.
+
+The channel stays cap 1, matching 1.6. Two honest consequences: cross-kind
+buffering drops from two slots to one, and four producers now contend for that
+one slot instead of three across two channels — so a slow request handler can
+also delay outbound dispatch via a blocked `onRequestTimeout`, where before it
+only stalled the read goroutine. Neither is a new hazard class (both were already
+reachable via a slow response callback), and every send remains preemptible
+against `stopC`. `responseEnvelope` is retired; `Errors()`/`errC` are untouched.
+
+Guard: `ocpp2.0.1_test/inbound_ordering_test.go` — response-before-CALL and
+error-before-CALL ordering, plus a structural test that handling a CALL *occupies*
+the sole drainer so a later CALL_RESULT cannot be delivered concurrently (that
+one rejects a response-biased two-channel drainer and a goroutine-per-CALL
+request arm, which the ordering assertions alone cannot distinguish), two
+round-trip no-regression tests, and the `StopCtx` unwind of a self-deadlocked
+synchronous send. Plus
+`ocpp2.0.1_test/panic_isolation_test.go::TestClientRequestHandlerPanicRecoveredFacade`
+for the facade panic guard — including a loop-survival probe, without which a
+guard that recovers correctly but kills the drain loop would pass — and
+`ocpp2.0.1_test/lifecycle_shutdown_test.go::TestL2ShutdownRequestForwardingLeak`,
+which is the only test that catches a non-preemptible request forwarding closure
+and therefore a permanent read-goroutine leak. Green under `-race -count=3`.

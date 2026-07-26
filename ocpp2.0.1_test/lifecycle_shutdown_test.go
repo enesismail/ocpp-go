@@ -28,8 +28,9 @@ package ocpp2_test
 // matches the sibling 1.6 file's helpers of the same name.
 //
 // 2.0.1 vs 1.6 asymmetry that shapes this file (spec §Verified current
-// state and §PR-L1 item 4): 2.0.1's Stop() (charging_station.go:718-725)
-// NEVER closes cs.errC — only 1.6 does (unconditionally, today). That means
+// state and §PR-L1 item 4): 2.0.1's Stop() (charging_station.go:1044,
+// delegating to StopCtx at :1050) NEVER closes cs.errC — only 1.6 does
+// (unconditionally, today). That means
 // the "park the handler inside error()" scenario (TestL2ShutdownErrorSendPreemptible
 // below) is safe to run ENABLED here - there is no close(cs.errC) for a
 // parked sender to race, unlike the sibling 1.6 file's t.Skip()-ed version of
@@ -46,6 +47,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/enesismail/ocpp-go/ocpp"
+	"github.com/enesismail/ocpp-go/ocpp2.0.1/authorization"
 	"github.com/enesismail/ocpp-go/ocpp2.0.1/availability"
 	"github.com/enesismail/ocpp-go/ocppj"
 )
@@ -269,23 +271,23 @@ func l2WaitForGoroutineCountAtLeast(t *testing.T, substr string, want int) {
 
 // ============================================================================
 // Test 1 - L2 cancel-hook deadlock (spec §L2, PR-L2 item 2's onRequestTimeout
-// site — 2.0.1 routes it through cs.errorHandler, not cp.incoming).
+// site — since S3b, routes through cs.incoming (kind incomingError), the
+// same shape as 1.6's cp.incoming).
 // ============================================================================
 
-// TestL2ShutdownCancelHookDeadlock mirrors the sibling 1.6 test exactly, but on
-// 2.0.1's structurally different (post-S3-unification-less) plumbing:
-// onRequestTimeout (charging_station.go:87-89) sends DIRECTLY to
-// cs.errorHandler (cap 1), not through a unified incoming channel. R0's
-// callback pins the sole asyncCallbackHandler drainer (charging_station.go:
-// 618-652). R1 (dispatched) and R2 (queued) are left outstanding. Stop()
-// closes the dispatcher's request channel; messagePump's drain-and-cancel
-// loop (ocppj/dispatcher.go:293-321) fires onRequestTimeout for BOTH
-// outstanding requests, sequentially, on the messagePump goroutine. The
-// first send into cs.errorHandler succeeds (buffer empty); the second BLOCKS
-// FOREVER (buffer full, no reader - the drainer is pinned). messagePump
-// never reaches close(d.doneC), so ocppj.Client.Stop()'s unconditional
-// <-done wait never returns, and neither does chargingStation.Stop()
-// (charging_station.go:718).
+// TestL2ShutdownCancelHookDeadlock mirrors the sibling 1.6 test: since S3b
+// unified 2.0.1's plumbing with 1.6's, onRequestTimeout
+// (charging_station.go) sends into cs.incoming (kind incomingError, cap 1),
+// the same shape as 1.6's cp.incoming. R0's callback pins the sole
+// asyncCallbackHandler drainer. R1 (dispatched) and R2 (queued) are left
+// outstanding. Stop() closes the dispatcher's request channel; messagePump's
+// drain-and-cancel loop (ocppj/dispatcher.go:293-321) fires onRequestTimeout
+// for BOTH outstanding requests, sequentially, on the messagePump goroutine.
+// The first send into cs.incoming succeeds (buffer empty); the second
+// BLOCKS FOREVER (buffer full, no reader - the drainer is pinned).
+// messagePump never reaches close(d.doneC), so ocppj.Client.Stop()'s
+// unconditional <-done wait never returns, and neither does
+// chargingStation.Stop().
 //
 // RED (today): Stop() hangs - boundedStop's watchdog fires.
 func (suite *OcppV2TestSuite) TestL2ShutdownCancelHookDeadlock() {
@@ -328,8 +330,8 @@ func (suite *OcppV2TestSuite) TestL2ShutdownCancelHookDeadlock() {
 // recipe - but instead of relying on Stop()'s stop-drain loop to cancel R1
 // and R2, this test lets the dispatcher's OWN short timeout do it: R1
 // (dispatched, unanswered) times out first and its cancel send
-// (onRequestTimeout, charging_station.go:87-89, into cs.errorHandler, cap 1)
-// succeeds immediately (buffer empty - the drainer already dequeued R0's
+// (onRequestTimeout, into cs.incoming, cap 1) succeeds immediately (buffer
+// empty - the drainer already dequeued R0's
 // response before pinning). R2 is then auto-dispatched (ocppj's
 // CompleteRequest signals readyForDispatch, dispatcher.go:484-495) and ALSO
 // times out; ITS cancel send finds the buffer still full (R1's, never
@@ -404,9 +406,9 @@ func (suite *OcppV2TestSuite) TestL2ShutdownCancelHookDeadlockTimeoutArm() {
 // callback available" path (mirrors the old test's phantom-pending-request
 // recipe, done twice). The first (err1) lands in errC's empty cap-1 buffer
 // without blocking (asyncCallbackHandler's own cs.error(err1) call is a
-// non-blocking buffered send). The cap-1 cs.errorHandler channel that
+// non-blocking buffered send). The cap-1 cs.incoming channel that
 // carries both phantom deliveries to the handler naturally sequences the
-// two: the second phantom's send onto cs.errorHandler can only succeed once
+// two: the second phantom's send onto cs.incoming can only succeed once
 // the handler has dequeued the first, and single-goroutine program order
 // guarantees the handler's cs.error(err1) call (its very next statement)
 // completes before the handler loops back to dequeue the second - so by the
@@ -437,7 +439,7 @@ func (suite *OcppV2TestSuite) TestL2ShutdownErrorSendPreemptible() {
 	_ = suite.chargingStation.Errors()
 
 	// First no-callback error: lands in cs.errC's empty cap-1 buffer without
-	// blocking. Safe to deliver synchronously - cs.errorHandler and cs.errC
+	// blocking. Safe to deliver synchronously - cs.incoming and cs.errC
 	// both start empty, so nothing on this path can block yet.
 	phantomID1 := "l2t2-phantom-1"
 	suite.ocppjClient.RequestState.AddPendingRequest(phantomID1, availability.NewHeartbeatRequest())
@@ -447,7 +449,7 @@ func (suite *OcppV2TestSuite) TestL2ShutdownErrorSendPreemptible() {
 	require.NoError(t, err)
 
 	// Second no-callback error: delivered on its own goroutine since its
-	// send onto cs.errorHandler (cap 1) may transiently block until the
+	// send onto cs.incoming (cap 1) may transiently block until the
 	// handler has dequeued the first message - never call this synchronously
 	// and unbounded from the test goroutine. Once delivered, the handler
 	// dequeues it, finds no callback, and calls cs.error(err2) - which
@@ -466,7 +468,7 @@ func (suite *OcppV2TestSuite) TestL2ShutdownErrorSendPreemptible() {
 	select {
 	case <-delivered2C:
 	case <-time.After(l2Bound):
-		t.Fatal("timed out delivering the second no-callback error onto cs.errorHandler")
+		t.Fatal("timed out delivering the second no-callback error onto cs.incoming")
 	}
 
 	// Positive confirmation the handler is parked INSIDE error() - and, by
@@ -483,14 +485,14 @@ func (suite *OcppV2TestSuite) TestL2ShutdownErrorSendPreemptible() {
 }
 
 // ============================================================================
-// Test 3 - readPump-leak regression (spec §L2 "wider hazard" / fable
-// MAJOR-2), targeting cs.responseHandler (v2.go:291-293).
+// Test 3 - readPump-leak regression (spec §L2 "wider hazard"), targeting
+// the response-forwarding closure into cs.incoming (v2.go:403-408).
 // ============================================================================
 
 // TestL2ShutdownReadPumpForwardingLeak pins the spec's "wider hazard" on 2.0.1's
 // response-forwarding closure. Unlike the sibling 1.6 test, this needs no
 // testhooks seam: R1's CALL_RESULT is delivered SYNCHRONOUSLY on the test
-// goroutine (its forward into the empty cap-1 cs.responseHandler buffer
+// goroutine (its forward into the empty cap-1 cs.incoming buffer
 // completes immediately, deterministically, without any reader — a buffered
 // send never needs one), which deterministically leaves that buffer full and
 // unread (asyncCallbackHandler is pinned in R0's callback and can never
@@ -532,7 +534,7 @@ func (suite *OcppV2TestSuite) TestL2ShutdownReadPumpForwardingLeak() {
 	l2WaitOrFail(t, pinnedC, "timed out waiting for the async handler to be pinned on R0's callback")
 
 	// --- R1: dispatched, then its CALL_RESULT delivered synchronously — its
-	// forward fills the empty cs.responseHandler buffer and returns without
+	// forward fills the empty cs.incoming buffer and returns without
 	// ever needing a reader. ---
 	err = suite.chargingStation.SendRequestAsync(availability.NewHeartbeatRequest(), func(response ocpp.Response, err error) {})
 	require.NoError(t, err)
@@ -543,7 +545,7 @@ func (suite *OcppV2TestSuite) TestL2ShutdownReadPumpForwardingLeak() {
 	// --- R2: auto-dispatched now that R1 completed at the dispatcher level
 	// (CompleteRequest runs before the facade's response handler is
 	// invoked). Its CALL_RESULT is delivered on its own goroutine: this
-	// forward finds cs.responseHandler already full (R1's envelope, still
+	// forward finds cs.incoming already full (R1's message, still
 	// unread) and blocks forever. ---
 	err = suite.chargingStation.SendRequestAsync(availability.NewHeartbeatRequest(), func(response ocpp.Response, err error) {})
 	require.NoError(t, err)
@@ -597,12 +599,13 @@ func (suite *OcppV2TestSuite) TestL2ShutdownReadPumpForwardingLeak() {
 }
 
 // TestL2ShutdownErrorForwardingLeak pins the ERROR forwarding closure
-// (v2.go:295) - the sibling of the response closure (:292) covered above.
+// (v2.go:409-414) - the sibling of the response closure (:403-408) covered
+// above; both forward into the same cs.incoming channel since S3b.
 // PR-L2 item 2 mandates preemptibility at BOTH; without this test an
 // implementation converting only the response closure goes green while an
 // inbound CALL_ERROR racing Stop() still leaks the readPump forever.
 //
-// Recipe: pin the sole drainer so cs.errorHandler is never read, let phantom
+// Recipe: pin the sole drainer so cs.incoming is never read, let phantom
 // error #1 fill its cap-1 buffer, then block phantom error #2's closure.
 //
 // RED (today): the blocked closure's goroutine never returns to baseline.
@@ -622,7 +625,7 @@ func (suite *OcppV2TestSuite) TestL2ShutdownErrorForwardingLeak() {
 	closeGate := func() { gateOnce.Do(func() { close(gateC) }) }
 	defer closeGate()
 
-	// R0 pins the sole drainer, so cs.errorHandler is never read again.
+	// R0 pins the sole drainer, so cs.incoming is never read again.
 	pinnedC := make(chan struct{})
 	err := suite.chargingStation.SendRequestAsync(availability.NewHeartbeatRequest(), func(response ocpp.Response, err error) {
 		close(pinnedC)
@@ -634,7 +637,7 @@ func (suite *OcppV2TestSuite) TestL2ShutdownErrorForwardingLeak() {
 	require.NoError(t, err)
 	l2WaitOrFail(t, pinnedC, "timed out waiting for the async handler to be pinned on R0's callback")
 
-	// Phantom CALL_ERROR #1: its ERROR closure fills the empty cs.errorHandler
+	// Phantom CALL_ERROR #1: its ERROR closure fills the empty cs.incoming
 	// and returns.
 	phantomID1 := "l2t3b-phantom-1"
 	suite.ocppjClient.RequestState.AddPendingRequest(phantomID1, availability.NewHeartbeatRequest())
@@ -642,7 +645,7 @@ func (suite *OcppV2TestSuite) TestL2ShutdownErrorForwardingLeak() {
 	err = suite.mockWsClient.MessageHandler([]byte(fmt.Sprintf(`[4,"%v","%v","%v",{}]`, phantomID1, ocppj.GenericError, "leak 1")))
 	require.NoError(t, err)
 
-	// Phantom CALL_ERROR #2: its ERROR closure finds cs.errorHandler full with
+	// Phantom CALL_ERROR #2: its ERROR closure finds cs.incoming full with
 	// no reader ever coming, and blocks forever.
 	phantomID2 := "l2t3b-phantom-2"
 	suite.ocppjClient.RequestState.AddPendingRequest(phantomID2, availability.NewHeartbeatRequest())
@@ -724,10 +727,13 @@ func (suite *OcppV2TestSuite) TestL2ShutdownStopBeforeStartDoesNotPanicParity() 
 // ============================================================================
 
 // TestL2ShutdownRestartStopCRace loops Start -> Stop while a concurrent goroutine
-// keeps sending requests that read cs.stopC (charging_station.go:533,
-// `stopC := cs.stopC` inside SendRequestCtx) - racing Start's reassignment
-// (:699, `cs.stopC = make(chan struct{}, 1)`) and Stop's close (via
-// stopOnce, :721-723). Must be run with `go test -race` to surface the
+// keeps sending requests that read cs.stopC (charging_station.go:675,
+// `stopC := cs.loadStopC()` inside SendRequestCtx) - racing Start's
+// reassignment (:1000, `cs.storeStopC(stopC)`) and Stop's close (via
+// closeStopC/stopOnce, :915). Since PR-L2 stopC is an atomic.Value behind
+// loadStopC/storeStopC, which is what makes this race benign rather than a
+// detector hit; the test still guards that the accessors are actually used.
+// Must be run with `go test -race` to surface the
 // field race; without -race this test is expected to complete without
 // incident (a data race is undefined behavior, not a guaranteed crash).
 //
@@ -788,4 +794,117 @@ func (suite *OcppV2TestSuite) TestL2ShutdownRestartStopCRace() {
 	case <-time.After(e1bBound):
 		t.Fatal("traffic goroutine did not exit within the bounded deadline")
 	}
+}
+
+// ============================================================================
+// Test 6 - S3b (tasks/s3b-2.0.1-ordering-unification.md) request-forwarding
+// preemptibility parity. Ported from the sibling
+// ocpp1.6_test/lifecycle_shutdown_test.go's TestL2ShutdownRequestForwardingLeak
+// (:728), which pins the same "wider hazard" (spec §L2) on
+// 1.6's REQUEST forwarding closure. This is the 2.0.1 request-arm sibling of
+// TestL2ShutdownReadPumpForwardingLeak (response) and
+// TestL2ShutdownErrorForwardingLeak (error) above - S3b's spec explicitly
+// calls for extending this exact leak-test family to the new request
+// forwarding closure it adds (spec "Tests to add" item 3).
+// ============================================================================
+
+// TestL2ShutdownRequestForwardingLeak targets the REQUEST forwarding closure
+// S3b's channel-unification change adds to NewChargingStation (v2.go) - the
+// request-arm sibling of the response/error closures
+// TestL2ShutdownReadPumpForwardingLeak/TestL2ShutdownErrorForwardingLeak
+// pin above. It delivers two inbound CALLs while the sole
+// asyncCallbackHandler drainer is pinned.
+//
+// EXPECTED RED TODAY, for a DIFFERENT reason than the two sibling tests
+// above (which are already green - their forwarding closures already
+// exist). Today there is NO request-forwarding closure at all:
+// SetRequestHandler(cs.handleIncomingRequest) (v2.go:387) is wired DIRECTLY,
+// so an inbound CALL runs handleIncomingRequest INLINE on whichever
+// goroutine delivers it, entirely independent of whether
+// asyncCallbackHandler is pinned. Neither inbound CALL below ever blocks,
+// and neither ever shows up as a "NewChargingStation.func" stack frame (no
+// such closure exists for requests yet) - so l2WaitForGoroutineCountAtLeast's
+// positive-control wait times out and fails via t.Fatal. That is a real,
+// bounded assertion failure (not a nil deref or a compile error), and it is
+// unambiguously distinguishable from the post-S3b green, where the second
+// CALL's forward genuinely blocks on the now-full cs.incoming and the count
+// genuinely reaches baseline+1.
+func (suite *OcppV2TestSuite) TestL2ShutdownRequestForwardingLeak() {
+	t := suite.T()
+
+	baseline := countGoroutinesByStack("NewChargingStation.func")
+
+	writtenC := make(chan []byte, 8)
+	ocppj.SetMessageIdGenerator(l2SequentialMessageIds("l2t3c"))
+	defer func() { ocppj.SetMessageIdGenerator(suite.messageIdGenerator.generateId) }()
+
+	l2StartStandaloneChargingStation(suite, writtenC)
+
+	gateC := make(chan struct{})
+	var gateOnce sync.Once
+	closeGate := func() { gateOnce.Do(func() { close(gateC) }) }
+	defer closeGate()
+
+	// R0 pins the sole drainer, so no post-S3b cs.incoming delivery is ever
+	// read again.
+	pinnedC := make(chan struct{})
+	err := suite.chargingStation.SendRequestAsync(availability.NewHeartbeatRequest(), func(response ocpp.Response, err error) {
+		close(pinnedC)
+		<-gateC
+	})
+	require.NoError(t, err)
+	l2WaitForWrite(t, writtenC, "timed out waiting for R0 to be written")
+	err = suite.mockWsClient.MessageHandler([]byte(l2HeartbeatCallResultJson("l2t3c-0")))
+	require.NoError(t, err)
+	l2WaitOrFail(t, pinnedC, "timed out waiting for the async handler to be pinned on R0's callback")
+
+	// Inbound CALL #1 (authorization.ClearCache - empty payload, no handler
+	// registered, mirroring the 1.6 port's use of core.ClearCache; what
+	// handleIncomingRequest ultimately does with it - NotSupported, since no
+	// authorizationHandler is set on this standalone station - is irrelevant
+	// to this test, only the forwarding mechanism is under test). Post-S3b,
+	// its REQUEST closure fills cs.incoming and returns.
+	err = suite.mockWsClient.MessageHandler([]byte(fmt.Sprintf(`[2,"%v","%v",{}]`, "l2t3c-call-1", authorization.ClearCacheFeatureName)))
+	require.NoError(t, err)
+
+	// Inbound CALL #2: post-S3b, its REQUEST closure finds cs.incoming full,
+	// forever.
+	blockedC := make(chan struct{})
+	go func() {
+		defer close(blockedC)
+		_ = suite.mockWsClient.MessageHandler([]byte(fmt.Sprintf(`[2,"%v","%v",{}]`, "l2t3c-call-2", authorization.ClearCacheFeatureName)))
+	}()
+	// Join this goroutine unconditionally via t.Cleanup, registered right
+	// after spawning it - NOT via a plain trailing select after the
+	// assertions below. In TODAY's RED state, l2WaitForGoroutineCountAtLeast
+	// below fails via t.Fatal (runtime.Goexit), which would skip a trailing
+	// select entirely and return control to the suite runner while this
+	// goroutine might still be reading suite.mockWsClient - racing the NEXT
+	// test's SetupTest concurrently reassigning that same field
+	// (confirmed empirically: an earlier version of this test without this
+	// Cleanup produced exactly that -race failure, caught between this test
+	// and the following one in the suite). t.Cleanup runs before t.Run
+	// returns control to the suite runner on every exit path (Fatal or
+	// normal), so it is the only placement that is safe regardless of which
+	// path the test takes.
+	t.Cleanup(func() {
+		select {
+		case <-blockedC:
+		case <-time.After(l2Bound):
+			t.Error("the blocked request forward never returned even after the test itself finished")
+		}
+	})
+
+	// Load-bearing positive control (same reason as the response/error
+	// sibling tests above): this is exactly what makes today's RED
+	// unambiguous. Pre-S3b, NEITHER inbound CALL blocks - both complete
+	// inline, essentially immediately - so this wait times out (at l2Bound)
+	// not because a deadlock formed, but because the forwarding closure this
+	// test targets does not exist yet.
+	l2WaitForGoroutineCountAtLeast(t, "NewChargingStation.func", baseline+1)
+
+	// Handler stays pinned: see boundedStopCtxWhilePinned for why releasing it early would mask the
+	// very regression this test exists to catch.
+	boundedStopCtxWhilePinned(t, suite.chargingStation)
+	l2WaitForGoroutineCountAtMost(t, "NewChargingStation.func", baseline)
 }
