@@ -875,9 +875,8 @@ func (d *DefaultServerDispatcher) messagePump() {
 				}
 				for _, el := range outstanding {
 					bundle, bok := el.(RequestBundle)
-					// Guard malformed bundles, including nil Payload. The facade's
-					// cancellation path evaluates request.GetFeatureName() as a
-					// defer argument on its callback goroutine.
+					// Guard malformed bundles, including nil Payload. Nil-Payload bundles are
+					// constructible via the public SendRequest(clientID, RequestBundle) API.
 					if !bok || bundle.Call == nil || bundle.Call.Payload == nil {
 						continue
 					}
