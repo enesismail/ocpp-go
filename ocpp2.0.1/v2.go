@@ -589,7 +589,10 @@ type CSMS interface {
 	// ws/http server shutdown. The dispatcher is stopped first and unconditionally
 	// at the ocppj layer.
 	Shutdown(ctx context.Context) error
-	// Errors returns a channel for error messages. If it doesn't exist it is created.
+	// Errors returns the process-lifetime channel for asynchronous server errors.
+	// Drain it for the lifetime of the server. Sends are non-blocking and errors
+	// are silently dropped when the channel buffer is full. The channel may
+	// contain errors reported before this call.
 	Errors() <-chan error
 }
 
