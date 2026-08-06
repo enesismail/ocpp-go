@@ -113,6 +113,55 @@ func (suite *OcppV16TestSuite) TestServerRequestHandlerPanicRecoveredFacade() {
 	}
 }
 
+// TestServerCanceledCallbackPanicRecoveredFacade is the 1.6 parity backfill
+// for the server-facade cancellation panic guard. A real dispatcher timeout
+// invokes the facade callback with (nil, err); the callback panic must be
+// recovered as ErrorHandlerKind on its dedicated goroutine.
+func (suite *OcppV16TestSuite) TestServerCanceledCallbackPanicRecoveredFacade() {
+	t := suite.T()
+	wsID := "test_id"
+	messageID := defaultMessageId
+	wsURL := "someUrl"
+	operationalStatus := core.AvailabilityTypeOperative
+	panicValue := "boom: ChangeAvailability canceled callback panic"
+	requestJSON := fmt.Sprintf(`[2,"%v","%v",{"connectorId":1,"type":"%v"}]`, messageID, core.ChangeAvailabilityFeatureName, operationalStatus)
+	channel := NewMockWebSocket(wsID)
+
+	// Set the timeout before Start: the request is deliberately never answered,
+	// so the dispatcher's real timeout drives handleCanceledRequest.
+	suite.serverDispatcher.SetTimeout(300 * time.Millisecond)
+	panicC := make(chan ocppj.HandlerPanic, 4)
+	suite.centralSystem.SetOnHandlerPanic(func(hp ocppj.HandlerPanic) { panicC <- hp })
+	setupDefaultCentralSystemHandlers(suite, nil, expectedCentralSystemOptions{clientId: wsID, rawWrittenMessage: []byte(requestJSON), forwardWrittenMessage: false})
+	setupDefaultChargePointHandlers(suite, nil, expectedChargePointOptions{serverUrl: wsURL, clientId: wsID, createChannelOnStart: true, channel: channel})
+
+	suite.centralSystem.Start(8887, "somePath")
+	err := suite.chargePoint.Start(wsURL)
+	require.Nil(t, err)
+	err = suite.centralSystem.ChangeAvailability(wsID, func(*core.ChangeAvailabilityConfirmation, error) {
+		panic(panicValue)
+	}, 1, operationalStatus)
+	require.Nil(t, err)
+
+	var hp ocppj.HandlerPanic
+	select {
+	case hp = <-panicC:
+	case <-time.After(panicWaitTimeout):
+		t.Fatal("timed out waiting for panic callback")
+	}
+	assert.Equal(t, ocppj.ErrorHandlerKind, hp.Kind)
+	assert.Equal(t, wsID, hp.ClientID)
+	assert.Equal(t, core.ChangeAvailabilityFeatureName, hp.Action)
+	assert.Equal(t, messageID, hp.RequestID)
+	assert.Equal(t, panicValue, hp.Value)
+	assert.NotEmpty(t, hp.Stack)
+	select {
+	case extra := <-panicC:
+		t.Fatalf("callback fired more than once: %+v", extra)
+	default:
+	}
+}
+
 // TestServerResponseCallbackPanicRecoveredFacade asserts that a panic in the
 // user-provided response callback for a central-system-initiated request
 // (ChangeAvailability) - which the S1 facade fix runs in its own goroutine -

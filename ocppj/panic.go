@@ -43,10 +43,13 @@ func (c *Client) SetOnHandlerPanic(handler func(HandlerPanic)) {
 // SetOnHandlerPanic registers a callback invoked when a user handler panics.
 //
 // The callback runs synchronously on whichever goroutine recovered the panic:
-// the read loop for message handlers, and — for a canceled-request handler
-// panic — the dispatcher's messagePump goroutine. As with an onRequestCanceled
-// callback, it therefore must NOT call Stop() or block on a full SendRequest,
-// or it may deadlock the pump. It should also not panic. Set it before Start.
+// the read loop for message handlers; a raw CanceledRequestHandler panic is
+// recovered on the dispatcher's messagePump goroutine as CancelHandlerKind;
+// and a server-facade canceled-request callback (or its no-callback body) is
+// recovered on the facade's dedicated cancel goroutine as ErrorHandlerKind.
+// A raw onRequestCanceled callback therefore must NOT call Stop() or block on
+// a full SendRequest, or it may deadlock the pump. It should also not panic.
+// Set it before Start.
 func (s *Server) SetOnHandlerPanic(handler func(HandlerPanic)) {
 	s.onHandlerPanic = handler
 	if d, ok := s.dispatcher.(*DefaultServerDispatcher); ok {

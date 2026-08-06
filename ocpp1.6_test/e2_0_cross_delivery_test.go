@@ -228,7 +228,7 @@ func (suite *OcppV16TestSuite) TestE2_0_ServerCrossDeliveryRegression() {
 	channel := NewMockWebSocket(wsID)
 
 	// Wire the mocks: server writes to mockWsServer.Write. R1's Write
-	// succeeds; R2's Write fails, triggering the pump-side cancel.
+	// succeeds; R2's Write fails, triggering the dispatcher-side cancel.
 	// serverWroteR1 signals when the pump has actually written R1, so the test
 	// only injects R1's CALL_RESULT once R1 is pending — otherwise a slow runner
 	// can deliver the result before dispatch and ocppj discards it (the hook then
@@ -275,8 +275,9 @@ func (suite *OcppV16TestSuite) TestE2_0_ServerCrossDeliveryRegression() {
 	}
 	defer func() { testhooks.CentralSystemResponse = nil }()
 
-	// cancelSeen closes when the first callback runs (the pump-side cancel of
-	// R2 after its Write fails). See test 1 for the rationale — this replaces a
+	// cancelSeen closes when the first callback runs (the dispatcher-side cancel
+	// of R2 after its Write fails; the facade's cancellation bookkeeping now runs
+	// off-pump). See test 1 for the rationale — this replaces a
 	// gate that watched r2Result, which on master cannot fill before the gate.
 	cancelSeen := make(chan struct{})
 	var cancelOnce sync.Once
