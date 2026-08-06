@@ -15,6 +15,11 @@ import (
 const (
 	ec2ServerErrorBurst = 18 // errChanCapacity + 2
 	ec2ServerErrorWait  = 2 * time.Second
+	// ec2OuterWatchdog bounds a whole test body that is run on its own
+	// goroutine, so a regressed (blocking error()) build fails fast instead of
+	// wedging the test binary. Generous relative to ec2ServerErrorWait: the
+	// body contains several of those inner waits back to back.
+	ec2OuterWatchdog = 5 * ec2ServerErrorWait
 )
 
 func startEC2CentralSystem(suite *OcppV16TestSuite, writeC chan string) {
@@ -66,57 +71,76 @@ func stopEC2CentralSystem(t *testing.T, suite *OcppV16TestSuite) {
 
 func (suite *OcppV16TestSuite) TestServerErrorsNonBlockingWhenUndrained() {
 	t := suite.T()
-	writeC := make(chan string, 64)
-	startEC2CentralSystem(suite, writeC)
+	// The whole body runs on its own goroutine behind an outer watchdog: a
+	// regressed (blocking error()) build wedges the dispatcher pump, and every
+	// inner bound would have to be reached in order for the test to end. The
+	// watchdog makes the failure fast and structural, independent of which
+	// inner assertion happens to notice the wedge first. Assertions inside the
+	// goroutine still fail the test (testify marks it failed); a t.Fatalf there
+	// runs runtime.Goexit, which unwinds through the deferred close(testDoneC)
+	// and releases the select below rather than continuing past the failure.
+	testDoneC := make(chan struct{})
+	go func() {
+		defer close(testDoneC)
 
-	ids := make([]string, ec2ServerErrorBurst+1)
-	for i := range ids {
-		ids[i] = fmt.Sprintf("ec2-pump-%d", i)
-	}
-	connectEC2ChargePoints(suite, ids)
+		writeC := make(chan string, 64)
+		startEC2CentralSystem(suite, writeC)
 
-	// Consume the connection notifications before arming the burst. The probe
-	// requests also prove each queue is ready without using a sleep as a gate.
-	for _, id := range ids {
-		completeEC2Probe(t, suite, writeC, id)
-	}
-
-	// Arming an undrained channel is the precondition for the pump wedge.
-	_ = suite.centralSystem.Errors()
-	for _, id := range ids[:ec2ServerErrorBurst] {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
-		_, err := suite.ocppjCentralSystem.SendRequestCtx(ctx, id, core.NewHeartbeatRequest())
-		require.NoError(t, err)
-	}
-
-	// The final request belongs to a different client. It must still reach the
-	// websocket after the canceled-request burst has filled the error buffer.
-	_, err := suite.ocppjCentralSystem.SendRequest(ids[ec2ServerErrorBurst], core.NewHeartbeatRequest())
-	require.NoError(t, err)
-	waitForEC2Write(t, writeC, ids[ec2ServerErrorBurst])
-
-	// Secondary shape: the same non-blocking contract must hold when an error
-	// is reported from the websocket read path rather than the dispatcher pump.
-	readID := ids[0]
-	readChannel := NewMockWebSocket(readID)
-	for i := 0; i < 2; i++ {
-		requestID, err := suite.ocppjCentralSystem.SendRequest(readID, core.NewHeartbeatRequest())
-		require.NoError(t, err)
-		waitForEC2Write(t, writeC, readID)
-		doneC := make(chan error, 1)
-		go func() {
-			doneC <- suite.mockWsServer.MessageHandler(readChannel, []byte(fmt.Sprintf(`[4,"%s","GenericError","read error",{}]`, requestID)))
-		}()
-		select {
-		case err := <-doneC:
-			require.NoError(t, err)
-		case <-time.After(ec2ServerErrorWait):
-			t.Fatal("websocket read path remained blocked while reporting an error")
+		ids := make([]string, ec2ServerErrorBurst+1)
+		for i := range ids {
+			ids[i] = fmt.Sprintf("ec2-pump-%d", i)
 		}
-	}
+		connectEC2ChargePoints(suite, ids)
 
-	stopEC2CentralSystem(t, suite)
+		// Consume the connection notifications before arming the burst. The probe
+		// requests also prove each queue is ready without using a sleep as a gate.
+		for _, id := range ids {
+			completeEC2Probe(t, suite, writeC, id)
+		}
+
+		// Arming an undrained channel is the precondition for the pump wedge.
+		_ = suite.centralSystem.Errors()
+		for _, id := range ids[:ec2ServerErrorBurst] {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_, err := suite.ocppjCentralSystem.SendRequestCtx(ctx, id, core.NewHeartbeatRequest())
+			require.NoError(t, err)
+		}
+
+		// The final request belongs to a different client. It must still reach the
+		// websocket after the canceled-request burst has filled the error buffer.
+		_, err := suite.ocppjCentralSystem.SendRequest(ids[ec2ServerErrorBurst], core.NewHeartbeatRequest())
+		require.NoError(t, err)
+		waitForEC2Write(t, writeC, ids[ec2ServerErrorBurst])
+
+		// Secondary shape: the same non-blocking contract must hold when an error
+		// is reported from the websocket read path rather than the dispatcher pump.
+		readID := ids[0]
+		readChannel := NewMockWebSocket(readID)
+		for i := 0; i < 2; i++ {
+			requestID, err := suite.ocppjCentralSystem.SendRequest(readID, core.NewHeartbeatRequest())
+			require.NoError(t, err)
+			waitForEC2Write(t, writeC, readID)
+			doneC := make(chan error, 1)
+			go func() {
+				doneC <- suite.mockWsServer.MessageHandler(readChannel, []byte(fmt.Sprintf(`[4,"%s","GenericError","read error",{}]`, requestID)))
+			}()
+			select {
+			case err := <-doneC:
+				require.NoError(t, err)
+			case <-time.After(ec2ServerErrorWait):
+				t.Fatal("websocket read path remained blocked while reporting an error")
+			}
+		}
+
+		stopEC2CentralSystem(t, suite)
+	}()
+
+	select {
+	case <-testDoneC:
+	case <-time.After(ec2OuterWatchdog):
+		t.Fatal("test timed out - pump likely wedged by blocking error() send")
+	}
 }
 
 func (suite *OcppV16TestSuite) TestServerErrorsSameChannelConcurrent() {
