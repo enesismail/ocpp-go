@@ -804,3 +804,23 @@ guard that recovers correctly but kills the drain loop would pass — and
 `ocpp2.0.1_test/lifecycle_shutdown_test.go::TestL2ShutdownRequestForwardingLeak`,
 which is the only test that catches a non-preemptible request forwarding closure
 and therefore a permanent read-goroutine leak. Green under `-race -count=3`.
+
+## Server facade error reporting
+
+The server facade error channels are monitoring streams. Their sends are
+non-blocking, so an undrained full buffer drops errors instead of wedging the
+dispatcher pump or a websocket read goroutine. The channels are created in the
+facade constructors with a modest burst buffer and are never closed.
+
+| Symbol | Why keep it |
+|--------|-------------|
+| `ocpp1.6.centralSystem.error` | reports facade errors with a drop-on-full, non-blocking send |
+| `ocpp2.0.1.csms.error` | keeps the 2.0.1 server facade behavior in parity with 1.6 |
+| `ocpp1.6.newCentralSystem` / `ocpp2.0.1.newCSMS` | eagerly create `errC` with `errChanCapacity` before the endpoint is started |
+| `ocpp1.6.centralSystem.Errors` / `ocpp2.0.1.csms.Errors` | returns the immutable, process-lifetime monitoring channel; consumers must drain it for life |
+| `ocpp1.6.CentralSystem.Errors` / `ocpp2.0.1.CSMS.Errors` | documents drop-on-full behavior and that the buffer may contain errors from before the call |
+
+**Guard:** `ocpp1.6_test/ec2_facade_error_test.go` and
+`ocpp2.0.1_test/ec2_facade_error_test.go` cover the dispatcher-pump and
+websocket-read paths, concurrent channel access, delivery, and pre-arm
+buffering.

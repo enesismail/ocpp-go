@@ -23,6 +23,12 @@ import (
 	"github.com/enesismail/ocpp-go/ws"
 )
 
+// errChanCapacity buffers the Errors() channel so short bursts (several
+// undeliverable responses in one pump iteration, a stop-drain's
+// no-callback cancels) survive a briefly-behind consumer. Errors beyond
+// the buffer are dropped — documented in Errors().
+const errChanCapacity = 16
+
 type centralSystem struct {
 	server                *ocppj.Server
 	coreHandler           core.CentralSystemHandler
@@ -55,6 +61,7 @@ func newCentralSystem(server *ocppj.Server) centralSystem {
 	return centralSystem{
 		server:        server,
 		callbackQueue: callbackqueue.New(),
+		errC:          make(chan error, errChanCapacity),
 	}
 }
 
@@ -72,16 +79,38 @@ func (cs *centralSystem) installDisconnectedHandler() {
 	})
 }
 
+// error reports err on the Errors() channel. The send is NON-BLOCKING: if the
+// buffer is full (consumer not draining), the error is DROPPED rather
+// than blocking the reporting goroutine — error() is called synchronously
+// from the dispatcher messagePump and from websocket read goroutines, where
+// a blocking send would freeze dispatch for every connected charge point
+// (and make Stop() hang). See Errors() for the consumer-side contract.
+// errC is created in the constructor and never reassigned or closed, so under
+// the documented construct-then-Start order the unsynchronised read here is
+// race-free.
 func (cs *centralSystem) error(err error) {
-	if cs.errC != nil {
-		cs.errC <- err
+	select {
+	case cs.errC <- err:
+	default:
+		// Dropped: nobody is draining Errors(). There is no facade-level
+		// logger to record the drop (a logging seam here is the A17/EC12
+		// workstream, not this one).
 	}
 }
 
+// Errors returns the channel where the central system reports asynchronous
+// errors (undeliverable responses, canceled requests with no matching
+// callback, recovered handler panics). The channel exists from construction
+// and is NEVER closed; errors reported before the first Errors() call are
+// buffered (up to errChanCapacity) and delivered to the first drainer.
+//
+// CONTRACT: drain this channel for the lifetime of the server. Sends are
+// non-blocking: errors reported while the buffer (cap errChanCapacity) is
+// full are silently dropped — in particular, Errors() is NOT a complete
+// inventory of per-request cancellations during a Stop/Shutdown drain (see
+// Stop's godoc); it is a monitoring stream, not an audit log. The buffer may
+// contain errors reported before the call to Errors().
 func (cs *centralSystem) Errors() <-chan error {
-	if cs.errC == nil {
-		cs.errC = make(chan error, 1)
-	}
 	return cs.errC
 }
 
