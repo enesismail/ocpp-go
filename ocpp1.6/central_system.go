@@ -838,6 +838,8 @@ func (cs *centralSystem) handleCanceledRequest(chargePointID string, requestID s
 	if request != nil {
 		featureName = request.GetFeatureName()
 	}
+	// One goroutine per cancel; unjoined and unbounded — the same delivery
+	// model handleIncomingConfirmation and handleIncomingError already use.
 	// The goroutine dequeues by (clientID, requestID), so a disconnect drain
 	// followed by a colliding re-registration can expose a newer callback;
 	// callbackqueue.ErrDuplicateCallback's godoc is the governing collision
