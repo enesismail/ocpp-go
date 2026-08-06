@@ -154,7 +154,9 @@ func (s *Server) Stop() {
 // not ctx-aware, so if the pump is wedged behind a blocked Write, Shutdown can
 // block past ctx before http.Server.Shutdown is ever reached. Stop-drain cancel
 // callbacks run before the ctx-bounded phase begins; a slow callback extends
-// teardown beyond ctx. ctx is not an end-to-end teardown deadline.
+// teardown beyond ctx. Callbacks for requests still held in the dispatcher's
+// queues fire exactly once with an error matching ErrDispatcherStopped. ctx is
+// not an end-to-end teardown deadline.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.dispatcher.Stop()
 	return s.server.Shutdown(ctx)
