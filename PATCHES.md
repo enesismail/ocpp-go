@@ -517,8 +517,7 @@ generation).
 Out of scope / DEFERRED: server `readyForDispatch` remains a blocking send
 (cross-client contention, bounded; the client uses a non-blocking coalesced
 send); the `deleteAck` purge lacks queue-identity awareness (a fast reconnect
-inside the re-entry loop can cancel a fresh request's timeout watcher — bounded);
-`Stop()` still does not fire cancels for outstanding server requests.
+inside the re-entry loop can cancel a fresh request's timeout watcher — bounded).
 
 **Guard:** `ocppj/e2a_completion_ownership_test.go` (A1 pump-survival via a
 pre-filled `readyForDispatch` + blocking writer; A2 timeout/response double-pop
@@ -526,6 +525,45 @@ race; A3 `SetTimeout(0)` exactly-one-write; the `CompleteRequest` bool contract;
 the write-error same-client re-entry; B2/B3 stale-watcher no-cross-delivery /
 no-leak). All green under `-race`; the timeout-race and watcher tests pass under
 `-race -count=5`.
+
+## Server dispatcher stop-drain cancellation (EC1)
+
+The server dispatcher now mirrors the client's stop-drain behavior. A default
+`FIFOQueueMap` is atomically detached at the pump's stop arm; pending state is
+cleared before any cancellation is fired, and every well-formed detached
+bundle receives one `ErrDispatcherStopped` terminal callback. The detached
+per-client queues use their optional atomic `DrainAll` method when available,
+with a serialized `Pop` fallback for custom queue implementations. Custom
+`ServerQueueMap` implementations without the optional map-level `DrainAll`
+retain the legacy `Init`-only behavior and receive no stop cancels.
+
+The raw dispatcher callback runs on the message pump and must remain fast and
+non-blocking. Completion ownership still guarantees at most one response or
+cancel; a `SendRequest` that returns an error may additionally receive a
+stop-cancel if `Stop` raced the enqueue. Facade callbacks are dispatched off
+the pump by EC-D1, and facade `Errors()` remains best-effort rather than a
+complete inventory of stop-drain cancellations. Stop-drain callbacks run
+before the context-bounded shutdown phase, so a slow callback can extend
+teardown beyond its context.
+
+| Symbol | Why keep it |
+|--------|-------------|
+| `ocppj.FIFOQueueMap.DrainAll` | atomically detaches the client-to-queue map without widening `ServerQueueMap` |
+| `ocppj.DefaultServerDispatcher.messagePump` stop arm | clears pending state before draining and fires guarded `ErrDispatcherStopped` cancels |
+| `ocppj.DefaultServerDispatcher.Stop` | preserves write-lock-before-stop-signal and unlock-before-pump-join barriers |
+| `ocppj.ServerDispatcher.Stop` | documents stop cancellation, custom-map fallback, and the enqueue-race caveat |
+| `ocppj.Server.Stop` / `Shutdown` | exposes the raw dispatcher stop-drain and its context-phase ordering |
+| `ocpp1.6.centralSystem.Stop` / `Shutdown` + `ocpp1.6.CentralSystem` | documents scoped callback delivery, `Errors()` best-effort semantics, and off-pump facade callbacks |
+| `ocpp2.0.1.csms.Stop` / `Shutdown` + `ocpp2.0.1.CSMS` | keeps the 2.0.1 facade contract in parity with 1.6 |
+
+**Guard:** `ocppj/ec1_server_stop_cancel_test.go` covers pending and queued
+multi-client drains, the off-pump completion photo finish, the `ocppj.Server`
+late-CALL_RESULT gate, panic recovery, the custom-map fallback, and the
+optional concrete `DrainAll` surface. `ocpp1.6_test/ec1_server_stop_cancel_test.go`
+and `ocpp2.0.1_test/ec1_server_stop_cancel_test.go` cover facade exactly-once
+delivery and the 1.6 `SendRequestAsync` storm-vs-`Stop` watchdog. The panic
+test intentionally does not assert `Errors()`; that routing assertion belongs
+to EC3.
 
 ## Server-side context-aware send (`SendRequestCtx`, E2c)
 
@@ -612,11 +650,9 @@ regression). All green under `-race`.
 Out of scope / DEFERRED (unchanged from the spec, not new): no queue scanning /
 eviction of canceled non-front requests; no ctx variants of the ~40 typed
 helpers (use `SendRequestAsyncCtx` directly); no per-request timeout override;
-`Stop()` still does not fire cancels for outstanding server-side requests; the
-facade's `error()` on a callback-queue `Dequeue` **miss** is still a blocking
-cap-1 `errC` send run synchronously on the pump (pre-existing, unrelated to
-E2c's own delivery path, which always hits) [since resolved: EC2 made the send
-non-blocking (cap 16); EC-D1 moved the dequeue-miss path off the pump entirely].
+the facade's `error()` on a callback-queue `Dequeue` **miss** is a non-blocking,
+best-effort `errC` report (EC2 made the buffer cap 16; EC-D1 moved the
+dequeue-miss path off the pump entirely).
 
 ## OCPP 1.6 configuration store/manager (`ocpp1.6/configmanager`)
 

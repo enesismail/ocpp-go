@@ -629,13 +629,26 @@ func (cs *centralSystem) Start(listenPort int, listenPath string) {
 	cs.server.Start(listenPort, listenPath)
 }
 
+// Stop stops the central system. Callbacks for requests still held in the
+// dispatcher's queues fire exactly once with an error matching
+// ocppj.ErrDispatcherStopped. Cancellations for requests WITHOUT a registered
+// callback are reported on Errors() best-effort (non-blocking, bounded buffer);
+// Errors() is not a complete inventory of stop-drain cancellations.
 func (cs *centralSystem) Stop() {
 	cs.server.Stop()
 }
 
 // Shutdown is the context-bounded variant of Stop. ctx bounds the underlying
 // ws/http server shutdown. The dispatcher is stopped first and unconditionally
-// at the ocppj layer.
+// at the ocppj layer. Stop-drain cancel callbacks run before the ctx-bounded
+// phase begins; a slow callback extends teardown beyond ctx. Raw ocppj
+// CanceledRequestHandler callbacks run on the pump before that phase; facade
+// callbacks are dispatched off the pump and may still be running after Stop or
+// Shutdown returns. Callbacks for requests still held in the dispatcher's
+// queues fire exactly once with an error matching ocppj.ErrDispatcherStopped.
+// Cancellations for requests WITHOUT a registered callback are reported on
+// Errors() best-effort (non-blocking, bounded buffer); Errors() is not a
+// complete inventory of stop-drain cancellations.
 func (cs *centralSystem) Shutdown(ctx context.Context) error {
 	return cs.server.Shutdown(ctx)
 }

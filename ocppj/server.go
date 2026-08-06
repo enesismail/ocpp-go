@@ -140,8 +140,9 @@ func (s *Server) Start(listenPort int, listenPath string) {
 	// TODO: return error?
 }
 
-// Stops the server.
-// This clears all pending requests and causes the Start function to return.
+// Stop stops the server and clears all pending requests. Callbacks for requests
+// still held in the dispatcher's queues are fired exactly once with an error
+// matching ErrDispatcherStopped before the dispatcher stops.
 func (s *Server) Stop() {
 	s.dispatcher.Stop()
 	s.server.Stop()
@@ -151,8 +152,9 @@ func (s *Server) Stop() {
 // underlying ws/http server shutdown. The dispatcher is stopped first and
 // unconditionally — dispatcher.Stop() waits on its pump's done signal and is
 // not ctx-aware, so if the pump is wedged behind a blocked Write, Shutdown can
-// block past ctx before http.Server.Shutdown is ever reached. ctx is not an
-// end-to-end teardown deadline.
+// block past ctx before http.Server.Shutdown is ever reached. Stop-drain cancel
+// callbacks run before the ctx-bounded phase begins; a slow callback extends
+// teardown beyond ctx. ctx is not an end-to-end teardown deadline.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.dispatcher.Stop()
 	return s.server.Shutdown(ctx)
