@@ -25,10 +25,14 @@ const ecd1Wait = 2 * time.Second
 // across the filler clients, each on its own goroutine, until one fails to
 // return within settleBound. TryQueue serialises every sender on callbacksMutex,
 // so the first non-returning send is a sender parked on the full requestChannel
-// while holding callbacksMutex. Returned errors are expected: a per-client
-// queue can fill before its channel signal, and the suite's constant generator
-// can report ErrDuplicateCallback after a successful signal. Only a
-// "dispatcher not running" error invalidates the precondition.
+// while holding callbacksMutex. Returned errors are expected and must not fail
+// the test: q.Push fails before the channel send when a per-client queue (cap
+// queueCapacity) fills, while the constant message-id generator can report
+// ErrDuplicateCallback after try() has already pushed and signalled. The loop
+// records those errors and rejects only a "dispatcher not running" error, which
+// means the precondition collapsed. releaseWedgeWrite stays open throughout;
+// closing it would release the wedge and let the pump drain a signal between
+// sends.
 func saturateECD1FacadeSenders(t *testing.T, centralSystem ocpp16.CentralSystem, ids []string, releaseWedgeWrite <-chan struct{}) {
 	t.Helper()
 	const (
