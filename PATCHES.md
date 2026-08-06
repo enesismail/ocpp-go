@@ -824,3 +824,27 @@ facade constructors with a modest burst buffer and are never closed.
 `ocpp2.0.1_test/ec2_facade_error_test.go` cover the dispatcher-pump and
 websocket-read paths, concurrent channel access, delivery, and pre-arm
 buffering.
+
+## Off-pump canceled-request handling (server facades)
+
+The server facades run everything in canceled-request handling that touches
+facade state — the callback-queue dequeue, the callback itself, the no-callback
+`Errors()` report — on a dedicated goroutine; only the feature-name resolution
+stays on the dispatcher pump *(phrasing per fold r3, fable MINOR-1)*.
+The callback queue is guarded by a facade-wide mutex that `SendRequestAsync`
+holds across the enqueue into the dispatcher, and that enqueue is a blocking
+send into a bounded channel drained only by the dispatcher's message pump —
+so dequeuing a canceled request's callback on the pump closes a lock cycle
+that permanently wedges dispatch for every connected client and makes
+`Stop`/`Shutdown` hang.
+
+| Symbol | Why keep it |
+|--------|-------------|
+| `ocpp1.6.centralSystem.handleCanceledRequest` | runs everything that touches facade state — the callback-queue dequeue, the callback, the no-callback `Errors()` report — off the dispatcher pump; the feature name is resolved on the pump |
+| `ocpp2.0.1.csms.handleCanceledRequest` | keeps the 2.0.1 server facade in parity with 1.6 |
+| `ocpp1.6.unknownFeatureName` / `ocpp2.0.1.unknownFeatureName` | resolves the feature name before the goroutine starts, so a payload-less canceled request cannot panic in a defer argument |
+
+**Guard:** `ocpp1.6_test/ecd1_pump_deadlock_test.go` and
+`ocpp2.0.1_test/ecd1_pump_deadlock_test.go` saturate the dispatcher's request
+channel behind a wedged write and then drive a cancel; a regression deadlocks
+and is caught by the tests' outer watchdogs.

@@ -155,6 +155,10 @@ func (suite *OcppV16TestSuite) TestD2NoTimeoutCrossTalkOldTimeoutDoesNotFireNewC
 	// Never respond to old's request: let the real dispatcher timeout fire and
 	// cancel it (gap-4's hazard is a stale timeout/cancel token, so the token
 	// must genuinely exist before we can assert it doesn't cross-talk).
+	// Load-bearing barrier: receiving this result proves the timeout callback
+	// already dequeued the old key before the disconnect drain below. Without it,
+	// the off-pump cancel/dequeue race could turn ErrRequestTimeout into
+	// ErrLocalTransport and make the assertion below flaky.
 	oldResult := receiveD2AsyncResult(t, "old dispatcher timeout", oldResultC)
 	require.Nil(t, oldResult.response)
 	require.Error(t, oldResult.err)

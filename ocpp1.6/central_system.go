@@ -29,6 +29,12 @@ import (
 // the buffer are dropped — documented in Errors().
 const errChanCapacity = 16
 
+// unknownFeatureName is reported instead of a feature name when a canceled
+// request carries no payload (constructible through the raw
+// ServerDispatcher.SendRequest(clientID, RequestBundle) API with a nil
+// Call.Payload).
+const unknownFeatureName = "unknown"
+
 type centralSystem struct {
 	server                *ocppj.Server
 	coreHandler           core.CentralSystemHandler
@@ -44,9 +50,11 @@ type centralSystem struct {
 	// SendRequestAsync registers a callback while holding the queue's mutex across
 	// the enqueue into the dispatcher; if the shared dispatcher pump is wedged on
 	// one stalled client's Write, that mutex is held facade-wide, stalling every
-	// other client's response/error dequeue and the pump's own canceled-request
-	// dequeue too. This is the server-side twin of the client caveat documented in
-	// charge_point.go, and is pre-existing (unchanged by requestID keying).
+	// other client's response/error dequeue (the pump's own canceled-request
+	// dequeue is deliberately off-pump — see handleCanceledRequest — because
+	// on-pump it deadlocks rather than stalls). This is the server-side twin of
+	// the client caveat documented in charge_point.go, and is pre-existing
+	// (unchanged by requestID keying).
 	// DEFERRED: per-client lock striping to decouple clients from one another.
 	callbackQueue       callbackqueue.CallbackQueue
 	disconnectedHandler ChargePointConnectionHandler
@@ -81,10 +89,10 @@ func (cs *centralSystem) installDisconnectedHandler() {
 
 // error reports err on the Errors() channel. The send is NON-BLOCKING: if the
 // buffer is full (consumer not draining), the error is DROPPED rather
-// than blocking the reporting goroutine — error() is called synchronously
-// from the dispatcher messagePump and from websocket read goroutines, where
-// a blocking send would freeze dispatch for every connected charge point
-// (and make Stop() hang). See Errors() for the consumer-side contract.
+// than blocking the reporting goroutine. error() is called from websocket read
+// goroutines, handler goroutines, and the goroutine that handles a canceled
+// request, where a blocking send would freeze a read or dispatch path (and
+// make Stop() hang). See Errors() for the consumer-side contract.
 // errC is created in the constructor and never reassigned or closed, so under
 // the documented construct-then-Start order the unsynchronised read here is
 // race-free.
@@ -570,7 +578,15 @@ func (cs *centralSystem) SendRequestAsync(clientId string, request ocpp.Request,
 // carrying a per-request context for cancellation propagation. A nil ctx is
 // treated as context.Background(). See ocppj.Server.SendRequestCtx for the
 // full cancellation semantics (dispatched vs. queued requests, and the
-// simultaneous-timeout-and-cancel caveat).
+// simultaneous-timeout-and-cancel caveat). The callback is invoked on a
+// goroutine dedicated to that response/cancellation; it is never invoked on
+// the caller's goroutine or on a library dispatch goroutine, and no ordering
+// is guaranteed between a cancellation callback and unrelated dispatcher
+// activity. That goroutine is not joined by Stop/Shutdown: a cancellation
+// callback may still be running, or may not yet have started, after
+// Stop/Shutdown returns. One goroutine is spawned per cancellation and per
+// delivery, and the library does not limit how many are outstanding — a
+// callback that blocks indefinitely pins its goroutine indefinitely.
 func (cs *centralSystem) SendRequestAsyncCtx(ctx context.Context, clientId string, request ocpp.Request, callback func(confirmation ocpp.Response, err error)) error {
 	featureName := request.GetFeatureName()
 	if _, found := cs.server.GetProfileForFeature(featureName); !found {
@@ -791,16 +807,48 @@ func (cs *centralSystem) handleIncomingError(chargePoint ChargePointConnection, 
 	}
 }
 
+// handleCanceledRequest is invoked by the ocppj dispatcher when an outstanding
+// request is canceled (dispatcher timeout, caller-context cancellation,
+// pre-write drop, or a websocket write failure). The dispatcher calls it
+// SYNCHRONOUSLY on its messagePump goroutine, so everything that touches
+// facade state — the callbackQueue Dequeue, the callback, and the no-callback
+// Errors() report — runs on a fresh goroutine. The one statement that still
+// executes on the pump is request.GetFeatureName() (see below).
+//
+// This is load-bearing, not stylistic. SendRequestAsync holds
+// callbackqueue's facade-wide callbacksMutex across the enqueue into the
+// dispatcher (see the callbackQueue field comment above), and that enqueue is
+// a blocking send into a bounded channel that only the messagePump drains. A
+// Dequeue executed ON the pump therefore closes a lock cycle — pump waits for
+// callbacksMutex, mutex holder waits for the pump — that permanently wedges
+// dispatch for every connected charge point and makes Stop()/Shutdown() hang.
+// Keep every callbackQueue access on this path off the pump.
+//
+// featureName is resolved BEFORE the goroutine starts, for two reasons: it is
+// used as a defer ARGUMENT below (evaluated before the recover is installed,
+// so a panic there would be unrecoverable on a bare goroutine), and any panic
+// resolving it here is still contained by the dispatcher's own
+// recoverCancelCallback wrapper around this call. ocpp.Request is a public
+// interface, so GetFeatureName is user code: a custom implementation that
+// panics is contained (recoverCancelCallback), but one that BLOCKS blocks the
+// pump. That residual is accepted and pre-existing — SendRequestAsyncCtx and
+// Endpoint.CreateCall already call it on their own goroutines.
 func (cs *centralSystem) handleCanceledRequest(chargePointID string, requestID string, request ocpp.Request, err *ocpp.Error) {
-	if callback, ok := cs.callbackQueue.Dequeue(chargePointID, requestID); ok {
-		// Execute in separate goroutine, so the caller goroutine is available
-		go func() {
-			defer cs.server.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, chargePointID, request.GetFeatureName(), requestID, false)
-			callback(nil, err)
-		}()
-	} else {
-		err := fmt.Errorf("no handler available for canceled request %s for client %s: %w",
-			request.GetFeatureName(), chargePointID, err)
-		cs.error(err)
+	featureName := unknownFeatureName
+	if request != nil {
+		featureName = request.GetFeatureName()
 	}
+	// The goroutine dequeues by (clientID, requestID), so a disconnect drain
+	// followed by a colliding re-registration can expose a newer callback;
+	// callbackqueue.ErrDuplicateCallback's godoc is the governing collision
+	// stance, and this accepted window is deliberately not mechanised.
+	go func() {
+		defer cs.server.RecoverPanicGoroutine(ocppj.ErrorHandlerKind, chargePointID, featureName, requestID, false)
+		if callback, ok := cs.callbackQueue.Dequeue(chargePointID, requestID); ok {
+			callback(nil, err)
+			return
+		}
+		cs.error(fmt.Errorf("no handler available for canceled request %s for client %s: %w",
+			featureName, chargePointID, err))
+	}()
 }

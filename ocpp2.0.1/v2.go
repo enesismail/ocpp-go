@@ -571,12 +571,13 @@ type CSMS interface {
 	SetChargingStationDisconnectedHandler(handler ChargingStationConnectionHandler)
 	// Sends an asynchronous request to a Charging Station, identified by the clientId.
 	// The charging station will respond with a confirmation message, or with an error if the request was invalid or could not be processed.
-	// This result is propagated via a callback, called asynchronously.
+	// This result is propagated via a callback, called asynchronously. The callback is invoked on a goroutine dedicated to that response/cancellation; it is never invoked on the caller's goroutine or on a library dispatch goroutine, and no ordering is guaranteed between a cancellation callback and unrelated dispatcher activity. That goroutine is not joined by Stop/Shutdown: a cancellation callback may still be running, or may not yet have started, after Stop/Shutdown returns. One goroutine is spawned per cancellation and per delivery, and the library does not limit how many are outstanding — a callback that blocks indefinitely pins its goroutine indefinitely.
 	// In case of network issues (i.e. the remote host couldn't be reached), the function returns an error directly. In this case, the callback is never invoked.
 	SendRequestAsync(clientId string, request ocpp.Request, callback func(ocpp.Response, error)) error
 	// SendRequestAsyncCtx sends an asynchronous request to a Charging
 	// Station, carrying a per-request context for cancellation. A nil ctx is
-	// treated as context.Background().
+	// treated as context.Background(). It has the same dedicated callback-
+	// goroutine and Stop/Shutdown non-joining semantics as SendRequestAsync.
 	SendRequestAsyncCtx(ctx context.Context, clientId string, request ocpp.Request, callback func(ocpp.Response, error)) error
 	// Starts running the CSMS on the specified port and URL.
 	// The central system runs as a daemon and handles incoming charge point connections and messages.

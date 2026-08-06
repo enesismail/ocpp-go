@@ -72,10 +72,12 @@ func stopEC2CentralSystem(t *testing.T, suite *OcppV16TestSuite) {
 func (suite *OcppV16TestSuite) TestServerErrorsNonBlockingWhenUndrained() {
 	t := suite.T()
 	// The whole body runs on its own goroutine behind an outer watchdog: a
-	// regressed (blocking error()) build wedges the dispatcher pump, and every
-	// inner bound would have to be reached in order for the test to end. The
-	// watchdog makes the failure fast and structural, independent of which
-	// inner assertion happens to notice the wedge first. Assertions inside the
+	// regressed (blocking error()) build can wedge the websocket read path, and
+	// every inner bound would have to be reached in order for the test to end.
+	// The watchdog makes the failure fast and structural, independent of which
+	// inner assertion happens to notice the wedge first. The websocket-read
+	// shape below is the decisive EC2 framing; EC-D1's new test owns the former
+	// dispatcher-pump deadlock. Assertions inside the
 	// goroutine still fail the test (testify marks it failed); a t.Fatalf there
 	// runs runtime.Goexit, which unwinds through the deferred close(testDoneC)
 	// and releases the select below rather than continuing past the failure.
@@ -113,8 +115,9 @@ func (suite *OcppV16TestSuite) TestServerErrorsNonBlockingWhenUndrained() {
 		require.NoError(t, err)
 		waitForEC2Write(t, writeC, ids[ec2ServerErrorBurst])
 
-		// Secondary shape: the same non-blocking contract must hold when an error
-		// is reported from the websocket read path rather than the dispatcher pump.
+		// Primary EC2 shape: the same non-blocking contract must hold when an error
+		// is reported from the websocket read path, whose blocking send can
+		// head-of-line block that client's reads.
 		readID := ids[0]
 		readChannel := NewMockWebSocket(readID)
 		for i := 0; i < 2; i++ {
@@ -139,7 +142,7 @@ func (suite *OcppV16TestSuite) TestServerErrorsNonBlockingWhenUndrained() {
 	select {
 	case <-testDoneC:
 	case <-time.After(ec2OuterWatchdog):
-		t.Fatal("test timed out - pump likely wedged by blocking error() send")
+		t.Fatal("test timed out - websocket read path likely wedged by blocking error() send")
 	}
 }
 
