@@ -21,19 +21,22 @@ import (
 
 const ecd1Wait = 2 * time.Second
 
+// saturateECD1FacadeSenders issues facade sends one at a time, round-robin
+// across the filler clients, each on its own goroutine, until one fails to
+// return within settleBound. TryQueue serialises every sender on callbacksMutex,
+// so the first non-returning send is parked on the full requestChannel while
+// holding callbacksMutex. Returned errors are expected and must not fail the
+// test: q.Push fails before the channel send when a per-client queue (cap
+// queueCapacity) fills, while the constant message-id generator can report
+// ErrDuplicateCallback after try() has already pushed and signalled. The loop
+// records those errors and rejects only a "dispatcher not running" error, which
+// means the precondition collapsed. releaseWedgeWrite stays open throughout;
+// closing it would release the wedge and let the pump drain a signal between
+// sends. The test tolerates whatever message-id generator is installed
+// (typically the suites' constant "1234") because it never depends on distinct
+// or colliding ids.
 func saturateECD1FacadeSenders(t *testing.T, csms ocpp2.CSMS, ids []string, releaseWedgeWrite <-chan struct{}) {
 	t.Helper()
-	// This issues SendRequestAsync calls one at a time, round-robin across the
-	// filler clients, each on its own goroutine, until one fails to return within
-	// settleBound. TryQueue serialises every sender on callbacksMutex, so the
-	// first non-returning send is parked on the full requestChannel while holding
-	// that mutex. Returned errors are expected and must not fail the test: q.Push
-	// fails before the channel send when a per-client queue (cap queueCapacity)
-	// fills, while the constant message-id generator can report
-	// ErrDuplicateCallback after try() has already pushed and signalled. Only a
-	// "dispatcher not running" error means the precondition collapsed. The
-	// release channel stays open throughout; closing it would release the wedge
-	// and let the pump drain a signal between sends.
 	const (
 		settleBound = 300 * time.Millisecond
 		maxSends    = 100
@@ -43,6 +46,8 @@ func saturateECD1FacadeSenders(t *testing.T, csms ocpp2.CSMS, ids []string, rele
 	// about 40 against the 20 buffered plus one parked send required here.
 	// releaseWedgeWrite must remain open for the whole loop or the pump can
 	// drain a signal between sends and invalidate the saturation proof.
+	// Intentionally unused: documents that releaseWedgeWrite remains open
+	// (unclosed) during saturation.
 	_ = releaseWedgeWrite
 	var observedErrors []error
 	for i := 0; i < maxSends; i++ {

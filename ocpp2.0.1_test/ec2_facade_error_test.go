@@ -100,7 +100,8 @@ func (suite *OcppV2TestSuite) TestServerErrorsNonBlockingWhenUndrained() {
 			completeEC2Probe(t, suite, writeC, id)
 		}
 
-		// Arming an undrained channel is the precondition for the pump wedge.
+		// The canceled-request burst fills the error buffer; the different-client
+		// write below proves that the dispatcher pump remains live.
 		_ = suite.csms.Errors()
 		for _, id := range ids[:ec2ServerErrorBurst] {
 			ctx, cancel := context.WithCancel(context.Background())
@@ -115,6 +116,11 @@ func (suite *OcppV2TestSuite) TestServerErrorsNonBlockingWhenUndrained() {
 		require.NoError(t, err)
 		waitForEC2Write(t, writeC, ids[ec2ServerErrorBurst])
 
+		// EC-D1 reports canceled-request errors asynchronously. The two write
+		// round-trips above do not form a strict barrier for those sends, but make
+		// a non-full buffer practically unreachable here; the burst exceeds the
+		// cap-16 buffer, re-establishing the decisive full-buffer precondition for
+		// this read-path variant.
 		// Primary EC2 shape: the same non-blocking contract must hold when an error
 		// is reported from the websocket read path, whose blocking send can
 		// head-of-line block that client's reads.

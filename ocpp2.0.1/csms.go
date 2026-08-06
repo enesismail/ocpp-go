@@ -119,8 +119,10 @@ func (cs *csms) error(err error) {
 }
 
 // Errors returns the channel where the CSMS reports asynchronous errors
-// (undeliverable responses, canceled requests with no matching callback,
-// recovered handler panics). The channel exists from construction and is
+// (undeliverable responses, canceled requests with no matching callback
+// (including, rarely, a request whose callback was already delivered by the
+// disconnect drain — see SendRequestAsyncCtx), recovered handler panics). The
+// channel exists from construction and is
 // NEVER closed; errors reported before the first Errors() call are buffered
 // (up to errChanCapacity) and delivered to the first drainer.
 //
@@ -836,6 +838,13 @@ func (cs *csms) SendRequestAsync(clientId string, request ocpp.Request, callback
 // Stop/Shutdown returns. One goroutine is spawned per cancellation and per
 // delivery, and the library does not limit how many are outstanding — a
 // callback that blocks indefinitely pins its goroutine indefinitely.
+// Because cancellation handling and the disconnect drain can run concurrently,
+// a request canceled at the same time as its peer disconnects still invokes its
+// callback exactly once, but the terminal error sentinel is not guaranteed (for
+// example, it may be ErrRequestTimeout or ErrLocalTransport). If the disconnect
+// drain delivers that callback first, the cancel goroutine may also report a
+// "no handler available for canceled request" error on Errors(), even though
+// the callback has already run.
 func (cs *csms) SendRequestAsyncCtx(ctx context.Context, clientId string, request ocpp.Request, callback func(response ocpp.Response, err error)) error {
 	featureName := request.GetFeatureName()
 	if _, found := cs.server.GetProfileForFeature(featureName); !found {

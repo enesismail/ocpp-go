@@ -615,7 +615,8 @@ helpers (use `SendRequestAsyncCtx` directly); no per-request timeout override;
 `Stop()` still does not fire cancels for outstanding server-side requests; the
 facade's `error()` on a callback-queue `Dequeue` **miss** is still a blocking
 cap-1 `errC` send run synchronously on the pump (pre-existing, unrelated to
-E2c's own delivery path, which always hits).
+E2c's own delivery path, which always hits) [since resolved: EC2 made the send
+non-blocking (cap 16); EC-D1 moved the dequeue-miss path off the pump entirely].
 
 ## OCPP 1.6 configuration store/manager (`ocpp1.6/configmanager`)
 
@@ -809,8 +810,9 @@ and therefore a permanent read-goroutine leak. Green under `-race -count=3`.
 
 The server facade error channels are monitoring streams. Their sends are
 non-blocking, so an undrained full buffer drops errors instead of wedging the
-dispatcher pump or a websocket read goroutine. The channels are created in the
-facade constructors with a modest burst buffer and are never closed.
+canceled-request goroutine or a websocket read goroutine. The channels are
+created in the facade constructors with a modest burst buffer and are never
+closed.
 
 | Symbol | Why keep it |
 |--------|-------------|
@@ -821,8 +823,8 @@ facade constructors with a modest burst buffer and are never closed.
 | `ocpp1.6.CentralSystem.Errors` / `ocpp2.0.1.CSMS.Errors` | documents drop-on-full behavior and that the buffer may contain errors from before the call |
 
 **Guard:** `ocpp1.6_test/ec2_facade_error_test.go` and
-`ocpp2.0.1_test/ec2_facade_error_test.go` cover the dispatcher-pump and
-websocket-read paths, concurrent channel access, delivery, and pre-arm
+`ocpp2.0.1_test/ec2_facade_error_test.go` cover the canceled-request-goroutine
+and websocket-read paths, concurrent channel access, delivery, and pre-arm
 buffering.
 
 ## Off-pump canceled-request handling (server facades)

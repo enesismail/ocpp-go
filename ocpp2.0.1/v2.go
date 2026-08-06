@@ -578,6 +578,9 @@ type CSMS interface {
 	// Station, carrying a per-request context for cancellation. A nil ctx is
 	// treated as context.Background(). It has the same dedicated callback-
 	// goroutine and Stop/Shutdown non-joining semantics as SendRequestAsync.
+	// If cancellation races peer disconnect, the callback still fires exactly once,
+	// but its terminal error sentinel is not guaranteed; if the disconnect drain
+	// wins, Errors() may also receive a no-handler report after the callback fires.
 	SendRequestAsyncCtx(ctx context.Context, clientId string, request ocpp.Request, callback func(ocpp.Response, error)) error
 	// Starts running the CSMS on the specified port and URL.
 	// The central system runs as a daemon and handles incoming charge point connections and messages.

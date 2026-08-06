@@ -32,7 +32,9 @@ const ecd1Wait = 2 * time.Second
 // records those errors and rejects only a "dispatcher not running" error, which
 // means the precondition collapsed. releaseWedgeWrite stays open throughout;
 // closing it would release the wedge and let the pump drain a signal between
-// sends.
+// sends. The test tolerates whatever message-id generator is installed
+// (typically the suites' constant "1234") because it never depends on distinct
+// or colliding ids.
 func saturateECD1FacadeSenders(t *testing.T, centralSystem ocpp16.CentralSystem, ids []string, releaseWedgeWrite <-chan struct{}) {
 	t.Helper()
 	const (
@@ -46,6 +48,8 @@ func saturateECD1FacadeSenders(t *testing.T, centralSystem ocpp16.CentralSystem,
 	// one sender after 20 buffered signals. The release channel stays open for
 	// this whole loop: closing it would release the wedge and let the pump drain
 	// a signal between sends, invalidating the saturation proof.
+	// Intentionally unused: documents that releaseWedgeWrite remains open
+	// (unclosed) during saturation.
 	_ = releaseWedgeWrite
 	var observedErrors []error
 	for i := 0; i < maxSends; i++ {
