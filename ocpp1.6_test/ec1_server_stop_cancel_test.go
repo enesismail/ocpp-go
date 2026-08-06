@@ -46,11 +46,12 @@ func (suite *OcppV16TestSuite) TestEC1CentralSystemStopCancelsOnce() {
 	require.Equal(t, int32(1), atomic.LoadInt32(&callbackCount))
 }
 
-// TestEC1CentralSystemStopStormVsSendRequestAsync pins test 8's two Stop
-// barriers. The requestChannel is saturated while a SendRequestAsync sender
-// is parked under RLock; Stop must wait for that sender, release the write
-// lock before joining the pump, and not deadlock once the blocked Write is
-// released.
+// TestEC1CentralSystemStopStormVsSendRequestAsync pins test 8's
+// write-lock-before-close(stoppedC) barrier only. The requestChannel is
+// saturated while a SendRequestAsync sender is parked under RLock; Stop must
+// wait for that sender and not deadlock once the blocked Write is released.
+// The unlock-before-join barrier is unpinnable by a storm post-EC-D1 because
+// facade callbacks run off the dispatcher pump.
 func (suite *OcppV16TestSuite) TestEC1CentralSystemStopStormVsSendRequestAsync() {
 	t := suite.T()
 	wedgeID := "ec1-v16-wedge"

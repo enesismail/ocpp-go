@@ -140,23 +140,25 @@ func (s *Server) Start(listenPort int, listenPath string) {
 	// TODO: return error?
 }
 
-// Stop stops the server and clears all pending requests. Callbacks for requests
-// still held in the dispatcher's queues are fired exactly once with an error
-// matching ErrDispatcherStopped before the dispatcher stops.
+// Stop stops the server and clears all pending requests. With the default
+// dispatcher, FIFOQueueMap, and ServerState, callbacks for requests still held
+// in the dispatcher's queues are fired exactly once with an error matching
+// ErrDispatcherStopped before the dispatcher stops. A custom ServerDispatcher
+// or ServerState makes the "clears all pending requests" guarantee inapplicable.
 func (s *Server) Stop() {
 	s.dispatcher.Stop()
 	s.server.Stop()
 }
 
 // Shutdown is the context-bounded variant of Stop. ctx bounds ONLY the
-// underlying ws/http server shutdown. The dispatcher is stopped first and
-// unconditionally — dispatcher.Stop() waits on its pump's done signal and is
-// not ctx-aware, so if the pump is wedged behind a blocked Write, Shutdown can
-// block past ctx before http.Server.Shutdown is ever reached. Stop-drain cancel
-// callbacks run before the ctx-bounded phase begins; a slow callback extends
-// teardown beyond ctx. Callbacks for requests still held in the dispatcher's
-// queues fire exactly once with an error matching ErrDispatcherStopped. ctx is
-// not an end-to-end teardown deadline.
+// underlying ws/http server shutdown. Callback delivery follows Stop; see Stop
+// for its exactly-once and custom-dispatcher/queue-map caveats. The dispatcher
+// is stopped first and unconditionally — dispatcher.Stop() waits on its pump's
+// done signal and is not ctx-aware, so if the pump is wedged behind a blocked
+// Write, Shutdown can block past ctx before http.Server.Shutdown is ever
+// reached. Stop-drain cancel callbacks run before the ctx-bounded phase begins;
+// a slow callback extends teardown beyond ctx. ctx is not an end-to-end teardown
+// deadline.
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.dispatcher.Stop()
 	return s.server.Shutdown(ctx)

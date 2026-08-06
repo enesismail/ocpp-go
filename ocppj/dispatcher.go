@@ -546,7 +546,9 @@ type ServerDispatcher interface {
 	// along with an error.
 	//
 	// Calling Stop on the dispatcher triggers this callback for every request
-	// still outstanding at that point, with an error matching ErrDispatcherStopped.
+	// still held in the dispatcher's FIFOQueueMap queues, with an error matching
+	// ErrDispatcherStopped. Pending entries for clients removed with DeleteClient
+	// are not callback-eligible, and custom queue-map implementations are exempt.
 	//
 	// If no callback is set, a request will still be removed from the dispatcher when a timeout occurs.
 	SetOnRequestCanceled(cb CanceledRequestHandler)
@@ -562,6 +564,9 @@ type ServerDispatcher interface {
 	// are completed with an error matching ErrDispatcherStopped, and the cancel
 	// callback runs on the dispatcher's messagePump goroutine. The callback must
 	// return promptly and must not call Stop or block on dispatcher progress.
+	// The drain evaluates request.GetFeatureName() (public ocpp.Request user code)
+	// on the pump for each canceled request; a blocking implementation wedges
+	// Stop. In-tree request types cannot block.
 	// A custom ServerQueueMap without the optional DrainAll method retains the
 	// legacy clear-only behavior and does not receive stop-cancel callbacks.
 	// A request whose SendRequest returns an error may additionally receive a
@@ -704,6 +709,9 @@ func (d *DefaultServerDispatcher) IsRunning() bool {
 // more than once and before Start. It must not be called from within an
 // onRequestCancel callback (which runs on the messagePump goroutine), as that
 // would wait for the pump to exit from the pump itself.
+// The stop drain evaluates request.GetFeatureName() (public ocpp.Request user
+// code) on the pump for each canceled request; a blocking implementation
+// wedges Stop. In-tree request types cannot block.
 func (d *DefaultServerDispatcher) Stop() {
 	// The write lock must be acquired before close(stoppedC): a SendRequest
 	// that passed the running check holds RLock while it sends to requestChannel,

@@ -589,14 +589,19 @@ type CSMS interface {
 	Start(listenPort int, listenPath string)
 	// Stops the CSMS, clearing all pending requests. Callbacks for requests
 	// still held in the dispatcher's queues fire exactly once with an error
-	// matching ocppj.ErrDispatcherStopped during Stop. Cancellations for
+	// matching ocppj.ErrDispatcherStopped during Stop; if the stop drain
+	// races the peer's disconnect, the terminal sentinel may be ErrLocalTransport
+	// instead. Cancellations for
 	// requests WITHOUT a registered callback are reported on Errors() best-effort
 	// (non-blocking, bounded buffer); Errors() is not a complete inventory of
-	// stop-drain cancellations.
+	// stop-drain cancellations. Facade callbacks are dispatched off the pump and
+	// may still be running after Stop returns.
 	Stop()
 	// Shutdown is the context-bounded variant of Stop. Callbacks for requests
 	// still held in the dispatcher's queues fire exactly once with an error
-	// matching ocppj.ErrDispatcherStopped during Shutdown. Cancellations for
+	// matching ocppj.ErrDispatcherStopped during Shutdown; if the stop drain
+	// races the peer's disconnect, the terminal sentinel may be ErrLocalTransport
+	// instead. Cancellations for
 	// requests WITHOUT a registered callback are reported on Errors() best-effort
 	// (non-blocking, bounded buffer); Errors() is not a complete inventory of
 	// stop-drain cancellations. Stop-drain cancel callbacks run before the

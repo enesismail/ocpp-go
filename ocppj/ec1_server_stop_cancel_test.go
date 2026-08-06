@@ -3,6 +3,7 @@ package ocppj
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -42,6 +43,20 @@ func ec1WaitForCancel(t *testing.T, canceled <-chan ec1CancelEvent, count int) [
 	return result
 }
 
+func ec1StopWithWatchdog(t *testing.T, d *DefaultServerDispatcher) {
+	t.Helper()
+	stopDone := make(chan struct{})
+	go func() {
+		d.Stop()
+		close(stopDone)
+	}()
+	select {
+	case <-stopDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop hung")
+	}
+}
+
 // TestEC1ServerStopCancelsPendingRequest covers test 1: a dispatched request
 // remains in its client queue until Stop drains it and receives exactly one
 // ErrDispatcherStopped cancellation with its original payload.
@@ -69,7 +84,7 @@ func TestEC1ServerStopCancelsPendingRequest(t *testing.T) {
 	}
 	require.True(t, state.HasPendingRequest(clientID))
 
-	d.Stop()
+	ec1StopWithWatchdog(t, d)
 	event := ec1WaitForCancel(t, canceled, 1)[0]
 	assert.Equal(t, clientID, event.clientID)
 	assert.Equal(t, requestID, event.requestID)
@@ -113,7 +128,7 @@ func TestEC1ServerStopCancelsAllClients(t *testing.T) {
 		}
 	}
 
-	d.Stop()
+	ec1StopWithWatchdog(t, d)
 	events := ec1WaitForCancel(t, canceled, 4)
 	seen := map[string]bool{}
 	for _, event := range events {
@@ -135,7 +150,9 @@ func TestEC1ServerStopCancelsAllClients(t *testing.T) {
 // mandatory: if the pre-existing cap-1 readyForDispatch leak wins the race,
 // the test must fail cleanly instead of pinning the test process.
 func TestEC1ServerStopCompletePhotoFinish(t *testing.T) {
-	const iterations = 20
+	const iterations = 100
+	var totalResponseCount int32
+	var totalCancelCount int32
 	for iteration := 0; iteration < iterations; iteration++ {
 		d, _, _, network, server := ec1NewServer(t)
 		clientID := fmt.Sprintf("ec1-photo-%d", iteration)
@@ -148,9 +165,11 @@ func TestEC1ServerStopCompletePhotoFinish(t *testing.T) {
 		var cancelCount int32
 		d.SetOnRequestCanceled(func(string, string, ocpp.Request, *ocpp.Error) {
 			atomic.AddInt32(&cancelCount, 1)
+			atomic.AddInt32(&totalCancelCount, 1)
 		})
 		server.SetResponseHandler(func(ws.Channel, ocpp.Response, string) {
 			atomic.AddInt32(&responseCount, 1)
+			atomic.AddInt32(&totalResponseCount, 1)
 		})
 
 		d.Start()
@@ -166,12 +185,13 @@ func TestEC1ServerStopCompletePhotoFinish(t *testing.T) {
 		resultDone := make(chan struct{})
 		stopDone := make(chan struct{})
 		go func() {
-			_ = server.ocppMessageHandler(&e2aChannel{id: clientID}, []byte(fmt.Sprintf(`[3,"%s",{"mockValue":"response"}]`, requestID)))
-			close(resultDone)
-		}()
-		go func() {
+			time.Sleep(time.Duration(rand.Intn(400)) * time.Microsecond)
 			d.Stop()
 			close(stopDone)
+		}()
+		go func() {
+			_ = server.ocppMessageHandler(&e2aChannel{id: clientID}, []byte(fmt.Sprintf(`[3,"%s",{"mockValue":"response"}]`, requestID)))
+			close(resultDone)
 		}()
 		select {
 		case <-resultDone:
@@ -185,10 +205,16 @@ func TestEC1ServerStopCompletePhotoFinish(t *testing.T) {
 		}
 		assert.Equal(t, int32(1), atomic.LoadInt32(&responseCount)+atomic.LoadInt32(&cancelCount), "iteration %d request must have one terminal outcome", iteration)
 	}
+	responses := atomic.LoadInt32(&totalResponseCount)
+	cancels := atomic.LoadInt32(&totalCancelCount)
+	t.Logf("photo-finish branch counts: response-wins=%d stop-cancels=%d", responses, cancels)
+	assert.GreaterOrEqual(t, responses, int32(1), "photo-finish must observe at least one response-win")
+	assert.GreaterOrEqual(t, cancels, int32(1), "photo-finish must observe at least one stop-cancel")
 }
 
-// TestEC1ServerStopRejectsLateCallResult covers test 4 through ocppj.Server,
-// including its ParseMessage pending gate and response-handler ownership gate.
+// TestEC1ServerStopRejectsLateCallResult covers test 4 through ocppj.Server:
+// the ParseMessage pending gate rejects post-Stop responses, so delivery is
+// suppressed.
 func TestEC1ServerStopRejectsLateCallResult(t *testing.T) {
 	d, state, _, network, server := ec1NewServer(t)
 	clientID := "ec1-late-result"
@@ -215,7 +241,7 @@ func TestEC1ServerStopRejectsLateCallResult(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for late-result request")
 	}
-	d.Stop()
+	ec1StopWithWatchdog(t, d)
 	ec1WaitForCancel(t, canceled, 1)
 	require.False(t, state.HasPendingRequest(clientID))
 
@@ -315,8 +341,121 @@ func TestEC1CustomServerQueueMapKeepsLegacyStop(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for legacy-map request")
 	}
-	d.Stop()
+	ec1StopWithWatchdog(t, d)
 	assert.Equal(t, int32(0), atomic.LoadInt32(&cancelCount))
+}
+
+// TestEC1StopCancelCallbackMayReadDispatcherState pins the unlock-before-join
+// barrier: the stop drain runs user code on the pump inside Stop's join
+// window, so an RLock in that callback would deadlock against a held write
+// lock if Stop joined before unlocking it.
+func TestEC1StopCancelCallbackMayReadDispatcherState(t *testing.T) {
+	d, _, _, network, endpoint := ec1NewServer(t)
+	clientID := "ec1-callback-state"
+	written := make(chan struct{}, 1)
+	network.setOnWrite(func(string, []byte) error {
+		written <- struct{}{}
+		return nil
+	})
+	callbackRead := make(chan bool, 1)
+	d.SetOnRequestCanceled(func(string, string, ocpp.Request, *ocpp.Error) {
+		callbackRead <- d.IsRunning()
+	})
+
+	d.Start()
+	d.CreateClient(clientID)
+	bundle, _ := d2NewBundle(t, endpoint, "callback-state")
+	require.NoError(t, d.SendRequest(clientID, bundle))
+	select {
+	case <-written:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for callback-state request")
+	}
+	ec1StopWithWatchdog(t, d)
+	select {
+	case <-callbackRead:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for callback to read dispatcher state")
+	}
+}
+
+type ec1ProbeQueue struct {
+	RequestQueue
+	pushed int32
+}
+
+func (q *ec1ProbeQueue) Push(element interface{}) error {
+	atomic.StoreInt32(&q.pushed, 1)
+	return q.RequestQueue.Push(element)
+}
+
+// TestEC1SendErrorAndStopCancelProbe statistically probes the documented
+// SendRequest-error/Stop-cancel enqueue race. Either terminal path may win,
+// and both may be observed as the returned send error plus one stop cancel.
+func TestEC1SendErrorAndStopCancelProbe(t *testing.T) {
+	const iterations = 200
+	var bothCount int
+	for iteration := 0; iteration < iterations; iteration++ {
+		d, _, queueMap, network, endpoint := ec1NewServer(t)
+		clientID := fmt.Sprintf("ec1-probe-%d", iteration)
+		probeQueue := &ec1ProbeQueue{RequestQueue: NewFIFOClientQueue(10)}
+		queueMap.Add(clientID, probeQueue)
+		network.setOnWrite(func(string, []byte) error { return nil })
+		canceled := make(chan *ocpp.Error, 2)
+		d.SetOnRequestCanceled(func(_ string, _ string, _ ocpp.Request, err *ocpp.Error) {
+			canceled <- err
+		})
+
+		d.Start()
+		d.CreateClient(clientID)
+		bundle, requestID := d2NewBundle(t, endpoint, "send-stop-probe")
+		sendDone := make(chan error, 1)
+		go func() {
+			time.Sleep(time.Duration(rand.Intn(400)) * time.Microsecond)
+			sendDone <- d.SendRequest(clientID, bundle)
+		}()
+		stopDone := make(chan struct{})
+		go func() {
+			time.Sleep(time.Duration(rand.Intn(400)) * time.Microsecond)
+			d.Stop()
+			close(stopDone)
+		}()
+
+		var sendErr error
+		select {
+		case sendErr = <-sendDone:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("iteration %d: SendRequest hung", iteration)
+		}
+		select {
+		case <-stopDone:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("iteration %d: Stop hung", iteration)
+		}
+
+		var events []*ocpp.Error
+	Drain:
+		for {
+			select {
+			case err := <-canceled:
+				events = append(events, err)
+			default:
+				break Drain
+			}
+		}
+		assert.LessOrEqual(t, len(events), 1, "request %s received duplicate cancel callbacks", requestID)
+		if len(events) != 0 {
+			assert.Equal(t, int32(1), atomic.LoadInt32(&probeQueue.pushed), "request %s was canceled without being pushed", requestID)
+			assert.True(t, errors.Is(events[0], ErrDispatcherStopped), "unexpected cancel error for %s: %v", requestID, events[0])
+		}
+		sendFailed := sendErr != nil
+		canceledByStop := len(events) == 1
+		assert.True(t, sendFailed || canceledByStop, "iteration %d produced neither documented outcome", iteration)
+		if sendFailed && canceledByStop {
+			bothCount++
+		}
+	}
+	t.Logf("send-error/stop-cancel probe: both-count=%d/%d", bothCount, iterations)
 }
 
 func TestEC1FIFOQueueMapDrainAllIsOptionalAtomicDetach(t *testing.T) {

@@ -108,8 +108,9 @@ func (cs *centralSystem) error(err error) {
 
 // Errors returns the channel where the central system reports asynchronous
 // errors (undeliverable responses, canceled requests with no matching
-// callback (including, rarely, a request whose callback was already delivered
-// by the disconnect drain — see SendRequestAsyncCtx), recovered handler panics).
+// callback (including — routinely during a Stop/Shutdown with outstanding
+// requests — a request whose callback was already delivered by the disconnect
+// drain — see SendRequestAsyncCtx), recovered handler panics).
 // The channel exists from construction
 // and is NEVER closed; errors reported before the first Errors() call are
 // buffered (up to errChanCapacity) and delivered to the first drainer.
@@ -631,9 +632,12 @@ func (cs *centralSystem) Start(listenPort int, listenPath string) {
 
 // Stop stops the central system. Callbacks for requests still held in the
 // dispatcher's queues fire exactly once with an error matching
-// ocppj.ErrDispatcherStopped. Cancellations for requests WITHOUT a registered
-// callback are reported on Errors() best-effort (non-blocking, bounded buffer);
-// Errors() is not a complete inventory of stop-drain cancellations.
+// ocppj.ErrDispatcherStopped; if the stop drain races the peer's disconnect,
+// the terminal sentinel may be ErrLocalTransport instead. Cancellations for
+// requests WITHOUT a registered callback are reported on Errors() best-effort
+// (non-blocking, bounded buffer); Errors() is not a complete inventory of
+// stop-drain cancellations. Facade callbacks are dispatched off the pump and
+// may still be running after Stop returns.
 func (cs *centralSystem) Stop() {
 	cs.server.Stop()
 }
@@ -645,7 +649,9 @@ func (cs *centralSystem) Stop() {
 // CanceledRequestHandler callbacks run on the pump before that phase; facade
 // callbacks are dispatched off the pump and may still be running after Stop or
 // Shutdown returns. Callbacks for requests still held in the dispatcher's
-// queues fire exactly once with an error matching ocppj.ErrDispatcherStopped.
+// queues fire exactly once with an error matching ocppj.ErrDispatcherStopped;
+// if the stop drain races the peer's disconnect, the terminal sentinel may be
+// ErrLocalTransport instead.
 // Cancellations for requests WITHOUT a registered callback are reported on
 // Errors() best-effort (non-blocking, bounded buffer); Errors() is not a
 // complete inventory of stop-drain cancellations.
