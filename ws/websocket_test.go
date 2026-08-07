@@ -1989,22 +1989,22 @@ func (s *WebSocketSuite) TestServerShutdownCanceledCtx() {
 	drainErrorsClosed(s.T(), srv.Errors())
 }
 
-// TestWithReadLimitPreservesTimeoutDefaults verifies that WithReadLimit sets
+// TestWithServerReadLimitPreservesTimeoutDefaults verifies that WithServerReadLimit sets
 // ReadLimit without disturbing any other timeout field — the no-trap property
 // that distinguishes it from a SetTimeoutConfig struct literal.
-func (s *WebSocketSuite) TestWithReadLimitPreservesTimeoutDefaults() {
+func (s *WebSocketSuite) TestWithServerReadLimitPreservesTimeoutDefaults() {
 	const limit int64 = 4096
-	srv := NewServer(WithReadLimit(limit)).(*server)
+	srv := NewServer(WithServerReadLimit(limit)).(*server)
 	want := NewServerTimeoutConfig()
 	want.ReadLimit = limit
 	s.Equal(want, srv.timeoutConfig)
 }
 
-// TestWithReadLimitLastWinsAndComposes verifies option-application order (last
-// wins for ReadLimit, plain field assignment) and that WithReadLimit does not
+// TestWithServerReadLimitLastWinsAndComposes verifies option-application order (last
+// wins for ReadLimit, plain field assignment) and that WithServerReadLimit does not
 // interfere with sibling ServerOpts.
-func (s *WebSocketSuite) TestWithReadLimitLastWinsAndComposes() {
-	srv := NewServer(WithReadLimit(64), WithReadLimit(4096), WithDuplicateConnectionPolicy(KeepNew)).(*server)
+func (s *WebSocketSuite) TestWithServerReadLimitLastWinsAndComposes() {
+	srv := NewServer(WithServerReadLimit(64), WithServerReadLimit(4096), WithDuplicateConnectionPolicy(KeepNew)).(*server)
 	s.Equal(int64(4096), srv.timeoutConfig.ReadLimit)
 	s.Equal(KeepNew, srv.duplicatePolicy)
 	// Other timeouts still at defaults.
@@ -2014,13 +2014,13 @@ func (s *WebSocketSuite) TestWithReadLimitLastWinsAndComposes() {
 
 // TestServerReadLimitExceededViaOption is a behavioral clone of
 // TestServerReadLimitExceeded, but the limit is applied via
-// NewServer(WithReadLimit(…)) instead of SetTimeoutConfig — proving the option
+// NewServer(WithServerReadLimit(…)) instead of SetTimeoutConfig — proving the option
 // reaches the live connection (updateConfig → SetReadLimit).
 func (s *WebSocketSuite) TestServerReadLimitExceededViaOption() {
 	const limit = 64
 	oversized := bytes.Repeat([]byte("a"), limit*4)
 
-	srv := NewServer(WithReadLimit(limit)).(*server)
+	srv := NewServer(WithServerReadLimit(limit)).(*server)
 	serverDisconnectedC := make(chan struct{}, 1)
 	srv.SetDisconnectedClientHandler(func(ws Channel) {
 		serverDisconnectedC <- struct{}{}
@@ -2044,16 +2044,16 @@ func (s *WebSocketSuite) TestServerReadLimitExceededViaOption() {
 	}
 }
 
-// TestWithReadLimitNonPositiveIsUnlimited verifies that 0 and negative values
+// TestWithServerReadLimitNonPositiveIsUnlimited verifies that 0 and negative values
 // both behave as unlimited — the apply gate is strictly > 0, so neither value
 // interferes with message delivery.
-func (s *WebSocketSuite) TestWithReadLimitNonPositiveIsUnlimited() {
+func (s *WebSocketSuite) TestWithServerReadLimitNonPositiveIsUnlimited() {
 	large := bytes.Repeat([]byte("y"), 4*1024*1024) // 4 MB, -race-friendly
 	for _, v := range []int64{0, -1} {
 		limit := v
 		s.Run(fmt.Sprintf("limit=%d", limit), func() {
 			received := make(chan int, 1)
-			srv := NewServer(WithReadLimit(limit)).(*server)
+			srv := NewServer(WithServerReadLimit(limit)).(*server)
 			srv.SetMessageHandler(func(ws Channel, data []byte) error {
 				received <- len(data)
 				return nil
@@ -2063,10 +2063,14 @@ func (s *WebSocketSuite) TestWithReadLimitNonPositiveIsUnlimited() {
 			port := s.startServer(srv, serverPath)
 			host := fmt.Sprintf("localhost:%v", port)
 			u := url.URL{Scheme: "ws", Host: host, Path: testPath}
-			err := s.client.Start(u.String())
+			// A fresh client per row: row 1 stops its client, and a stopped
+			// client cannot be meaningfully restarted, so reusing it would make
+			// the two rows test different things.
+			cl := newWebsocketClient(s.T(), nil)
+			err := cl.Start(u.String())
 			s.Require().NoError(err)
 
-			err = s.client.Write(large)
+			err = cl.Write(large)
 			s.Require().NoError(err)
 
 			select {
@@ -2075,14 +2079,14 @@ func (s *WebSocketSuite) TestWithReadLimitNonPositiveIsUnlimited() {
 			case <-time.After(2 * time.Second):
 				s.Failf("timeout waiting for large message delivery", "limit=%d", limit)
 			}
-			s.True(s.client.IsConnected())
+			s.True(cl.IsConnected())
 
-			s.client.Stop()
+			cl.Stop()
 			stopServer()
 			// Wait for teardown.
 			deadline := time.Now().Add(2 * time.Second)
 			for time.Now().Before(deadline) {
-				if !s.client.IsConnected() && connectionCount(srv) == 0 {
+				if !cl.IsConnected() && connectionCount(srv) == 0 {
 					break
 				}
 				time.Sleep(10 * time.Millisecond)

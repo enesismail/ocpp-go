@@ -212,7 +212,7 @@ func WithDuplicateConnectionEvictionTimeout(d time.Duration) ServerOpt {
 	}
 }
 
-// WithReadLimit sets the per-message inbound read limit (bytes) on the
+// WithServerReadLimit sets the per-message inbound read limit (bytes) on the
 // server's timeout configuration at construction time, leaving every other
 // timeout at its default. Unlike SetTimeoutConfig with a struct literal —
 // which silently zeroes WriteWait/PingWait — this cannot disable the write
@@ -221,7 +221,7 @@ func WithDuplicateConnectionEvictionTimeout(d time.Duration) ServerOpt {
 // See ServerTimeoutConfig.ReadLimit for full semantics: the limit is bound at
 // upgrade time, exceeding it drops the connection, and any value <= 0 means
 // unlimited (the default).
-func WithReadLimit(limit int64) ServerOpt {
+func WithServerReadLimit(limit int64) ServerOpt {
 	return func(s *server) {
 		s.timeoutConfig.ReadLimit = limit
 	}

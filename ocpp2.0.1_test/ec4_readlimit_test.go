@@ -67,13 +67,13 @@ func authorizeFrame(msgID string) []byte {
 }
 
 // TestFacadeReadLimitThroughSuppliedServer proves that a ReadLimit applied via
-// ws.NewServer(ws.WithReadLimit(n)) — a server the caller constructs and passes
+// ws.NewServer(ws.WithServerReadLimit(n)) — a server the caller constructs and passes
 // to NewCSMS — reaches the live connection. It also proves WriteWait is not
 // zeroed (the under-limit arm round-trips a response, which requires a live
 // write deadline).
 func TestFacadeReadLimitThroughSuppliedServer(t *testing.T) {
 	const limit int64 = 1024
-	srv := ws.NewServer(ws.WithReadLimit(limit))
+	srv := ws.NewServer(ws.WithServerReadLimit(limit))
 	cs := ocpp2.NewCSMS(nil, srv)
 
 	disconnectedC := make(chan struct{}, 1)
@@ -163,7 +163,7 @@ func TestFacadeReadLimitThroughSuppliedServer(t *testing.T) {
 }
 
 // TestNewDefaultCSMSAppliesReadLimit is the constructor-wiring arm that uses
-// NewDefaultCSMS(WithReadLimit(…)) and a reserved port. It asserts the limited
+// NewDefaultCSMS(WithServerReadLimit(…)) and a reserved port. It asserts the limited
 // system drops an over-limit write, and a control (unlimited) system does not.
 func TestNewDefaultCSMSAppliesReadLimit(t *testing.T) {
 	const limit int64 = 1024
@@ -171,7 +171,7 @@ func TestNewDefaultCSMSAppliesReadLimit(t *testing.T) {
 
 	// --- Limited system ---
 	limitedPort := reservedPort(t)
-	limitedCS := ocpp2.NewDefaultCSMS(ocpp2.WithReadLimit(limit))
+	limitedCS := ocpp2.NewDefaultCSMS(ocpp2.WithServerReadLimit(limit))
 
 	limitedDisconnectedC := make(chan struct{}, 1)
 	limitedCS.SetChargingStationDisconnectedHandler(func(_ ocpp2.ChargingStationConnection) {
@@ -182,7 +182,16 @@ func TestNewDefaultCSMSAppliesReadLimit(t *testing.T) {
 	go limitedCS.Start(limitedPort, "/ws")
 
 	// --- Control (unlimited) system ---
+	// reservedPort probes and releases, so two draws can collide. On a collision
+	// the control server never binds, awaitListening succeeds against the LIMITED
+	// server, and the control arm below passes vacuously — re-draw instead.
 	controlPort := reservedPort(t)
+	for i := 0; controlPort == limitedPort && i < 10; i++ {
+		controlPort = reservedPort(t)
+	}
+	if controlPort == limitedPort {
+		t.Fatalf("could not reserve a control port distinct from the limited port %d", limitedPort)
+	}
 	controlCS := ocpp2.NewDefaultCSMS()
 
 	controlDisconnectedC := make(chan struct{}, 1)
@@ -241,6 +250,13 @@ func TestNewDefaultCSMSAppliesReadLimit(t *testing.T) {
 		t.Fatal("unlimited control system unexpectedly dropped the connection")
 	case <-time.After(2 * time.Second):
 		// Expected: no disconnect, message was delivered.
+	}
+
+	// The absence of a disconnect only means something if the control client is
+	// still connected: a client that was rejected at dial (or dropped by some
+	// other server) would also produce no event on controlDisconnectedC.
+	if !controlClient.IsConnected() {
+		t.Fatal("control client is not connected: the no-disconnect arm passed vacuously")
 	}
 }
 

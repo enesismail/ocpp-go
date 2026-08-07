@@ -598,7 +598,7 @@ func NewCentralSystem(endpoint *ocppj.Server, server ws.Server) CentralSystem {
 // CentralSystemOpt is exported so it can appear in the constructor's
 // signature, but centralSystemConfig is not: a consumer cannot write their own
 // CentralSystemOpt, only pass the package-provided ones (currently
-// WithReadLimit). The seam is deliberately facade-internal — the exported type
+// WithServerReadLimit). The seam is deliberately facade-internal — the exported type
 // exists solely so package-provided option constructors have something to
 // return — not a consumer extension point.
 type CentralSystemOpt func(*centralSystemConfig)
@@ -607,7 +607,7 @@ type centralSystemConfig struct {
 	wsOpts []ws.ServerOpt
 }
 
-// WithReadLimit bounds the size in bytes of a single inbound websocket message
+// WithServerReadLimit bounds the size in bytes of a single inbound websocket message
 // accepted from a charge point. Any value <= 0 means unlimited, which is the
 // default. Exceeding the limit DROPS the connection (the charge point's
 // disconnect handler fires); it does not merely skip the oversized message, so
@@ -616,9 +616,9 @@ type centralSystemConfig struct {
 //
 // The limit is bound when a connection is upgraded, so it applies to every
 // charge point that connects after Start.
-func WithReadLimit(limit int64) CentralSystemOpt {
+func WithServerReadLimit(limit int64) CentralSystemOpt {
 	return func(c *centralSystemConfig) {
-		c.wsOpts = append(c.wsOpts, ws.WithReadLimit(limit))
+		c.wsOpts = append(c.wsOpts, ws.WithServerReadLimit(limit))
 	}
 }
 
