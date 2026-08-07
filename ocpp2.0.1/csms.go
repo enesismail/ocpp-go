@@ -70,7 +70,12 @@ type csms struct {
 	// DEFERRED: per-client lock striping to decouple clients from one another.
 	callbackQueue       callbackqueue.CallbackQueue
 	disconnectedHandler ChargingStationConnectionHandler
-	errC                chan error
+	// onHandlerPanic is the consumer's panic hook, STORED here rather than
+	// delegated to cs.server: the constructor installs a routing wrapper on the
+	// endpoint, and delegating would destroy it. Before-Start contract, like
+	// every other handler field.
+	onHandlerPanic func(ocppj.HandlerPanic)
+	errC           chan error
 }
 
 func newCSMS(server *ocppj.Server) csms {
@@ -122,7 +127,8 @@ func (cs *csms) error(err error) {
 // (undeliverable responses, canceled requests with no matching callback
 // (including — routinely during a Stop/Shutdown with outstanding requests — a
 // request whose callback was already delivered by the disconnect drain — see
-// SendRequestAsyncCtx), recovered handler panics). The
+// SendRequestAsyncCtx), recovered handler panics (as
+// *ocppj.HandlerPanicError — match with errors.As). The
 // channel exists from construction and is
 // NEVER closed; errors reported before the first Errors() call are buffered
 // (up to errChanCapacity) and delivered to the first drainer.
@@ -801,8 +807,40 @@ func (cs *csms) SetDataHandler(handler data.CSMSHandler) {
 	cs.dataHandler = handler
 }
 
+// SetOnHandlerPanic registers a callback invoked when a user-provided OCPP-J
+// handler panics. The recovered panic is also reported on Errors() as an
+// *ocppj.HandlerPanicError, whether or not this callback is registered; this
+// callback runs after that report. Set it before Start.
+//
+// Every panic this CSMS recovers itself is reported, including those in inbound
+// request, response and error handlers, the connect and disconnect handlers, an
+// invalid-message hook registered on the underlying *ocppj.Server, and the
+// canceled-request callback. So is every panic the DEFAULT dispatcher recovers
+// internally. Panics recovered inside a CUSTOM ServerDispatcher are not — see
+// the last paragraph.
+//
+// The callback runs synchronously on whichever goroutine recovered the panic —
+// a websocket read goroutine, a facade handler/cancel goroutine, or the
+// dispatcher's message pump — so it must not call Stop, must not block, and
+// should not panic (a panic here is recovered and logged, but suppresses
+// nothing that ran before it). See ocppj.Server.SetOnHandlerPanic.
+//
+// Calling SetOnHandlerPanic on the underlying *ocppj.Server AFTER constructing
+// this CSMS replaces the routing wrapper and silently disables the Errors()
+// reporting; register the hook here instead. A hook registered on the endpoint
+// BEFORE construction is preserved and still invoked.
+//
+// One class of panic reaches this callback only on the default dispatcher: a
+// panic recovered INSIDE the dispatcher (a raw CanceledRequestHandler, or the
+// feature-name resolution in handleCanceledRequest, both reported as
+// ocppj.CancelHandlerKind) is routed through the dispatcher's own copy of the
+// hook, which ocppj.Server.SetOnHandlerPanic propagates only to a
+// *ocppj.DefaultServerDispatcher. A custom ServerDispatcher never receives the
+// hook, so panics it recovers internally reach neither this callback nor
+// Errors(): panic reporting is unsupported with a custom dispatcher. Every
+// other kind is reported whichever dispatcher is in use.
 func (cs *csms) SetOnHandlerPanic(handler func(ocppj.HandlerPanic)) {
-	cs.server.SetOnHandlerPanic(handler)
+	cs.onHandlerPanic = handler
 }
 
 func (cs *csms) SetNewChargingStationValidationHandler(handler ws.CheckClientHandler) {

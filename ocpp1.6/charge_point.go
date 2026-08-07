@@ -61,6 +61,7 @@ type chargePoint struct {
 	extendedTriggerMessageHandler extendedtriggermessage.ChargePointHandler
 	secureFirmwareHandler         securefirmware.ChargePointHandler
 	certificateHandler            certificates.ChargePointHandler
+	onHandlerPanic                func(ocppj.HandlerPanic)
 	incoming                      chan incomingMessage
 	callbacks                     callbackqueue.CallbackQueue
 	stopC                         atomic.Value // holds chan struct{}; see loadStopC/storeStopC
@@ -152,6 +153,35 @@ func (cp *chargePoint) error(err error) {
 	}
 }
 
+// errorNonBlocking reports err on the Errors() channel with a NON-BLOCKING
+// send: if Errors() was never called, or the cap-1 buffer is full, err is
+// DROPPED. It exists solely for the recovered-panic route installed in
+// NewChargePoint, which runs on the ocppj client's websocket read goroutine, on
+// this facade's asyncCallbackHandler goroutine (the sole consumer of cp.incoming,
+// where user response/error/request handlers actually run), and on the client
+// dispatcher's cancel-recover path (its messagePump goroutine) — goroutines that
+// must never park on a channel the consumer has stopped draining. error() is
+// preemptible only while a generation is running: before the first Start,
+// loadStopC() is nil, so a blocking send on a full errC there parks forever
+// rather than until Stop. Every other producer keeps error()'s blocking,
+// stopC-preemptible semantics (PR #37/#38); do not swap one for the other in
+// either direction.
+//
+// errC is read as a field copy under mu and the lock is released before the
+// send, per the HOLD-SCOPE rule on the mu field doc. A nil errC needs no
+// special case: a send on a nil channel never proceeds, so the select takes
+// default and the report is dropped. errC creation stays LAZY on the client —
+// do not add eager creation here (that is the server-side EC2 design).
+func (cp *chargePoint) errorNonBlocking(err error) {
+	cp.mu.Lock()
+	errC := cp.errC
+	cp.mu.Unlock()
+	select {
+	case errC <- err:
+	default:
+	}
+}
+
 // Callback invoked whenever a queued request is canceled, due to timeout.
 // By default, the callback returns a GenericError to the caller, who sent the original request.
 func (cp *chargePoint) onRequestTimeout(_ string, _ ocpp.Request, err *ocpp.Error) {
@@ -171,7 +201,12 @@ func (cp *chargePoint) onRequestTimeout(_ string, _ ocpp.Request, err *ocpp.Erro
 // Errors returns a channel for error messages. If it doesn't exist it is
 // created. See the ChargePoint interface godoc (v16.go) for the full
 // contract - in short: errC is NEVER closed and is process-lifetime, not
-// per-generation.
+// per-generation. Recovered handler panics are reported here as
+// *ocppj.HandlerPanicError, best-effort: that send is non-blocking, so a panic
+// reported while the buffer is full or before the first Errors() call is
+// dropped. Use SetOnHandlerPanic to observe every panic the facade or the
+// default dispatcher recovers; panics recovered inside a custom
+// ClientDispatcher reach neither the hook nor Errors().
 //
 // errC's lazy creation is guarded by mu so two concurrent first-callers
 // cannot each create a different channel and silently lose one (spec §5).
@@ -409,8 +444,22 @@ func (cp *chargePoint) SetCertificateHandler(handler certificates.ChargePointHan
 	cp.certificateHandler = handler
 }
 
+// SetOnHandlerPanic registers a callback invoked when a user-provided OCPP-J
+// handler panics. The recovered panic is also reported on Errors() as an
+// *ocppj.HandlerPanicError, best-effort: that send is non-blocking on a cap-1
+// channel, so a report is dropped when Errors() has never been called, when
+// the buffer is full, or when the consumer has stopped draining. To observe
+// every panic this charge point or the default dispatcher recovers — including
+// ones racing shutdown — use this callback; Errors() is a monitoring stream,
+// not an inventory. Set it before Start.
+//
+// A panic recovered inside the dispatcher (a raw CanceledRequestHandler, kind
+// ocppj.CancelHandlerKind) reaches this callback only on a
+// *ocppj.DefaultClientDispatcher: a custom ClientDispatcher never receives
+// this hook, so panic reporting is unsupported with one. Panics recovered by
+// this charge point itself are unaffected by the dispatcher in use.
 func (cp *chargePoint) SetOnHandlerPanic(handler func(ocppj.HandlerPanic)) {
-	cp.client.SetOnHandlerPanic(handler)
+	cp.onHandlerPanic = handler
 }
 
 // SetOnDisconnectedHandler registers a callback invoked when the charge point

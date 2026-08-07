@@ -309,8 +309,10 @@ func TestEC1ServerStopRejectsLateCallResult(t *testing.T) {
 	assert.Equal(t, int32(0), atomic.LoadInt32(&responses), "late CALL_RESULT must not reach responseHandler")
 }
 
-// TestEC1ServerStopRecoversPanickingCancel covers test 5. The Errors()
-// assertion is intentionally absent: that routing belongs to EC3, not EC1.
+// TestEC1ServerStopRecoversPanickingCancel covers test 5. The Errors() assertion
+// lives at the facade layer, where the error channel exists — see
+// TestEC3StopDrainPanicReportedOnErrors. This raw-endpoint test is unchanged by
+// that routing.
 func TestEC1ServerStopRecoversPanickingCancel(t *testing.T) {
 	d, _, queueMap, network, server := ec1NewServer(t)
 	clientID := "ec1-panic"

@@ -909,3 +909,56 @@ and `ocpp2.0.1_test/ec1_server_stop_cancel_test.go` cover facade exactly-once
 delivery and the 1.6 `SendRequestAsync` storm-vs-`Stop` watchdog. The panic
 test intentionally does not assert `Errors()`; that routing assertion belongs
 to EC3.
+
+## Recovered handler panics on the facade error channels (EC3)
+
+Recovered handler panics — on facade-routed paths and in the default
+dispatchers — are reported on the facade `Errors()` channels as
+`*ocppj.HandlerPanicError`, so they are visible by default: the `ocppj` log sink
+is a no-op logger unless the consumer installs one, and `SetOnHandlerPanic` is
+opt-in, so upstream turns a panicking handler into a silent `CALLERROR` loop.
+Each facade constructor installs a routing callback on its endpoint; the facade
+`SetOnHandlerPanic` stores the consumer's hook instead of delegating, so
+registering one cannot remove the routing, and the constructor chains any hook
+the caller registered on the endpoint beforehand. The report is emitted before
+either hook runs, so a panicking hook cannot suppress it. Registering a hook
+directly on the endpoint *after* facade construction replaces the wrapper and
+disables the reporting.
+
+| Symbol | Why keep it |
+|--------|-------------|
+| `ocppj.HandlerPanicError` | wraps a recovered panic for delivery on a facade error channel; consumers classify it with `errors.As` |
+| `ocppj.Server.OnHandlerPanic` / `ocppj.Client.OnHandlerPanic` | lets an installed wrapper chain a previously registered hook instead of destroying it |
+| `ocpp1.6.NewCentralSystem` / `ocpp2.0.1.NewCSMS` | install the panic routing wrapper on the server endpoint |
+| `ocpp1.6.NewChargePoint` / `ocpp2.0.1.NewChargingStation` | install the same wrapper on the client endpoint, through the non-blocking helper |
+| `ocpp1.6.chargePoint.errorNonBlocking` / `ocpp2.0.1.chargingStation.errorNonBlocking` | drop-on-full panic-only send, so the panic route cannot park the ws read goroutine, the `asyncCallbackHandler` goroutine, or the dispatcher pump on the client's blocking cap-1 error channel |
+| the four facade `SetOnHandlerPanic` | store the hook rather than delegating it, so a consumer hook cannot clobber the routing |
+
+Panics recovered inside a dispatcher — a raw `CanceledRequestHandler`, and the
+`request.GetFeatureName()` resolution in the facades' `handleCanceledRequest`,
+both reported as `ocppj.CancelHandlerKind` — are routed through the dispatcher's
+own copy of the hook, which `SetOnHandlerPanic` propagates only to the default
+dispatchers. A custom `ClientDispatcher`/`ServerDispatcher` never receives the
+hook, so both of those reach neither the hook nor `Errors()`: panic reporting is
+unsupported with a custom dispatcher. Everything the endpoints and facades
+recover themselves is reported whichever dispatcher is in use. Server reports
+use the facade's non-blocking cap-16 send and client reports are best-effort on
+a cap-1 channel, and a single canceled request can yield both a
+`*ocppj.HandlerPanicError` and a "no handler available" report when the
+disconnect drain races the cancel goroutine, so `Errors()` stays a monitoring
+stream — neither a complete panic inventory nor one entry per request.
+
+**Guard:** `ocpp1.6_test/ec3_panic_errors_test.go` and
+`ocpp2.0.1_test/ec3_panic_errors_test.go` cover default visibility, hook-plus-
+channel delivery, both clobber directions, a panicking hook, an undrained storm,
+the stop-drain hand-off, and the client route's non-blocking discipline.
+
+**Release note:** Recovered handler panics — those the facades recover on their
+own paths, plus those the default dispatchers recover internally — are now
+reported on the facade `Errors()` channels as `*ocppj.HandlerPanicError`.
+Consumers draining `Errors()` will start seeing these values; classify them
+with `errors.As`. Registering a hook directly on an `ocppj.Server`/`ocppj.Client`
+*after* handing it to a facade constructor disables the reporting — register it
+on the facade instead. Panics recovered inside a custom
+`ClientDispatcher`/`ServerDispatcher` are not reported; panic reporting is only
+supported with the default dispatchers.
