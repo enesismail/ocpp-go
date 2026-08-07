@@ -27,6 +27,36 @@ func reservedPort(t *testing.T) int {
 	return port
 }
 
+func csAwaitListening(t *testing.T, port int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 100*time.Millisecond)
+		if err == nil {
+			c.Close()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("server did not start listening")
+}
+
+func csStopOnCleanup(t *testing.T, name string, stop func()) {
+	t.Helper()
+	t.Cleanup(func() {
+		doneC := make(chan struct{})
+		go func() {
+			stop()
+			close(doneC)
+		}()
+		select {
+		case <-doneC:
+		case <-time.After(2 * time.Second):
+			t.Errorf("%s Stop did not return", name)
+		}
+	})
+}
+
 // authorizeFrame returns a valid OCPP-J CALL frame for Authorize with the
 // given message ID. The payload is minimal but passes OCPP 2.0.1 validation.
 func authorizeFrame(msgID string) []byte {
@@ -57,8 +87,8 @@ func TestFacadeReadLimitThroughSuppliedServer(t *testing.T) {
 	// and the second would be rejected as a duplicate connection (default
 	// KeepCurrent policy) without ever registering — its drop then never
 	// reaches the disconnected handler this test asserts on.
+	csStopOnCleanup(t, "CSMS", cs.Stop)
 	go cs.Start(0, "/ws/{id}")
-	defer cs.Stop()
 
 	// Poll srv.Addr() for the bound port.
 	var port int
@@ -148,8 +178,8 @@ func TestNewDefaultCSMSAppliesReadLimit(t *testing.T) {
 		limitedDisconnectedC <- struct{}{}
 	})
 
+	csStopOnCleanup(t, "limited CSMS", limitedCS.Stop)
 	go limitedCS.Start(limitedPort, "/ws")
-	defer limitedCS.Stop()
 
 	// --- Control (unlimited) system ---
 	controlPort := reservedPort(t)
@@ -160,8 +190,11 @@ func TestNewDefaultCSMSAppliesReadLimit(t *testing.T) {
 		controlDisconnectedC <- struct{}{}
 	})
 
+	csStopOnCleanup(t, "control CSMS", controlCS.Stop)
 	go controlCS.Start(controlPort, "/ws")
-	defer controlCS.Stop()
+
+	csAwaitListening(t, limitedPort)
+	csAwaitListening(t, controlPort)
 
 	// --- Dial limited system, write oversized → should disconnect ---
 	limitedClient := ws.NewClient()
@@ -220,22 +253,8 @@ func TestNewDefaultCSMSNoOptsMatchesLegacyDefault(t *testing.T) {
 	}
 
 	port := reservedPort(t)
+	csStopOnCleanup(t, "CSMS", cs.Stop)
 	go cs.Start(port, "/ws")
 
-	deadline := time.Now().Add(2 * time.Second)
-	started := false
-	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 100*time.Millisecond)
-		if err == nil {
-			c.Close()
-			started = true
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !started {
-		t.Fatal("server did not start listening")
-	}
-
-	cs.Stop()
+	csAwaitListening(t, port)
 }

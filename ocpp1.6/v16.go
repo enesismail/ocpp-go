@@ -594,6 +594,13 @@ func NewCentralSystem(endpoint *ocppj.Server, server ws.Server) CentralSystem {
 }
 
 // CentralSystemOpt configures a central system built by NewDefaultCentralSystem.
+//
+// CentralSystemOpt is exported so it can appear in the constructor's
+// signature, but centralSystemConfig is not: a consumer cannot write their own
+// CentralSystemOpt, only pass the package-provided ones (currently
+// WithReadLimit). The seam is deliberately facade-internal — the exported type
+// exists solely so package-provided option constructors have something to
+// return — not a consumer extension point.
 type CentralSystemOpt func(*centralSystemConfig)
 
 type centralSystemConfig struct {

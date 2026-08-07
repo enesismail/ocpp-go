@@ -146,6 +146,27 @@ func (s *WebSocketSuite) startServer(srv *server, listenPath string) int {
 	return 0
 }
 
+func stopServerOnCleanup(t *testing.T, srv *server) func() {
+	t.Helper()
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			doneC := make(chan struct{})
+			go func() {
+				srv.Stop()
+				close(doneC)
+			}()
+			select {
+			case <-doneC:
+			case <-time.After(2 * time.Second):
+				t.Errorf("server Stop did not return")
+			}
+		})
+	}
+	t.Cleanup(stop)
+	return stop
+}
+
 // freePort returns a likely-free ephemeral port for tests that need to control
 // the exact port (a dead-port dial, or a port a server will bind LATER). Probe
 // with the SAME bind shape server.Start uses — `":0"` (all interfaces), NOT
@@ -2005,6 +2026,7 @@ func (s *WebSocketSuite) TestServerReadLimitExceededViaOption() {
 		serverDisconnectedC <- struct{}{}
 	})
 
+	stopServerOnCleanup(s.T(), srv)
 	port := s.startServer(srv, serverPath)
 
 	host := fmt.Sprintf("localhost:%v", port)
@@ -2037,6 +2059,7 @@ func (s *WebSocketSuite) TestWithReadLimitNonPositiveIsUnlimited() {
 				return nil
 			})
 
+			stopServer := stopServerOnCleanup(s.T(), srv)
 			port := s.startServer(srv, serverPath)
 			host := fmt.Sprintf("localhost:%v", port)
 			u := url.URL{Scheme: "ws", Host: host, Path: testPath}
@@ -2049,13 +2072,13 @@ func (s *WebSocketSuite) TestWithReadLimitNonPositiveIsUnlimited() {
 			select {
 			case n := <-received:
 				s.Equal(len(large), n)
-			case <-time.After(5 * time.Second):
+			case <-time.After(2 * time.Second):
 				s.Failf("timeout waiting for large message delivery", "limit=%d", limit)
 			}
 			s.True(s.client.IsConnected())
 
 			s.client.Stop()
-			srv.Stop()
+			stopServer()
 			// Wait for teardown.
 			deadline := time.Now().Add(2 * time.Second)
 			for time.Now().Before(deadline) {
