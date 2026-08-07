@@ -141,14 +141,17 @@ message. The limit can be set at the facade layer without importing the `ws` pac
 
 ```go
 // central system with a 1 MB inbound limit, no ws import needed
-cs := ocpp16.NewDefaultCentralSystem(ocpp16.WithReadLimit(1 << 20))
+cs := ocpp16.NewDefaultCentralSystem(ocpp16.WithServerReadLimit(1 << 20))
+
+// same knob for OCPP 2.0.1, where a large NotifyReport can reach hundreds of KB
+csms := ocpp2.NewDefaultCSMS(ocpp2.WithServerReadLimit(1 << 20))
 ```
 
 When configuring your own `ws.Server`, use the construction-safe option instead of a
 bare `ServerTimeoutConfig` literal (which would silently zero the write/ping deadlines):
 
 ```go
-server := ws.NewServer(ws.WithReadLimit(1 << 20))
+server := ws.NewServer(ws.WithServerReadLimit(1 << 20))
 ```
 
 ## Contributing

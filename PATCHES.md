@@ -91,25 +91,32 @@ The fork-original ws feature now has a facade-level entry point via
 `NewDefaultCentralSystem` / `NewDefaultCSMS`, so consumers can set the limit without
 importing the `ws` package. The default remains unlimited (`0`).
 
+The option is named `WithServerReadLimit` in all three packages (`ws`, `ocpp1.6`,
+`ocpp2.0.1`). The knob exists on both sides of the wire — `ClientTimeoutConfig.ReadLimit`
+is already shipped — so the name is side-qualified up front, matching the existing
+`WithClientTLSConfig` / `WithServerTLSConfig` pair; a client-side analogue would be
+`WithClientReadLimit` in the same packages. One identifier for one knob across all
+three layers.
+
 | File:line | Symbol | Why keep it |
 |-----------|--------|-------------|
-| `ws/websocket.go:131` | `ReadLimit int64` on `ServerTimeoutConfig` | public opt-in knob for inbound message size on server conns |
-| `ws/websocket.go:183` | `ReadLimit int64` on `ClientTimeoutConfig` | public opt-in knob for inbound message size on client conns |
-| `ws/websocket.go:272` | `ReadLimit int64` on internal `WebSocketConfig` | carries the limit from the timeout config to `newWebSocket`/`updateConfig` |
+| `ws/websocket.go:135` | `ReadLimit int64` on `ServerTimeoutConfig` | public opt-in knob for inbound message size on server conns |
+| `ws/websocket.go:191` | `ReadLimit int64` on `ClientTimeoutConfig` | public opt-in knob for inbound message size on client conns |
+| `ws/websocket.go:280` | `ReadLimit int64` on internal `WebSocketConfig` | carries the limit from the timeout config to `newWebSocket`/`updateConfig` |
 | `ws/client.go:380` | `wsCfg.ReadLimit = c.timeoutConfig.ReadLimit` before `newWebSocket` | threads the client knob without changing `NewDefaultWebSocketConfig`'s signature |
 | `ws/server.go:540` | `wsCfg.ReadLimit = s.timeoutConfig.ReadLimit` before `newWebSocket` | threads the server knob without changing `NewDefaultWebSocketConfig`'s signature |
-| `ws/websocket.go:431` | `if cfg.ReadLimit > 0 { w.connection.SetReadLimit(cfg.ReadLimit) }` in `updateConfig` | applies the limit at the single cfg→conn choke point; `> 0` gate keeps `0`/negative unlimited |
-| `ws/server.go` | `WithReadLimit` ServerOpt | construction-safe alternative to `SetTimeoutConfig`; cannot zero the write/ping deadlines |
-| `ocpp1.6/v16.go` | `NewDefaultCentralSystem` + `CentralSystemOpt` + `WithReadLimit` | facade route to the knob without a `ws` import |
-| `ocpp2.0.1/v2.go` | `NewDefaultCSMS` + `CSMSOpt` + `WithReadLimit` | facade route to the knob without a `ws` import |
+| `ws/websocket.go:435` | `if cfg.ReadLimit > 0 { w.connection.SetReadLimit(cfg.ReadLimit) }` in `updateConfig` | applies the limit at the single cfg→conn choke point; `> 0` gate keeps `0`/negative unlimited |
+| `ws/server.go` | `WithServerReadLimit` ServerOpt | construction-safe alternative to `SetTimeoutConfig`; cannot zero the write/ping deadlines |
+| `ocpp1.6/v16.go` | `NewDefaultCentralSystem` + `CentralSystemOpt` + `WithServerReadLimit` | facade route to the knob without a `ws` import |
+| `ocpp2.0.1/v2.go` | `NewDefaultCSMS` + `CSMSOpt` + `WithServerReadLimit` | facade route to the knob without a `ws` import |
 
 **Guard:** `ws/websocket_test.go` — `TestServerReadLimitExceeded` (server drops the over-limit
 connection: proves the server call site threads the limit), `TestClientReadLimitExceeded`
 (client surfaces `websocket.ErrReadLimit` on its disconnect handler), `TestServerReadLimitUnderLimitPasses`,
 `TestReadLimitDefaultUnlimited` (default 0 delivers a large message unchanged),
 `TestClientReadLimitAppliesAfterReconnect` (a fresh dial re-applies the limit),
-`TestWithReadLimitPreservesTimeoutDefaults`, `TestWithReadLimitLastWinsAndComposes`,
-`TestServerReadLimitExceededViaOption`, `TestWithReadLimitNonPositiveIsUnlimited`;
+`TestWithServerReadLimitPreservesTimeoutDefaults`, `TestWithServerReadLimitLastWinsAndComposes`,
+`TestServerReadLimitExceededViaOption`, `TestWithServerReadLimitNonPositiveIsUnlimited`;
 `ocpp1.6_test/ec4_readlimit_test.go` — `TestFacadeReadLimitThroughSuppliedServer`,
 `TestNewDefaultCentralSystemAppliesReadLimit`, `TestNewDefaultCentralSystemNoOptsMatchesLegacyDefault`;
 `ocpp2.0.1_test/ec4_readlimit_test.go` — parity tests for `NewDefaultCSMS`. All run under
