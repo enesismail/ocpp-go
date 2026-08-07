@@ -128,7 +128,7 @@ func (cs *csms) error(err error) {
 // (including — routinely during a Stop/Shutdown with outstanding requests — a
 // request whose callback was already delivered by the disconnect drain — see
 // SendRequestAsyncCtx), recovered handler panics (as
-// *ocppj.HandlerPanicError — match with errors.As). The
+// *ocppj.HandlerPanicError — match with errors.As)). The
 // channel exists from construction and is
 // NEVER closed; errors reported before the first Errors() call are buffered
 // (up to errChanCapacity) and delivered to the first drainer.

@@ -365,14 +365,14 @@ func (suite *OcppV16TestSuite) TestEC3StopDrainPanicReportedOnErrors() {
 	}
 }
 
-// setupEC3V16Client starts the charge point and installs, BEFORE Start, a
-// single core-handler mock whose OnChangeAvailability panics with whatever
-// value it receives from the returned panicValues channel. Handler setters
-// have a documented before-Start contract (no synchronization once the
+// setupEC3V16ClientFor starts cp and installs, BEFORE Start, a single
+// core-handler mock whose OnChangeAvailability panics with whatever value it
+// receives from the returned panicValues channel. Handler setters have a
+// documented before-Start contract (no synchronization once the
 // asyncCallbackHandler-equivalent goroutine is running), so the handler must
 // be installed exactly once, before Start, rather than being swapped in later
 // by each driven panic.
-func (suite *OcppV16TestSuite) setupEC3V16Client() (chan []byte, chan string) {
+func (suite *OcppV16TestSuite) setupEC3V16ClientFor(cp ocpp16.ChargePoint) (chan []byte, chan string) {
 	suite.mockWsClient.On("Start", mock.AnythingOfType("string")).Return(nil)
 	suite.mockWsClient.On("Stop").Return().Maybe()
 	suite.mockWsClient.On("IsConnected").Return(false).Maybe()
@@ -383,12 +383,16 @@ func (suite *OcppV16TestSuite) setupEC3V16Client() (chan []byte, chan string) {
 	panicValues := make(chan string, 4)
 	listener := &MockChargePointCoreListener{}
 	listener.On("OnChangeAvailability", mock.Anything).Run(func(mock.Arguments) { panic(<-panicValues) })
-	suite.chargePoint.SetCoreHandler(listener)
-	require.NoError(suite.T(), suite.chargePoint.Start("someUrl"))
+	cp.SetCoreHandler(listener)
+	require.NoError(suite.T(), cp.Start("someUrl"))
 	// Stop also releases any producer left parked in the blocking error() (its
 	// stopC arm), so no goroutine outlives the test on the t.Fatal paths either.
-	ec3StopOnCleanup(suite.T(), "charge point", suite.chargePoint.Stop)
+	ec3StopOnCleanup(suite.T(), "charge point", cp.Stop)
 	return writeC, panicValues
+}
+
+func (suite *OcppV16TestSuite) setupEC3V16Client() (chan []byte, chan string) {
+	return suite.setupEC3V16ClientFor(suite.chargePoint)
 }
 
 // driveV16OrphanResponse drives one ORDINARY (non-panic) error() producer: a
@@ -503,4 +507,55 @@ func (suite *OcppV16TestSuite) TestEC3ClientPanicBeforeErrorsArmedIsSilent() {
 		suite.T().Fatalf("unexpected retroactive client panic report: %v", reported)
 	default:
 	}
+}
+
+func (suite *OcppV16TestSuite) TestEC3ClientPanicReportedOnErrorsByDefault() {
+	t := suite.T()
+	// Errors() is armed before the panic, with its cap-1 buffer empty, so the
+	// non-blocking report must land: this is the positive delivery guard for the
+	// client route (the non-blocking test above always runs it against a FULL
+	// buffer, where drops are by design).
+	errorsC := suite.chargePoint.Errors()
+	writeC, panicValues := suite.setupEC3V16Client()
+	suite.driveV16ClientPanic(writeC, panicValues, "ec3-client-report", "ec3-client-report-panic")
+	panicErr := ec3ReadPanicError(t, errorsC)
+	require.Equal(t, ocppj.RequestHandlerKind, panicErr.Panic.Kind)
+	require.Equal(t, "", panicErr.Panic.ClientID)
+	require.Equal(t, core.ChangeAvailabilityFeatureName, panicErr.Panic.Action)
+	require.Equal(t, "ec3-client-report", panicErr.Panic.RequestID)
+	require.Equal(t, "ec3-client-report-panic", panicErr.Panic.Value)
+	require.NotEmpty(t, panicErr.Panic.Stack)
+}
+
+func (suite *OcppV16TestSuite) TestEC3ClientSetOnHandlerPanicAfterConstructionKeepsRouting() {
+	t := suite.T()
+	hookC := make(chan ocppj.HandlerPanic, 1)
+	suite.chargePoint.SetOnHandlerPanic(func(hp ocppj.HandlerPanic) { hookC <- hp })
+	errorsC := suite.chargePoint.Errors()
+	writeC, panicValues := suite.setupEC3V16Client()
+	suite.driveV16ClientPanic(writeC, panicValues, "ec3-client-after", "ec3-client-after-panic")
+	panicErr := ec3ReadPanicError(t, errorsC)
+	select {
+	case hp := <-hookC:
+		require.Equal(t, panicErr.Panic, hp)
+	case <-time.After(ec3Wait):
+		t.Fatal("client facade panic hook did not fire")
+	}
+}
+
+func (suite *OcppV16TestSuite) TestEC3ClientEndpointHookRegisteredBeforeConstructionSurvives() {
+	t := suite.T()
+	endpoint := ocppj.NewClient("test_id", suite.mockWsClient, ocppj.NewDefaultClientDispatcher(ocppj.NewFIFOClientQueue(queueCapacity)), nil, core.Profile)
+	prevC := make(chan ocppj.HandlerPanic, 1)
+	endpoint.SetOnHandlerPanic(func(hp ocppj.HandlerPanic) { prevC <- hp })
+	chargePoint := ocpp16.NewChargePoint("test_id", endpoint, suite.mockWsClient)
+	errorsC := chargePoint.Errors()
+	writeC, panicValues := suite.setupEC3V16ClientFor(chargePoint)
+	suite.driveV16ClientPanic(writeC, panicValues, "ec3-client-before", "ec3-client-before-panic")
+	select {
+	case <-prevC:
+	case <-time.After(ec3Wait):
+		t.Fatal("endpoint hook registered before construction was not called")
+	}
+	_ = ec3ReadPanicError(t, errorsC)
 }

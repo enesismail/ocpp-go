@@ -671,6 +671,11 @@ func (cs *chargingStation) SetDataHandler(handler data.ChargingStationHandler) {
 // Errors() report, which is attempted before either of them runs - it remains
 // best-effort for the buffer reasons above, never because a hook panicked.
 //
+// Calling SetOnHandlerPanic on the underlying *ocppj.Client AFTER constructing
+// this charging station replaces the routing wrapper and silently disables the
+// Errors() reporting; register the hook here instead. A hook registered on the
+// endpoint BEFORE construction is preserved and still invoked.
+//
 // A panic recovered inside the dispatcher (a raw CanceledRequestHandler, kind
 // ocppj.CancelHandlerKind) reaches this callback only on a
 // *ocppj.DefaultClientDispatcher: a custom ClientDispatcher never receives

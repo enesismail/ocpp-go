@@ -592,8 +592,8 @@ type CSMS interface {
 	SetDataHandler(handler data.CSMSHandler)
 	// Registers a callback invoked when a user-provided OCPP-J handler panics.
 	// Recovered panics are also reported on Errors() as *ocppj.HandlerPanicError,
-	// whether or not this callback is registered — every panic this central
-	// system recovers itself, plus those the default dispatcher recovers
+	// whether or not this callback is registered — every panic this CSMS
+	// recovers itself, plus those the default dispatcher recovers
 	// internally; panics recovered inside a custom ServerDispatcher are not
 	// reported. Registering a hook on the underlying *ocppj.Server after
 	// construction disables the reporting. Set it before Start.

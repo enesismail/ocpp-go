@@ -354,14 +354,14 @@ func (suite *OcppV2TestSuite) TestEC3StopDrainPanicReportedOnErrors() {
 	}
 }
 
-// setupEC3V2Client starts the charging station and installs, BEFORE Start, a
-// single availability-handler mock whose OnChangeAvailability panics with
-// whatever value it receives from the returned panicValues channel. Handler
-// setters have a documented before-Start contract (no synchronization once
-// the asyncCallbackHandler goroutine is running), so the handler must be
-// installed exactly once, before Start, rather than being swapped in later by
-// each driven panic.
-func (suite *OcppV2TestSuite) setupEC3V2Client() (chan []byte, chan string) {
+// setupEC3V2ClientFor starts cs and installs, BEFORE Start, a single
+// availability-handler mock whose OnChangeAvailability panics with whatever
+// value it receives from the returned panicValues channel. Handler setters
+// have a documented before-Start contract (no synchronization once the
+// asyncCallbackHandler goroutine is running), so the handler must be installed
+// exactly once, before Start, rather than being swapped in later by each
+// driven panic.
+func (suite *OcppV2TestSuite) setupEC3V2ClientFor(cs ocpp2.ChargingStation) (chan []byte, chan string) {
 	suite.mockWsClient.On("Start", mock.AnythingOfType("string")).Return(nil)
 	suite.mockWsClient.On("Stop").Return().Maybe()
 	suite.mockWsClient.On("IsConnected").Return(false).Maybe()
@@ -372,12 +372,16 @@ func (suite *OcppV2TestSuite) setupEC3V2Client() (chan []byte, chan string) {
 	panicValues := make(chan string, 4)
 	listener := &MockChargingStationAvailabilityHandler{}
 	listener.On("OnChangeAvailability", mock.Anything).Run(func(mock.Arguments) { panic(<-panicValues) })
-	suite.chargingStation.SetAvailabilityHandler(listener)
-	require.NoError(suite.T(), suite.chargingStation.Start("someUrl"))
+	cs.SetAvailabilityHandler(listener)
+	require.NoError(suite.T(), cs.Start("someUrl"))
 	// Stop also releases any producer left parked in the blocking error() (its
 	// stopC arm), so no goroutine outlives the test on the t.Fatal paths either.
-	ec3StopOnCleanup(suite.T(), "charging station", suite.chargingStation.Stop)
+	ec3StopOnCleanup(suite.T(), "charging station", cs.Stop)
 	return writeC, panicValues
+}
+
+func (suite *OcppV2TestSuite) setupEC3V2Client() (chan []byte, chan string) {
+	return suite.setupEC3V2ClientFor(suite.chargingStation)
 }
 
 // driveV2OrphanResponse drives one ORDINARY (non-panic) error() producer: a
@@ -492,4 +496,55 @@ func (suite *OcppV2TestSuite) TestEC3ClientPanicBeforeErrorsArmedIsSilent() {
 		suite.T().Fatalf("unexpected retroactive client panic report: %v", reported)
 	default:
 	}
+}
+
+func (suite *OcppV2TestSuite) TestEC3ClientPanicReportedOnErrorsByDefault() {
+	t := suite.T()
+	// Errors() is armed before the panic, with its cap-1 buffer empty, so the
+	// non-blocking report must land: this is the positive delivery guard for the
+	// client route (the non-blocking test above always runs it against a FULL
+	// buffer, where drops are by design).
+	errorsC := suite.chargingStation.Errors()
+	writeC, panicValues := suite.setupEC3V2Client()
+	suite.driveV2ClientPanic(writeC, panicValues, "ec3-client-report", "ec3-client-report-panic")
+	panicErr := ec3ReadPanicError(t, errorsC)
+	require.Equal(t, ocppj.RequestHandlerKind, panicErr.Panic.Kind)
+	require.Equal(t, "", panicErr.Panic.ClientID)
+	require.Equal(t, availability.ChangeAvailabilityFeatureName, panicErr.Panic.Action)
+	require.Equal(t, "ec3-client-report", panicErr.Panic.RequestID)
+	require.Equal(t, "ec3-client-report-panic", panicErr.Panic.Value)
+	require.NotEmpty(t, panicErr.Panic.Stack)
+}
+
+func (suite *OcppV2TestSuite) TestEC3ClientSetOnHandlerPanicAfterConstructionKeepsRouting() {
+	t := suite.T()
+	hookC := make(chan ocppj.HandlerPanic, 1)
+	suite.chargingStation.SetOnHandlerPanic(func(hp ocppj.HandlerPanic) { hookC <- hp })
+	errorsC := suite.chargingStation.Errors()
+	writeC, panicValues := suite.setupEC3V2Client()
+	suite.driveV2ClientPanic(writeC, panicValues, "ec3-client-after", "ec3-client-after-panic")
+	panicErr := ec3ReadPanicError(t, errorsC)
+	select {
+	case hp := <-hookC:
+		require.Equal(t, panicErr.Panic, hp)
+	case <-time.After(ec3Wait):
+		t.Fatal("client facade panic hook did not fire")
+	}
+}
+
+func (suite *OcppV2TestSuite) TestEC3ClientEndpointHookRegisteredBeforeConstructionSurvives() {
+	t := suite.T()
+	endpoint := ocppj.NewClient("test_id", suite.mockWsClient, ocppj.NewDefaultClientDispatcher(ocppj.NewFIFOClientQueue(queueCapacity)), nil, availability.Profile)
+	prevC := make(chan ocppj.HandlerPanic, 1)
+	endpoint.SetOnHandlerPanic(func(hp ocppj.HandlerPanic) { prevC <- hp })
+	chargingStation := ocpp2.NewChargingStation("test_id", endpoint, suite.mockWsClient)
+	errorsC := chargingStation.Errors()
+	writeC, panicValues := suite.setupEC3V2ClientFor(chargingStation)
+	suite.driveV2ClientPanic(writeC, panicValues, "ec3-client-before", "ec3-client-before-panic")
+	select {
+	case <-prevC:
+	case <-time.After(ec3Wait):
+		t.Fatal("endpoint hook registered before construction was not called")
+	}
+	_ = ec3ReadPanicError(t, errorsC)
 }
