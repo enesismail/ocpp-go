@@ -67,9 +67,9 @@ func authorizeFrame(msgID string) []byte {
 }
 
 // TestFacadeReadLimitThroughSuppliedServer proves that a ReadLimit applied via
-// ws.NewServer(ws.WithServerReadLimit(n)) — a server the caller constructs and passes
-// to NewCSMS — reaches the live connection. It also proves WriteWait is not
-// zeroed (the under-limit arm round-trips a response, which requires a live
+// ws.NewServer(ws.WithServerReadLimit(n)) — a server the caller constructs and
+// passes to NewCSMS — reaches the live connection. It also proves WriteWait is
+// not zeroed (the under-limit arm round-trips a response, which requires a live
 // write deadline).
 func TestFacadeReadLimitThroughSuppliedServer(t *testing.T) {
 	const limit int64 = 1024
@@ -163,8 +163,9 @@ func TestFacadeReadLimitThroughSuppliedServer(t *testing.T) {
 }
 
 // TestNewDefaultCSMSAppliesReadLimit is the constructor-wiring arm that uses
-// NewDefaultCSMS(WithServerReadLimit(…)) and a reserved port. It asserts the limited
-// system drops an over-limit write, and a control (unlimited) system does not.
+// NewDefaultCSMS(WithServerReadLimit(…)) and a reserved port. It asserts the
+// limited system drops an over-limit write, and a control (unlimited) system
+// does not.
 func TestNewDefaultCSMSAppliesReadLimit(t *testing.T) {
 	const limit int64 = 1024
 	oversized := bytes.Repeat([]byte("z"), int(limit*4))

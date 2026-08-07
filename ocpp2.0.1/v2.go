@@ -719,18 +719,19 @@ func NewCSMS(endpoint *ocppj.Server, server ws.Server) CSMS {
 //
 // CSMSOpt is exported so it can appear in the constructor's signature, but
 // csmsConfig is not: a consumer cannot write their own CSMSOpt, only pass the
-// package-provided ones (currently WithServerReadLimit). The seam is deliberately
-// facade-internal — the exported type exists solely so package-provided option
-// constructors have something to return — not a consumer extension point.
+// package-provided ones (currently WithServerReadLimit). The seam is
+// deliberately facade-internal — the exported type exists solely so
+// package-provided option constructors have something to return — not a
+// consumer extension point.
 type CSMSOpt func(*csmsConfig)
 
 type csmsConfig struct {
 	wsOpts []ws.ServerOpt
 }
 
-// WithServerReadLimit bounds the size in bytes of a single inbound websocket message
-// accepted from a charging station. Any value <= 0 means unlimited, which is
-// the default. Exceeding the limit DROPS the connection (the charging
+// WithServerReadLimit bounds the size in bytes of a single inbound websocket
+// message accepted from a charging station. Any value <= 0 means unlimited,
+// which is the default. Exceeding the limit DROPS the connection (the charging
 // station's disconnect handler fires); it does not merely skip the oversized
 // message, so size it well above the largest legitimate message. A large
 // NotifyReport can reach hundreds of KB, so 1 MB (1<<20) is generous headroom

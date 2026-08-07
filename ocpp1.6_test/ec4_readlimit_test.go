@@ -68,10 +68,10 @@ func bootNotificationFrame(msgID string) []byte {
 }
 
 // TestFacadeReadLimitThroughSuppliedServer proves that a ReadLimit applied via
-// ws.NewServer(ws.WithServerReadLimit(n)) — a server the caller constructs and passes
-// to NewCentralSystem — reaches the live connection. It also proves WriteWait is
-// not zeroed (the under-limit arm round-trips a response, which requires a live
-// write deadline).
+// ws.NewServer(ws.WithServerReadLimit(n)) — a server the caller constructs and
+// passes to NewCentralSystem — reaches the live connection. It also proves
+// WriteWait is not zeroed (the under-limit arm round-trips a response, which
+// requires a live write deadline).
 func TestFacadeReadLimitThroughSuppliedServer(t *testing.T) {
 	const limit int64 = 1024
 	srv := ws.NewServer(ws.WithServerReadLimit(limit))
@@ -164,10 +164,10 @@ func TestFacadeReadLimitThroughSuppliedServer(t *testing.T) {
 }
 
 // TestNewDefaultCentralSystemAppliesReadLimit is the constructor-wiring arm
-// that uses NewDefaultCentralSystem(WithServerReadLimit(…)) and a reserved port.
-// It asserts the limited system drops an over-limit write, and a control
-// (unlimited) system does not — distinguishing "option was applied" from
-// "the message was too big for some other reason".
+// that uses NewDefaultCentralSystem(WithServerReadLimit(…)) and a reserved
+// port. It asserts the limited system drops an over-limit write, and a control
+// (unlimited) system does not — distinguishing "option was applied" from "the
+// message was too big for some other reason".
 func TestNewDefaultCentralSystemAppliesReadLimit(t *testing.T) {
 	const limit int64 = 1024
 	oversized := bytes.Repeat([]byte("z"), int(limit*4))

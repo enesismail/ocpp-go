@@ -1989,9 +1989,10 @@ func (s *WebSocketSuite) TestServerShutdownCanceledCtx() {
 	drainErrorsClosed(s.T(), srv.Errors())
 }
 
-// TestWithServerReadLimitPreservesTimeoutDefaults verifies that WithServerReadLimit sets
-// ReadLimit without disturbing any other timeout field — the no-trap property
-// that distinguishes it from a SetTimeoutConfig struct literal.
+// TestWithServerReadLimitPreservesTimeoutDefaults verifies that
+// WithServerReadLimit sets ReadLimit without disturbing any other timeout
+// field — the no-trap property that distinguishes it from a SetTimeoutConfig
+// struct literal.
 func (s *WebSocketSuite) TestWithServerReadLimitPreservesTimeoutDefaults() {
 	const limit int64 = 4096
 	srv := NewServer(WithServerReadLimit(limit)).(*server)
@@ -2000,9 +2001,9 @@ func (s *WebSocketSuite) TestWithServerReadLimitPreservesTimeoutDefaults() {
 	s.Equal(want, srv.timeoutConfig)
 }
 
-// TestWithServerReadLimitLastWinsAndComposes verifies option-application order (last
-// wins for ReadLimit, plain field assignment) and that WithServerReadLimit does not
-// interfere with sibling ServerOpts.
+// TestWithServerReadLimitLastWinsAndComposes verifies option-application order
+// (last wins for ReadLimit, plain field assignment) and that
+// WithServerReadLimit does not interfere with sibling ServerOpts.
 func (s *WebSocketSuite) TestWithServerReadLimitLastWinsAndComposes() {
 	srv := NewServer(WithServerReadLimit(64), WithServerReadLimit(4096), WithDuplicateConnectionPolicy(KeepNew)).(*server)
 	s.Equal(int64(4096), srv.timeoutConfig.ReadLimit)
@@ -2014,8 +2015,8 @@ func (s *WebSocketSuite) TestWithServerReadLimitLastWinsAndComposes() {
 
 // TestServerReadLimitExceededViaOption is a behavioral clone of
 // TestServerReadLimitExceeded, but the limit is applied via
-// NewServer(WithServerReadLimit(…)) instead of SetTimeoutConfig — proving the option
-// reaches the live connection (updateConfig → SetReadLimit).
+// NewServer(WithServerReadLimit(…)) instead of SetTimeoutConfig — proving the
+// option reaches the live connection (updateConfig → SetReadLimit).
 func (s *WebSocketSuite) TestServerReadLimitExceededViaOption() {
 	const limit = 64
 	oversized := bytes.Repeat([]byte("a"), limit*4)
@@ -2044,9 +2045,9 @@ func (s *WebSocketSuite) TestServerReadLimitExceededViaOption() {
 	}
 }
 
-// TestWithServerReadLimitNonPositiveIsUnlimited verifies that 0 and negative values
-// both behave as unlimited — the apply gate is strictly > 0, so neither value
-// interferes with message delivery.
+// TestWithServerReadLimitNonPositiveIsUnlimited verifies that 0 and negative
+// values both behave as unlimited — the apply gate is strictly > 0, so neither
+// value interferes with message delivery.
 func (s *WebSocketSuite) TestWithServerReadLimitNonPositiveIsUnlimited() {
 	large := bytes.Repeat([]byte("y"), 4*1024*1024) // 4 MB, -race-friendly
 	for _, v := range []int64{0, -1} {
@@ -2067,6 +2068,12 @@ func (s *WebSocketSuite) TestWithServerReadLimitNonPositiveIsUnlimited() {
 			// client cannot be meaningfully restarted, so reusing it would make
 			// the two rows test different things.
 			cl := newWebsocketClient(s.T(), nil)
+			// Failure-path net: if a Require().NoError below aborts this row
+			// before the explicit cl.Stop(), disable auto-reconnect and
+			// register a cleanup Stop so the client doesn't leak and zombie-
+			// redial the ephemeral port. Stop is safe to call twice.
+			cl.SetAutoReconnect(false)
+			s.T().Cleanup(func() { cl.Stop() })
 			err := cl.Start(u.String())
 			s.Require().NoError(err)
 
