@@ -1,6 +1,9 @@
 package ocppj
 
-import "runtime/debug"
+import (
+	"fmt"
+	"runtime/debug"
+)
 
 // HandlerKind identifies which user handler panicked.
 type HandlerKind string
@@ -26,6 +29,25 @@ type HandlerPanic struct {
 	Stack     []byte      // debug.Stack() captured at recovery
 }
 
+// HandlerPanicError wraps a recovered handler panic for delivery on a facade's
+// Errors() channel. Match it with errors.As to recover the details:
+//
+//	var hpe *ocppj.HandlerPanicError
+//	if errors.As(err, &hpe) { … hpe.Panic.Kind, hpe.Panic.ClientID … }
+//
+// The stack is deliberately NOT part of Error(); read it from Panic.Stack.
+//
+// No Unwrap or Is methods: Panic.Value is data, not a wrapped cause; errors.As
+// is the only matching contract.
+type HandlerPanicError struct {
+	Panic HandlerPanic
+}
+
+func (e *HandlerPanicError) Error() string {
+	return fmt.Sprintf("recovered panic in %s handler (client %q, action %q, request %q): %v",
+		e.Panic.Kind, e.Panic.ClientID, e.Panic.Action, e.Panic.RequestID, e.Panic.Value)
+}
+
 // SetOnHandlerPanic registers a callback invoked when a user handler panics.
 //
 // The callback runs synchronously on whichever goroutine recovered the panic:
@@ -33,12 +55,27 @@ type HandlerPanic struct {
 // panic — the dispatcher's messagePump goroutine. As with an onRequestCanceled
 // callback, it therefore must NOT call Stop() or block on a full SendRequest,
 // or it may deadlock the pump. It should also not panic. Set it before Start.
+//
+// This REPLACES any previously registered callback. The ocpp1.6 and ocpp2.0.1
+// client facades install their own callback here during construction, to route
+// recovered panics to the facade's Errors() channel; calling this on an
+// endpoint already handed to NewChargePoint/NewChargingStation removes that
+// routing. Register the hook on the facade instead, or read the existing one
+// with OnHandlerPanic and chain it. A hook registered here BEFORE the facade is
+// constructed is preserved and chained by the facade's wrapper.
 func (c *Client) SetOnHandlerPanic(handler func(HandlerPanic)) {
 	c.onHandlerPanic = handler
 	if d, ok := c.dispatcher.(*DefaultClientDispatcher); ok {
 		d.onHandlerPanic = handler
 	}
 }
+
+// OnHandlerPanic returns the callback registered with SetOnHandlerPanic, or nil
+// if none is registered. It exists so code that installs its own hook on an
+// endpoint can CHAIN a hook the caller registered earlier instead of silently
+// replacing it — the ocpp1.6 and ocpp2.0.1 facade constructors do exactly that
+// when routing recovered panics to Errors(). Read it before installing.
+func (c *Client) OnHandlerPanic() func(HandlerPanic) { return c.onHandlerPanic }
 
 // SetOnHandlerPanic registers a callback invoked when a user handler panics.
 //
@@ -50,12 +87,24 @@ func (c *Client) SetOnHandlerPanic(handler func(HandlerPanic)) {
 // A raw onRequestCanceled callback therefore must NOT call Stop() or block on
 // a full SendRequest, or it may deadlock the pump. It should also not panic.
 // Set it before Start.
+//
+// This REPLACES any previously registered callback. The ocpp1.6 and ocpp2.0.1
+// server facades install their own callback here during construction, to route
+// recovered panics to the facade's Errors() channel; calling this on an
+// endpoint already handed to NewCentralSystem/NewCSMS removes that routing.
+// Register the hook on the facade instead, or read the existing one with
+// OnHandlerPanic and chain it. A hook registered here BEFORE the facade is
+// constructed is preserved and chained by the facade's wrapper.
 func (s *Server) SetOnHandlerPanic(handler func(HandlerPanic)) {
 	s.onHandlerPanic = handler
 	if d, ok := s.dispatcher.(*DefaultServerDispatcher); ok {
 		d.onHandlerPanic = handler
 	}
 }
+
+// OnHandlerPanic returns the callback registered with SetOnHandlerPanic, or nil
+// if none is registered. See (*Client).OnHandlerPanic.
+func (s *Server) OnHandlerPanic() func(HandlerPanic) { return s.onHandlerPanic }
 
 // recoverHandler is deferred around a user-provided handler invocation. When the
 // handler panics it recovers (so the panic never crosses the read-loop

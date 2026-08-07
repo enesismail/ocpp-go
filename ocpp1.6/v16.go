@@ -134,6 +134,10 @@ type ChargePoint interface {
 	// Registers a handler for incoming certificate profile messages (Extension of OCPP 1.6j).
 	SetCertificateHandler(handler certificates.ChargePointHandler)
 	// Registers a callback invoked when a user-provided OCPP-J handler panics.
+	// Recovered panics are also reported on Errors() as *ocppj.HandlerPanicError,
+	// best-effort: that send is non-blocking on a cap-1 channel and is dropped
+	// when nobody is draining. Panics recovered inside a custom ClientDispatcher
+	// are not reported. Set it before Start.
 	SetOnHandlerPanic(handler func(ocppj.HandlerPanic))
 	// SetOnDisconnectedHandler registers a callback invoked when the charge point
 	// loses its connection to the central system unexpectedly (not on a graceful
@@ -238,6 +242,12 @@ type ChargePoint interface {
 	// against a Stop/StopCtx in progress - see the error() implementation).
 	// Do not rely on channel closure to detect a stopped charge point; use
 	// StopCtx's return value, or IsConnected, instead.
+	// Recovered handler panics are reported here as *ocppj.HandlerPanicError,
+	// best-effort: that send is non-blocking, so a panic reported while the
+	// buffer is full or before the first Errors() call is dropped. Use
+	// SetOnHandlerPanic to observe every panic the facade or the default
+	// dispatcher recovers; panics recovered inside a custom ClientDispatcher
+	// reach neither the hook nor Errors().
 	Errors() <-chan error
 }
 
@@ -334,6 +344,23 @@ func NewChargePoint(id string, endpoint *ocppj.Client, client ws.Client) ChargeP
 		select {
 		case cp.incoming <- incomingMessage{kind: incomingRequest, request: request, requestID: requestId, action: action}:
 		case <-cp.loadStopC():
+		}
+	})
+	// Route recovered handler panics to Errors(), best-effort. See the server
+	// facade for the rationale; the send is non-blocking here because a client
+	// errC is cap-1 and blocking on it would strand the ws read goroutine, the
+	// asyncCallbackHandler goroutine, or the dispatcher pump — and, before the
+	// first Start, would strand it with no stopC arm to escape through.
+	// prevOnHandlerPanic preserves a hook the caller registered on the endpoint
+	// before construction.
+	prevOnHandlerPanic := endpoint.OnHandlerPanic()
+	cp.client.SetOnHandlerPanic(func(hp ocppj.HandlerPanic) {
+		cp.errorNonBlocking(&ocppj.HandlerPanicError{Panic: hp})
+		if prevOnHandlerPanic != nil {
+			prevOnHandlerPanic(hp)
+		}
+		if h := cp.onHandlerPanic; h != nil {
+			h(hp)
 		}
 	})
 	return &cp
@@ -437,6 +464,12 @@ type CentralSystem interface {
 	// Registers a handler for incoming secure firmware profile messages (Extension of OCPP 1.6j).
 	SetSecureFirmwareHandler(handler securefirmware.CentralSystemHandler)
 	// Registers a callback invoked when a user-provided OCPP-J handler panics.
+	// Recovered panics are also reported on Errors() as *ocppj.HandlerPanicError,
+	// whether or not this callback is registered — every panic this central
+	// system recovers itself, plus those the default dispatcher recovers
+	// internally; panics recovered inside a custom ServerDispatcher are not
+	// reported. Registering a hook on the underlying *ocppj.Server after
+	// construction disables the reporting. Set it before Start.
 	SetOnHandlerPanic(handler func(ocppj.HandlerPanic))
 
 	// Registers a handler for new incoming Charging station connections.
@@ -490,6 +523,8 @@ type CentralSystem interface {
 	// Drain it for the lifetime of the server. Sends are non-blocking and errors
 	// are silently dropped when the channel buffer is full. The channel may
 	// contain errors reported before this call.
+	// Recovered handler panics are reported here as *ocppj.HandlerPanicError;
+	// match them with errors.As.
 	Errors() <-chan error
 }
 
@@ -529,6 +564,27 @@ func NewCentralSystem(endpoint *ocppj.Server, server ws.Server) CentralSystem {
 	})
 	cs.server.SetCanceledRequestHandler(func(clientID string, requestID string, request ocpp.Request, err *ocpp.Error) {
 		cs.handleCanceledRequest(clientID, requestID, request, err)
+	})
+	// Route recovered handler panics to Errors() so they are visible by default:
+	// the log sink is a VoidLogger unless the consumer installs a logger, and
+	// SetOnHandlerPanic is opt-in, so without this a panicking handler produces a
+	// silent CALLERROR loop. prevOnHandlerPanic is whatever hook the CALLER
+	// registered on the endpoint before handing it to this constructor —
+	// installing this wrapper must not destroy it.
+	prevOnHandlerPanic := endpoint.OnHandlerPanic()
+	cs.server.SetOnHandlerPanic(func(hp ocppj.HandlerPanic) {
+		// Report FIRST. reportHandlerPanic runs this entire wrapper inside one
+		// guardedCall, so a panic in either hook below skips everything after it;
+		// the Errors() report must already have been sent by then. cs.error is a
+		// non-blocking send, so this is safe on the dispatcher pump and on the
+		// websocket read goroutines that reach this wrapper.
+		cs.error(&ocppj.HandlerPanicError{Panic: hp})
+		if prevOnHandlerPanic != nil {
+			prevOnHandlerPanic(hp)
+		}
+		if h := cs.onHandlerPanic; h != nil {
+			h(hp)
+		}
 	})
 	return &cs
 }

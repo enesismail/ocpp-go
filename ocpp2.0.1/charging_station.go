@@ -71,6 +71,7 @@ type chargingStation struct {
 	diagnosticsHandler   diagnostics.ChargingStationHandler
 	displayHandler       display.ChargingStationHandler
 	dataHandler          data.ChargingStationHandler
+	onHandlerPanic       func(ocppj.HandlerPanic)
 	// incoming carries all inbound events - responses, errors and requests -
 	// on ONE ordered channel drained by the single asyncCallbackHandler, so an
 	// inbound CALL cannot overtake a CALL_RESULT/CALL_ERROR that arrived
@@ -197,10 +198,44 @@ func (cs *chargingStation) error(err error) {
 	}
 }
 
+// errorNonBlocking reports err on the Errors() channel with a NON-BLOCKING
+// send: if Errors() was never called, or the cap-1 buffer is full, err is
+// DROPPED. It exists solely for the recovered-panic route installed in
+// NewChargingStation, which runs on the ocppj client's websocket read goroutine,
+// on this facade's asyncCallbackHandler goroutine (the sole consumer of
+// cs.incoming, where user response/error/request handlers actually run), and on
+// the client dispatcher's cancel-recover path (its messagePump goroutine) —
+// goroutines that must never park on a channel the consumer has stopped
+// draining. error() is preemptible only while a generation is running: before
+// the first Start, loadStopC() is nil, so a blocking send on a full errC there
+// parks forever rather than until Stop. Every other producer keeps error()'s
+// blocking, stopC-preemptible semantics (PR #37/#38); do not swap one for the
+// other in either direction.
+//
+// errC is read as a field copy under mu and the lock is released before the
+// send, per the HOLD-SCOPE rule on the mu field doc. A nil errC needs no
+// special case: a send on a nil channel never proceeds, so the select takes
+// default and the report is dropped. errC creation stays LAZY on the client —
+// do not add eager creation here (that is the server-side EC2 design).
+func (cs *chargingStation) errorNonBlocking(err error) {
+	cs.mu.Lock()
+	errC := cs.errC
+	cs.mu.Unlock()
+	select {
+	case errC <- err:
+	default:
+	}
+}
+
 // Errors returns a channel for error messages. If it doesn't exist it is
 // created. See the ChargingStation interface godoc (v2.go) for the full
 // contract - in short: errC is NEVER closed and is process-lifetime, not
-// per-generation.
+// per-generation. Recovered handler panics are reported here as
+// *ocppj.HandlerPanicError, best-effort: that send is non-blocking, so a panic
+// reported while the buffer is full or before the first Errors() call is
+// dropped. Use SetOnHandlerPanic to observe every panic the facade or the
+// default dispatcher recovers; panics recovered inside a custom
+// ClientDispatcher reach neither the hook nor Errors().
 //
 // errC's lazy creation is guarded by mu so two concurrent first-callers
 // cannot each create a different channel and silently lose one (spec §5).
@@ -619,8 +654,35 @@ func (cs *chargingStation) SetDataHandler(handler data.ChargingStationHandler) {
 	cs.dataHandler = handler
 }
 
+// SetOnHandlerPanic registers a callback invoked when a user-provided OCPP-J
+// handler panics. The recovered panic is also reported on Errors() as an
+// *ocppj.HandlerPanicError, best-effort: that send is non-blocking on a cap-1
+// channel, so a report is dropped when Errors() has never been called, when
+// the buffer is full, or when the consumer has stopped draining. To observe
+// every panic this charging station or the default dispatcher recovers —
+// including ones racing shutdown — use this callback; Errors() is a monitoring
+// stream, not an inventory. Set it before Start.
+//
+// The chain order is observable: on a panic this charging station attempts the
+// Errors() report FIRST, then invokes any hook that was registered on the
+// underlying *ocppj.Client BEFORE construction, then this callback. All three
+// run inside one recover, so a panicking ENDPOINT hook suppresses this callback
+// (and a panicking callback here suppresses nothing). No hook can suppress the
+// Errors() report, which is attempted before either of them runs - it remains
+// best-effort for the buffer reasons above, never because a hook panicked.
+//
+// Calling SetOnHandlerPanic on the underlying *ocppj.Client AFTER constructing
+// this charging station replaces the routing wrapper and silently disables the
+// Errors() reporting; register the hook here instead. A hook registered on the
+// endpoint BEFORE construction is preserved and still invoked.
+//
+// A panic recovered inside the dispatcher (a raw CanceledRequestHandler, kind
+// ocppj.CancelHandlerKind) reaches this callback only on a
+// *ocppj.DefaultClientDispatcher: a custom ClientDispatcher never receives
+// this hook, so panic reporting is unsupported with one. Panics recovered by
+// this charging station itself are unaffected by the dispatcher in use.
 func (cs *chargingStation) SetOnHandlerPanic(handler func(ocppj.HandlerPanic)) {
-	cs.client.SetOnHandlerPanic(handler)
+	cs.onHandlerPanic = handler
 }
 
 // SetOnDisconnectedHandler registers a callback invoked when the charging
