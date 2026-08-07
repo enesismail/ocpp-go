@@ -146,68 +146,128 @@ func TestEC1ServerStopCancelsAllClients(t *testing.T) {
 	}
 }
 
-// TestEC1ServerStopCompletePhotoFinish covers test 3. The outer watchdog is
-// mandatory: if the pre-existing cap-1 readyForDispatch leak wins the race,
-// the test must fail cleanly instead of pinning the test process.
-func TestEC1ServerStopCompletePhotoFinish(t *testing.T) {
-	const iterations = 100
-	var totalResponseCount int32
-	var totalCancelCount int32
-	for iteration := 0; iteration < iterations; iteration++ {
-		d, _, _, network, server := ec1NewServer(t)
-		clientID := fmt.Sprintf("ec1-photo-%d", iteration)
-		written := make(chan struct{}, 1)
-		network.setOnWrite(func(string, []byte) error {
-			written <- struct{}{}
-			return nil
-		})
-		var responseCount int32
-		var cancelCount int32
-		d.SetOnRequestCanceled(func(string, string, ocpp.Request, *ocpp.Error) {
-			atomic.AddInt32(&cancelCount, 1)
-			atomic.AddInt32(&totalCancelCount, 1)
-		})
-		server.SetResponseHandler(func(ws.Channel, ocpp.Response, string) {
-			atomic.AddInt32(&responseCount, 1)
-			atomic.AddInt32(&totalResponseCount, 1)
-		})
+// ec1PhotoFinishOrder selects how a photo-finish iteration orders Stop against
+// the inbound CALL_RESULT.
+type ec1PhotoFinishOrder int
 
-		d.Start()
-		d.CreateClient(clientID)
-		bundle, requestID := d2NewBundle(t, server, "photo-finish")
-		require.NoError(t, d.SendRequest(clientID, bundle))
-		select {
-		case <-written:
-		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for photo-finish request")
-		}
+const (
+	// ec1PhotoStaggered starts both with a random sub-millisecond offset: the
+	// genuine race, whose winner is up to the scheduler.
+	ec1PhotoStaggered ec1PhotoFinishOrder = iota
+	// ec1PhotoStopFirst delivers the CALL_RESULT only after Stop has returned.
+	ec1PhotoStopFirst
+	// ec1PhotoResultFirst issues Stop only after the CALL_RESULT is handled.
+	ec1PhotoResultFirst
+)
 
-		resultDone := make(chan struct{})
-		stopDone := make(chan struct{})
+func ec1Await(t *testing.T, what string, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// ec1RunPhotoFinish races one request's completion against Stop in the given
+// order and returns (responseWins, stopCancels) for that single request. It
+// asserts the exactly-once invariant itself, so every ordering is covered by it.
+func ec1RunPhotoFinish(t *testing.T, name string, order ec1PhotoFinishOrder) (int32, int32) {
+	t.Helper()
+	d, _, _, network, server := ec1NewServer(t)
+	clientID := "ec1-photo-" + name
+	written := make(chan struct{}, 1)
+	network.setOnWrite(func(string, []byte) error {
+		written <- struct{}{}
+		return nil
+	})
+	var responseCount int32
+	var cancelCount int32
+	d.SetOnRequestCanceled(func(string, string, ocpp.Request, *ocpp.Error) {
+		atomic.AddInt32(&cancelCount, 1)
+	})
+	server.SetResponseHandler(func(ws.Channel, ocpp.Response, string) {
+		atomic.AddInt32(&responseCount, 1)
+	})
+
+	d.Start()
+	d.CreateClient(clientID)
+	bundle, requestID := d2NewBundle(t, server, "photo-finish")
+	require.NoError(t, d.SendRequest(clientID, bundle))
+	ec1Await(t, name+": request dispatch", written)
+
+	result := []byte(fmt.Sprintf(`[3,"%s",{"mockValue":"response"}]`, requestID))
+	resultDone := make(chan struct{})
+	stopDone := make(chan struct{})
+	deliverResult := func() {
+		_ = server.ocppMessageHandler(&e2aChannel{id: clientID}, result)
+		close(resultDone)
+	}
+	stop := func() {
+		d.Stop()
+		close(stopDone)
+	}
+	switch order {
+	case ec1PhotoStaggered:
 		go func() {
 			time.Sleep(time.Duration(rand.Intn(400)) * time.Microsecond)
-			d.Stop()
-			close(stopDone)
+			stop()
 		}()
-		go func() {
-			_ = server.ocppMessageHandler(&e2aChannel{id: clientID}, []byte(fmt.Sprintf(`[3,"%s",{"mockValue":"response"}]`, requestID)))
-			close(resultDone)
-		}()
-		select {
-		case <-resultDone:
-		case <-time.After(2 * time.Second):
-			t.Fatalf("iteration %d: late result path hung", iteration)
-		}
-		select {
-		case <-stopDone:
-		case <-time.After(2 * time.Second):
-			t.Fatalf("iteration %d: Stop hung; possible readyForDispatch leak", iteration)
-		}
-		assert.Equal(t, int32(1), atomic.LoadInt32(&responseCount)+atomic.LoadInt32(&cancelCount), "iteration %d request must have one terminal outcome", iteration)
+		go deliverResult()
+	case ec1PhotoStopFirst:
+		go stop()
+		ec1Await(t, name+": Stop", stopDone)
+		go deliverResult()
+	case ec1PhotoResultFirst:
+		go deliverResult()
+		ec1Await(t, name+": late result path", resultDone)
+		go stop()
 	}
-	responses := atomic.LoadInt32(&totalResponseCount)
-	cancels := atomic.LoadInt32(&totalCancelCount)
-	t.Logf("photo-finish branch counts: response-wins=%d stop-cancels=%d", responses, cancels)
+	ec1Await(t, name+": late result path", resultDone)
+	// The Stop watchdog is mandatory: if the pre-existing cap-1
+	// readyForDispatch leak wins the race, this must fail cleanly instead of
+	// pinning the test process.
+	ec1Await(t, name+": Stop (possible readyForDispatch leak)", stopDone)
+
+	responses := atomic.LoadInt32(&responseCount)
+	cancels := atomic.LoadInt32(&cancelCount)
+	assert.Equal(t, int32(1), responses+cancels, "%s: request must have exactly one terminal outcome", name)
+	return responses, cancels
+}
+
+// TestEC1ServerStopCompletePhotoFinish covers test 3: a request completing
+// off-pump while Stop drains must resolve to exactly one of {response handler,
+// stop cancel}, never both and never neither.
+//
+// Branch coverage is deterministic rather than statistical. The staggered phase
+// exercises the genuine race and asserts the exactly-once invariant on every
+// iteration, but which branch wins there is the scheduler's choice: stop-wins
+// were measured at roughly 7-10% per iteration, so demanding that the staggered
+// phase alone produce at least one of each leaves a ~0.93^N tail of legitimate
+// runs that fail — about 1 in 1400 at N=100, and worse under -race, which skews
+// the timing. Raising N only thins that tail. The two ordered iterations below
+// remove it: each pins its ordering with a happens-before edge, so both branches
+// are guaranteed to be observed no matter how the staggered phase falls.
+func TestEC1ServerStopCompletePhotoFinish(t *testing.T) {
+	const staggeredIterations = 100
+	var responses, cancels int32
+	for iteration := 0; iteration < staggeredIterations; iteration++ {
+		r, c := ec1RunPhotoFinish(t, fmt.Sprintf("staggered-%d", iteration), ec1PhotoStaggered)
+		responses += r
+		cancels += c
+	}
+	t.Logf("staggered photo-finish branch counts: response-wins=%d stop-cancels=%d", responses, cancels)
+
+	r, c := ec1RunPhotoFinish(t, "stop-first", ec1PhotoStopFirst)
+	responses += r
+	cancels += c
+	assert.Equal(t, int32(1), c, "a CALL_RESULT offered after Stop returned must resolve as a stop-cancel")
+
+	r, c = ec1RunPhotoFinish(t, "result-first", ec1PhotoResultFirst)
+	responses += r
+	cancels += c
+	assert.Equal(t, int32(1), r, "a CALL_RESULT handled before Stop was issued must resolve as a response")
+
 	assert.GreaterOrEqual(t, responses, int32(1), "photo-finish must observe at least one response-win")
 	assert.GreaterOrEqual(t, cancels, int32(1), "photo-finish must observe at least one stop-cancel")
 }
@@ -456,6 +516,122 @@ func TestEC1SendErrorAndStopCancelProbe(t *testing.T) {
 		}
 	}
 	t.Logf("send-error/stop-cancel probe: both-count=%d/%d", bothCount, iterations)
+}
+
+// ec1GatedQueueMap parks the first GetOrCreate for gateClient until the test
+// releases it, so a test can hold CreateClient inside its queue creation while
+// a concurrent Stop runs. DrainAll is implemented so the dispatcher still takes
+// the draining stop arm rather than the legacy clear-only fallback.
+type ec1GatedQueueMap struct {
+	inner      *FIFOQueueMap
+	gateClient string
+	reached    chan struct{}
+	release    chan struct{}
+	once       sync.Once
+}
+
+func (m *ec1GatedQueueMap) Init() { m.inner.Init() }
+func (m *ec1GatedQueueMap) Get(clientID string) (RequestQueue, bool) {
+	return m.inner.Get(clientID)
+}
+func (m *ec1GatedQueueMap) GetOrCreate(clientID string) RequestQueue {
+	if clientID == m.gateClient {
+		m.once.Do(func() {
+			close(m.reached)
+			<-m.release
+		})
+	}
+	return m.inner.GetOrCreate(clientID)
+}
+func (m *ec1GatedQueueMap) Remove(clientID string) { m.inner.Remove(clientID) }
+func (m *ec1GatedQueueMap) Add(clientID string, queue RequestQueue) {
+	m.inner.Add(clientID, queue)
+}
+func (m *ec1GatedQueueMap) DrainAll() map[string]RequestQueue { return m.inner.DrainAll() }
+
+// TestEC1StopDrainCannotBeOutrunByCreateClient pins that a queue created by
+// CreateClient can never appear in the map after the stop drain has detached it.
+// The gated queue map reproduces the interleaving deterministically: the running
+// check has already passed when Stop begins, and the queue creation completes
+// only afterwards.
+//
+// If the two steps are not atomic, the reinserted queue is invisible to the
+// drain and outlives generation 1. SendRequest pushes before its own running
+// check, so a caller that is told its send failed still leaves its bundle at the
+// head of that surviving queue, and the next generation's pump dispatches it.
+// The assertion is on exactly that observable: the first thing generation 2
+// writes to the network must be generation 2's own request.
+func TestEC1StopDrainCannotBeOutrunByCreateClient(t *testing.T) {
+	clientID := "ec1-create-vs-stop"
+	queueMap := &ec1GatedQueueMap{
+		inner:      NewFIFOQueueMap(10),
+		gateClient: clientID,
+		reached:    make(chan struct{}),
+		release:    make(chan struct{}),
+	}
+	d := NewDefaultServerDispatcher(queueMap)
+	d.SetPendingRequestState(NewServerState(&sync.RWMutex{}))
+	network := &d2FakeServer{}
+	d.SetNetworkServer(network)
+	endpoint := &Server{}
+	endpoint.AddProfile(ocpp.NewProfile("d2mock", &d2MockFeature{}))
+	writes := make(chan string, 8)
+	network.setOnWrite(func(_ string, data []byte) error {
+		writes <- string(data)
+		return nil
+	})
+
+	d.Start()
+	createDone := make(chan struct{})
+	go func() {
+		d.CreateClient(clientID)
+		close(createDone)
+	}()
+	select {
+	case <-queueMap.reached:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CreateClient never reached the queue map")
+	}
+
+	stopDone := make(chan struct{})
+	go func() {
+		d.Stop()
+		close(stopDone)
+	}()
+	// Long enough for an unsynchronised Stop to run its whole teardown, drain
+	// included, while the queue creation is still parked. When the two steps are
+	// atomic, Stop is instead blocked on the read lock the parked CreateClient
+	// still holds, and this sleep only delays it.
+	time.Sleep(100 * time.Millisecond)
+	close(queueMap.release)
+	select {
+	case <-createDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("CreateClient never returned")
+	}
+	select {
+	case <-stopDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop hung")
+	}
+
+	// Generation 1 leftover: a send the stopped dispatcher rejects.
+	stale, staleID := d2NewBundle(t, endpoint, "stale-generation-1")
+	require.Error(t, d.SendRequest(clientID, stale), "a stopped dispatcher must reject sends")
+
+	d.Start()
+	defer d.Stop()
+	d.CreateClient(clientID)
+	fresh, freshID := d2NewBundle(t, endpoint, "fresh-generation-2")
+	require.NoError(t, d.SendRequest(clientID, fresh))
+	select {
+	case data := <-writes:
+		assert.NotContains(t, data, staleID,
+			"generation 2 dispatched a generation-1 request whose SendRequest had returned an error")
+		assert.Contains(t, data, freshID, "generation 2 must dispatch its own request first")
+	case <-time.After(2 * time.Second):
+		t.Fatal("generation 2 dispatched nothing")
+	}
 }
 
 func TestEC1FIFOQueueMapDrainAllIsOptionalAtomicDetach(t *testing.T) {

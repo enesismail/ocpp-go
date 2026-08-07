@@ -736,10 +736,31 @@ func (d *DefaultServerDispatcher) SetTimeout(timeout time.Duration) {
 	d.timeout = timeout
 }
 
+// CreateClient registers a queue for clientID, so requests can be dispatched to
+// it. It is a no-op while the dispatcher is not running.
+//
+// The read lock is deliberately held ACROSS the running check and the queue
+// creation, rather than only around the check. Stop closes stoppedC under the
+// write lock, and the stop drain that detaches the queue map runs on the pump
+// only after that close. Holding the read lock therefore orders this queue
+// creation strictly before the drain: the queue is either created in time to be
+// drained (its bundles canceled with ErrDispatcherStopped) or never created at
+// all. Releasing the lock between the two steps instead lets a queue be
+// reinserted AFTER the drain has already detached the map, where it is invisible
+// to the drain and survives into the next Start generation. A SendRequest for
+// that client then pushes its bundle before its own running check, returns an
+// error to its caller, and leaves the bundle at the head of the surviving queue
+// — from where the next generation's pump dispatches it, sending a request whose
+// caller was told it had failed. The cost of the wider hold is that a custom
+// ServerQueueMap whose GetOrCreate blocks now delays a concurrent Stop for as
+// long as it blocks.
 func (d *DefaultServerDispatcher) CreateClient(clientID string) {
-	if d.IsRunning() {
-		_ = d.queueMap.GetOrCreate(clientID)
+	d.mutex.RLock()
+	defer d.mutex.RUnlock()
+	if !d.running {
+		return
 	}
+	_ = d.queueMap.GetOrCreate(clientID)
 }
 
 func (d *DefaultServerDispatcher) DeleteClient(clientID string) {

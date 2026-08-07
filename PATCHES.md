@@ -868,10 +868,27 @@ complete inventory of stop-drain cancellations. Stop-drain callbacks run
 before the context-bounded shutdown phase, so a slow callback can extend
 teardown beyond its context.
 
+`CreateClient` holds the dispatcher's read lock across both its running check
+and the queue creation. Splitting the two allowed a queue to be reinserted into
+the map *after* the stop arm had already detached it, where the drain could not
+see it and it survived into the next `Start` generation. Because `SendRequest`
+pushes its bundle before its own running check, a caller that was told its send
+had failed could still leave that bundle at the head of the surviving queue —
+from where the next generation's pump dispatched it, putting a request on the
+wire after its caller had been told it would not be sent. The window predates
+the stop drain (the previous stop arm's `Init` had the identical non-atomic
+reinsert) and reproduces on both the old and new stop arms in roughly a third of
+iterations under contention; holding the read lock across both steps orders the
+queue creation strictly before the drain, so the queue is either drained or
+never created. Purging the queue map at `Start` was considered and rejected:
+registering a prepared queue with `Add` before `Start` is an established way to
+instrument a single client's queue, and a purge would silently discard it.
+
 | Symbol | Why keep it |
 |--------|-------------|
 | `ocppj.FIFOQueueMap.DrainAll` | atomically detaches the client-to-queue map without widening `ServerQueueMap` |
 | `ocppj.DefaultServerDispatcher.messagePump` stop arm | clears pending state before draining and fires guarded `ErrDispatcherStopped` cancels |
+| `ocppj.DefaultServerDispatcher.CreateClient` | holds the read lock across the running check and the queue creation, so no queue can be reinserted after the stop drain detached the map |
 | `ocppj.DefaultServerDispatcher.Stop` | preserves the write-lock-before-stop-signal barrier (pinned by the 1.6 facade storm); the unlock-before-pump-join barrier is pinned by the raw callback state-read test |
 | `ocppj.ServerDispatcher.Stop` | documents stop cancellation, custom-map fallback, and the enqueue-race caveat |
 | `ocppj.Server.Stop` / `Shutdown` | exposes the raw dispatcher stop-drain and its context-phase ordering |
@@ -879,8 +896,12 @@ teardown beyond its context.
 | `ocpp2.0.1.csms.Stop` / `Shutdown` + `ocpp2.0.1.CSMS` | keeps the 2.0.1 facade contract in parity with 1.6 |
 
 **Guard:** `ocppj/ec1_server_stop_cancel_test.go` covers pending and queued
-multi-client drains, the staggered off-pump completion photo finish (both
-response- and stop-wins), the callback state-read unlock barrier, the
+multi-client drains, the off-pump completion photo finish (a staggered phase for
+the genuine race plus two ordered iterations that pin the response-win and
+stop-win branches deterministically, so branch coverage cannot flake), the
+create-versus-drain ordering (a gated queue map parks `CreateClient` inside its
+queue creation while `Stop` runs, then asserts the next generation dispatches
+only its own request), the callback state-read unlock barrier, the
 send-error/stop-cancel probe, the `ocppj.Server`
 late-CALL_RESULT gate, panic recovery, the custom-map fallback, and the
 optional concrete `DrainAll` surface. `ocpp1.6_test/ec1_server_stop_cancel_test.go`
