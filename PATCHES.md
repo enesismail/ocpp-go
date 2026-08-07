@@ -829,7 +829,7 @@ buffering.
 The server facades run everything in canceled-request handling that touches
 facade state — the callback-queue dequeue, the callback itself, the no-callback
 `Errors()` report — on a dedicated goroutine; only the feature-name resolution
-stays on the dispatcher pump *(phrasing per fold r3, fable MINOR-1)*.
+stays on the dispatcher pump.
 The callback queue is guarded by a facade-wide mutex that `SendRequestAsync`
 holds across the enqueue into the dispatcher, and that enqueue is a blocking
 send into a bounded channel drained only by the dispatcher's message pump —

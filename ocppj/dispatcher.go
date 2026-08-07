@@ -870,8 +870,8 @@ func (d *DefaultServerDispatcher) messagePump() {
 			d.pendingRequestState.ClearAllPendingRequests()
 			// Watchers may still be running during/after this drain; they exit via
 			// stoppedC, NOT via the now-empty pending state.
-			// Fold r2 (Opus m3): cID/bok/qok naming avoids shadowing the pump's
-			// loop-persistent clientID/ok vars.
+			// cID/bok/qok naming avoids shadowing the pump's loop-persistent
+			// clientID/ok vars.
 			for cID, q := range detached {
 				var outstanding []interface{}
 				if qd, qok := q.(interface{ DrainAll() []interface{} }); qok {
