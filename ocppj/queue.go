@@ -184,6 +184,19 @@ func (f *FIFOQueueMap) Init() {
 	f.data = map[string]RequestQueue{}
 }
 
+// DrainAll atomically detaches and returns the entire client-to-queue map,
+// leaving the map empty at detach time; a concurrent CreateClient may later
+// reinsert an empty queue. Used by the dispatcher's stop path so a concurrent
+// Get (e.g. an off-pump CompleteRequest) observes either the live map or the
+// post-detach empty map, never a half-drained one.
+func (f *FIFOQueueMap) DrainAll() map[string]RequestQueue {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	data := f.data
+	f.data = map[string]RequestQueue{}
+	return data
+}
+
 func (f *FIFOQueueMap) Get(clientID string) (RequestQueue, bool) {
 	f.mutex.RLock()
 	defer f.mutex.RUnlock()

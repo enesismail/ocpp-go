@@ -108,8 +108,9 @@ func (cs *centralSystem) error(err error) {
 
 // Errors returns the channel where the central system reports asynchronous
 // errors (undeliverable responses, canceled requests with no matching
-// callback (including, rarely, a request whose callback was already delivered
-// by the disconnect drain — see SendRequestAsyncCtx), recovered handler panics).
+// callback (including — routinely during a Stop/Shutdown with outstanding
+// requests — a request whose callback was already delivered by the disconnect
+// drain — see SendRequestAsyncCtx), recovered handler panics).
 // The channel exists from construction
 // and is NEVER closed; errors reported before the first Errors() call are
 // buffered (up to errChanCapacity) and delivered to the first drainer.
@@ -629,13 +630,30 @@ func (cs *centralSystem) Start(listenPort int, listenPath string) {
 	cs.server.Start(listenPort, listenPath)
 }
 
+// Stop stops the central system. Cancellation of requests still held in the
+// dispatcher's queues is scheduled during Stop and delivered exactly once with
+// an error matching ocppj.ErrDispatcherStopped; if the stop drain races the
+// peer's disconnect, the terminal sentinel may be ErrLocalTransport instead.
+// Delivery is dispatched off the pump, so a callback may not yet have started
+// when Stop returns. Cancellations for requests WITHOUT a registered callback
+// are reported on Errors() best-effort (non-blocking, bounded buffer);
+// Errors() is not a complete inventory of stop-drain cancellations.
 func (cs *centralSystem) Stop() {
 	cs.server.Stop()
 }
 
 // Shutdown is the context-bounded variant of Stop. ctx bounds the underlying
 // ws/http server shutdown. The dispatcher is stopped first and unconditionally
-// at the ocppj layer.
+// at the ocppj layer. Cancellation of requests still held in the dispatcher's
+// queues is scheduled during Shutdown and delivered exactly once with an error
+// matching ocppj.ErrDispatcherStopped; if the stop drain races the peer's
+// disconnect, the terminal sentinel may be ErrLocalTransport instead. Facade
+// callbacks are dispatched off the pump, so one may not yet have started when
+// Shutdown returns. Raw ocppj CanceledRequestHandler callbacks instead run on
+// the pump, before the ctx-bounded phase begins, so a slow one extends
+// teardown beyond ctx. Cancellations for requests WITHOUT a registered
+// callback are reported on Errors() best-effort (non-blocking, bounded
+// buffer); Errors() is not a complete inventory of stop-drain cancellations.
 func (cs *centralSystem) Shutdown(ctx context.Context) error {
 	return cs.server.Shutdown(ctx)
 }

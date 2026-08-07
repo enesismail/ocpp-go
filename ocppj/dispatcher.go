@@ -545,7 +545,10 @@ type ServerDispatcher interface {
 	// The callback passes the original client ID, message ID, and request struct of the failed request,
 	// along with an error.
 	//
-	// Calling Stop on the dispatcher will not trigger this callback.
+	// Calling Stop on the dispatcher triggers this callback for every request
+	// still held in the dispatcher's FIFOQueueMap queues, with an error matching
+	// ErrDispatcherStopped. Pending entries for clients removed with DeleteClient
+	// are not callback-eligible, and custom queue-map implementations are exempt.
 	//
 	// If no callback is set, a request will still be removed from the dispatcher when a timeout occurs.
 	SetOnRequestCanceled(cb CanceledRequestHandler)
@@ -557,9 +560,18 @@ type ServerDispatcher interface {
 	//
 	// The state should only be accessed by the dispatcher while running.
 	SetPendingRequestState(stateHandler ServerState)
-	// Stops a running dispatcher. This will clear all state and empty the internal queues.
-	//
-	// If an onRequestCanceled callback is set, it won't be triggered by stopping the dispatcher.
+	// Stops a running dispatcher. Outstanding requests still held in a FIFOQueueMap
+	// are completed with an error matching ErrDispatcherStopped, and the cancel
+	// callback runs on the dispatcher's messagePump goroutine. The callback must
+	// return promptly and must not call Stop or block on dispatcher progress.
+	// The drain evaluates request.GetFeatureName() (public ocpp.Request user code)
+	// on the pump for each canceled request; a blocking implementation wedges
+	// Stop. In-tree request types cannot block.
+	// A custom ServerQueueMap without the optional DrainAll method retains the
+	// legacy clear-only behavior and does not receive stop-cancel callbacks.
+	// A request whose SendRequest returns an error may additionally receive a
+	// stop-cancel if Stop raced the enqueue; at most one of response and cancel
+	// is delivered by the completion-ownership path.
 	Stop()
 	// Notifies that it is now possible to dispatch requests for a new client.
 	//
@@ -692,11 +704,18 @@ func (d *DefaultServerDispatcher) IsRunning() bool {
 }
 
 // Stop signals the dispatcher to stop and blocks until its messagePump goroutine
-// has exited, so no dispatcher goroutine outlives the call. It is safe to call
+// has exited, so no dispatcher goroutine outlives the call. It fires the cancel
+// callback for every outstanding request before returning. It is safe to call
 // more than once and before Start. It must not be called from within an
 // onRequestCancel callback (which runs on the messagePump goroutine), as that
 // would wait for the pump to exit from the pump itself.
+// The stop drain evaluates request.GetFeatureName() (public ocpp.Request user
+// code) on the pump for each canceled request; a blocking implementation
+// wedges Stop. In-tree request types cannot block.
 func (d *DefaultServerDispatcher) Stop() {
+	// The write lock must be acquired before close(stoppedC): a SendRequest
+	// that passed the running check holds RLock while it sends to requestChannel,
+	// allowing the pump to drain that send before Stop closes the stop arm.
 	d.mutex.Lock()
 	if !d.running {
 		d.mutex.Unlock()
@@ -705,6 +724,9 @@ func (d *DefaultServerDispatcher) Stop() {
 	d.running = false
 	close(d.stoppedC)
 	done := d.doneC
+	// Release the write lock before joining the pump: a sender parked behind the
+	// request-channel buffer must be able to acquire RLock, observe !running,
+	// and unwind before the pump's stop-drain can finish.
 	d.mutex.Unlock()
 	// Wait for messagePump to actually exit so no goroutine outlives Stop().
 	<-done
@@ -714,10 +736,31 @@ func (d *DefaultServerDispatcher) SetTimeout(timeout time.Duration) {
 	d.timeout = timeout
 }
 
+// CreateClient registers a queue for clientID, so requests can be dispatched to
+// it. It is a no-op while the dispatcher is not running.
+//
+// The read lock is deliberately held ACROSS the running check and the queue
+// creation, rather than only around the check. Stop closes stoppedC under the
+// write lock, and the stop drain that detaches the queue map runs on the pump
+// only after that close. Holding the read lock therefore orders this queue
+// creation strictly before the drain: the queue is either created in time to be
+// drained (its bundles canceled with ErrDispatcherStopped) or never created at
+// all. Releasing the lock between the two steps instead lets a queue be
+// reinserted AFTER the drain has already detached the map, where it is invisible
+// to the drain and survives into the next Start generation. A SendRequest for
+// that client then pushes its bundle before its own running check, returns an
+// error to its caller, and leaves the bundle at the head of the surviving queue
+// — from where the next generation's pump dispatches it, sending a request whose
+// caller was told it had failed. The cost of the wider hold is that a custom
+// ServerQueueMap whose GetOrCreate blocks now delays a concurrent Stop for as
+// long as it blocks.
 func (d *DefaultServerDispatcher) CreateClient(clientID string) {
-	if d.IsRunning() {
-		_ = d.queueMap.GetOrCreate(clientID)
+	d.mutex.RLock()
+	defer d.mutex.RUnlock()
+	if !d.running {
+		return
 	}
+	_ = d.queueMap.GetOrCreate(clientID)
 }
 
 func (d *DefaultServerDispatcher) DeleteClient(clientID string) {
@@ -827,8 +870,49 @@ func (d *DefaultServerDispatcher) messagePump() {
 	for {
 		select {
 		case <-d.stoppedC:
-			// server was stopped
-			d.queueMap.Init()
+			// Server was stopped: drain every client queue and complete each
+			// outstanding request with ErrDispatcherStopped, mirroring the client
+			// dispatcher (see the reqCh-closed arm of DefaultClientDispatcher).
+			var detached map[string]RequestQueue
+			if drainer, ok := d.queueMap.(interface {
+				DrainAll() map[string]RequestQueue
+			}); ok {
+				detached = drainer.DrainAll()
+			} else {
+				// Custom ServerQueueMap without atomic detach: keep the legacy
+				// clear-only behavior (no cancels) rather than risk a torn drain.
+				d.queueMap.Init()
+			}
+			// Clear pending state BEFORE firing cancels, so a late inbound
+			// CALL_RESULT arriving mid-drain cannot pass ParseMessage's pending
+			// check and race the (now detached) completion path. This is also
+			// the A3 fix: post-Stop responses now fail the pending gate up front
+			// instead of silently dying in completeRequestOwned's queue lookup.
+			d.pendingRequestState.ClearAllPendingRequests()
+			// Watchers may still be running during/after this drain; they exit via
+			// stoppedC, NOT via the now-empty pending state.
+			// cID/bok/qok naming avoids shadowing the pump's loop-persistent
+			// clientID/ok vars.
+			for cID, q := range detached {
+				var outstanding []interface{}
+				if qd, qok := q.(interface{ DrainAll() []interface{} }); qok {
+					outstanding = qd.DrainAll() // atomic vs a straggling off-pump PopIf
+				} else {
+					for !q.IsEmpty() {
+						outstanding = append(outstanding, q.Pop())
+					}
+				}
+				for _, el := range outstanding {
+					bundle, bok := el.(RequestBundle)
+					// Guard malformed bundles, including nil Payload. Nil-Payload bundles are
+					// constructible via the public SendRequest(clientID, RequestBundle) API.
+					if !bok || bundle.Call == nil || bundle.Call.Payload == nil {
+						continue
+					}
+					d.fireRequestCancel(cID, bundle.Call.Action, bundle.Call.GetUniqueId(),
+						bundle.Call.Payload, newDispatcherStoppedError(bundle.Call.GetUniqueId()))
+				}
+			}
 			log.Info("stopped processing requests")
 			return
 		case req = <-reqCh:
