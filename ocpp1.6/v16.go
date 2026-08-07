@@ -311,7 +311,10 @@ func NewChargePoint(id string, endpoint *ocppj.Client, client ws.Client) ChargeP
 	// parameter and is pinned to ONE generation for its whole lifetime -
 	// these closures instead must observe whichever generation is current at
 	// delivery time, since they run once per inbound message, not once per
-	// generation). See spec §L2's "wider hazard" / fable MAJOR-2.
+	// generation). The consequence is that EVERY producer into cp.incoming has
+	// to be preemptible, not just the cancel hook: one non-preemptible send is
+	// enough to strand the readPump, and with it the connection it services,
+	// for the rest of the process.
 	cp.client.SetResponseHandler(func(confirmation ocpp.Response, requestId string) {
 		if testhooks.ChargePointResponse != nil {
 			testhooks.ChargePointResponse(confirmation, requestId)
@@ -460,28 +463,28 @@ type CentralSystem interface {
 
 	// The function blocks forever, so it is suggested to wrap it in a goroutine, in case other functionality needs to be executed on the main program thread.
 	Start(listenPort int, listenPath string)
-	// Stops the central system, clearing all pending requests. Callbacks for
-	// requests still held in the dispatcher's queues fire exactly once with an
-	// error matching ocppj.ErrDispatcherStopped during Stop; if the stop drain
-	// races the peer's disconnect, the terminal sentinel may be ErrLocalTransport
-	// instead. Cancellations for
-	// requests WITHOUT a registered callback are reported on Errors() best-effort
-	// (non-blocking, bounded buffer); Errors() is not a complete inventory of
-	// stop-drain cancellations. Facade callbacks are dispatched off the pump and
-	// may still be running after Stop returns.
+	// Stops the central system, clearing all pending requests. Cancellation of
+	// requests still held in the dispatcher's queues is scheduled during Stop
+	// and delivered exactly once with an error matching
+	// ocppj.ErrDispatcherStopped; if the stop drain races the peer's
+	// disconnect, the terminal sentinel may be ErrLocalTransport instead.
+	// Delivery is dispatched off the pump, so a callback may not yet have
+	// started when Stop returns. Cancellations for requests WITHOUT a
+	// registered callback are reported on Errors() best-effort (non-blocking,
+	// bounded buffer); Errors() is not a complete inventory of stop-drain
+	// cancellations.
 	Stop()
-	// Shutdown is the context-bounded variant of Stop. Callbacks for requests
-	// still held in the dispatcher's queues fire exactly once with an error
-	// matching ocppj.ErrDispatcherStopped during Shutdown; if the stop drain
-	// races the peer's disconnect, the terminal sentinel may be ErrLocalTransport
-	// instead. Cancellations for
-	// requests WITHOUT a registered callback are reported on Errors() best-effort
-	// (non-blocking, bounded buffer); Errors() is not a complete inventory of
-	// stop-drain cancellations. Stop-drain cancel callbacks run before the
-	// ctx-bounded phase begins; a slow callback extends teardown beyond ctx.
-	// Raw ocppj CanceledRequestHandler callbacks run on the pump before that
-	// phase; facade callbacks are dispatched off the pump and may still be
-	// running after Stop or Shutdown returns.
+	// Shutdown is the context-bounded variant of Stop. Cancellation of requests
+	// still held in the dispatcher's queues is scheduled during Shutdown and
+	// delivered exactly once with an error matching ocppj.ErrDispatcherStopped;
+	// if the stop drain races the peer's disconnect, the terminal sentinel may
+	// be ErrLocalTransport instead. Facade callbacks are dispatched off the
+	// pump, so one may not yet have started when Shutdown returns. Raw ocppj
+	// CanceledRequestHandler callbacks instead run on the pump, before the
+	// ctx-bounded phase begins, so a slow one extends teardown beyond ctx.
+	// Cancellations for requests WITHOUT a registered callback are reported on
+	// Errors() best-effort (non-blocking, bounded buffer); Errors() is not a
+	// complete inventory of stop-drain cancellations.
 	Shutdown(ctx context.Context) error
 	// Errors returns the process-lifetime channel for asynchronous server errors.
 	// Drain it for the lifetime of the server. Sends are non-blocking and errors
