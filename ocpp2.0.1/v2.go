@@ -665,6 +665,10 @@ type CSMS interface {
 // If you need a TLS server, you may use the following:
 //
 //	csms := NewCSMS(nil, ws.NewServer(ws.WithServerTLSConfig("certificatePath", "privateKeyPath", nil)))
+//
+// If all you need is a default CSMS plus a few transport hardening knobs
+// (e.g. a read limit), use NewDefaultCSMS — it does not require you to
+// construct a ws.Server yourself.
 func NewCSMS(endpoint *ocppj.Server, server ws.Server) CSMS {
 	if server == nil {
 		server = ws.NewServer()
@@ -709,4 +713,51 @@ func NewCSMS(endpoint *ocppj.Server, server ws.Server) CSMS {
 		}
 	})
 	return &cs
+}
+
+// CSMSOpt configures a CSMS built by NewDefaultCSMS.
+//
+// CSMSOpt is exported so it can appear in the constructor's signature, but
+// csmsConfig is not: a consumer cannot write their own CSMSOpt, only pass the
+// package-provided ones (currently WithServerReadLimit). The seam is
+// deliberately facade-internal — the exported type exists solely so
+// package-provided option constructors have something to return — not a
+// consumer extension point.
+type CSMSOpt func(*csmsConfig)
+
+type csmsConfig struct {
+	wsOpts []ws.ServerOpt
+}
+
+// WithServerReadLimit bounds the size in bytes of a single inbound websocket
+// message accepted from a charging station. Any value <= 0 means unlimited,
+// which is the default. Exceeding the limit DROPS the connection (the charging
+// station's disconnect handler fires); it does not merely skip the oversized
+// message, so size it well above the largest legitimate message. A large
+// NotifyReport can reach hundreds of KB, so 1 MB (1<<20) is generous headroom
+// for OCPP 2.0.1 traffic.
+//
+// The limit is bound when a connection is upgraded, so it applies to every
+// charging station that connects after Start.
+func WithServerReadLimit(limit int64) CSMSOpt {
+	return func(c *csmsConfig) {
+		c.wsOpts = append(c.wsOpts, ws.WithServerReadLimit(limit))
+	}
+}
+
+// NewDefaultCSMS creates an OCPP 2.0.1 CSMS on the default ocppj endpoint and
+// the default websocket transport, configured by opts. With no options it is
+// equivalent to NewCSMS(nil, nil).
+//
+// Use this constructor to reach common transport hardening knobs without
+// importing the ws package. If you need a custom ocppj endpoint or a custom
+// ws.Server, use NewCSMS and configure the ws.Server yourself (see
+// ws.NewServer and the ws.With… options) — options passed here only ever
+// configure objects this constructor creates.
+func NewDefaultCSMS(opts ...CSMSOpt) CSMS {
+	cfg := csmsConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	return NewCSMS(nil, ws.NewServer(cfg.wsOpts...))
 }

@@ -100,6 +100,10 @@ func SetLogger(logger logging.Logger) {
 //
 // To set a custom configuration, refer to the server's SetTimeoutConfig method.
 // If no configuration is passed, a default configuration is generated via the NewServerTimeoutConfig function.
+//
+// Always construct via NewServerTimeoutConfig() and mutate the field you want — a
+// bare struct literal zeroes WriteWait, which makes every outbound write fail on
+// an already-expired deadline.
 type ServerTimeoutConfig struct {
 	WriteWait  time.Duration // The timeout for network write operations. After a timeout, the connection is closed.
 	PingWait   time.Duration // The timeout for waiting for a ping from the client. After a timeout, the connection is closed.
@@ -149,6 +153,10 @@ func NewServerTimeoutConfig() ServerTimeoutConfig {
 //
 // To set a custom configuration, refer to the client's SetTimeoutConfig method.
 // If no configuration is passed, a default configuration is generated via the NewClientTimeoutConfig function.
+//
+// Always construct via NewClientTimeoutConfig() and mutate the field you want — a
+// bare struct literal zeroes WriteWait, which makes every outbound write fail on
+// an already-expired deadline.
 type ClientTimeoutConfig struct {
 	WriteWait               time.Duration // The timeout for network write operations. After a timeout, the connection is closed.
 	HandshakeTimeout        time.Duration // The timeout for the initial handshake to complete.

@@ -146,6 +146,27 @@ func (s *WebSocketSuite) startServer(srv *server, listenPath string) int {
 	return 0
 }
 
+func stopServerOnCleanup(t *testing.T, srv *server) func() {
+	t.Helper()
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			doneC := make(chan struct{})
+			go func() {
+				srv.Stop()
+				close(doneC)
+			}()
+			select {
+			case <-doneC:
+			case <-time.After(2 * time.Second):
+				t.Errorf("server Stop did not return")
+			}
+		})
+	}
+	t.Cleanup(stop)
+	return stop
+}
+
 // freePort returns a likely-free ephemeral port for tests that need to control
 // the exact port (a dead-port dial, or a port a server will bind LATER). Probe
 // with the SAME bind shape server.Start uses — `":0"` (all interfaces), NOT
@@ -1966,6 +1987,119 @@ func (s *WebSocketSuite) TestServerShutdownCanceledCtx() {
 	s.False(s.client.IsConnected())
 
 	drainErrorsClosed(s.T(), srv.Errors())
+}
+
+// TestWithServerReadLimitPreservesTimeoutDefaults verifies that
+// WithServerReadLimit sets ReadLimit without disturbing any other timeout
+// field — the no-trap property that distinguishes it from a SetTimeoutConfig
+// struct literal.
+func (s *WebSocketSuite) TestWithServerReadLimitPreservesTimeoutDefaults() {
+	const limit int64 = 4096
+	srv := NewServer(WithServerReadLimit(limit)).(*server)
+	want := NewServerTimeoutConfig()
+	want.ReadLimit = limit
+	s.Equal(want, srv.timeoutConfig)
+}
+
+// TestWithServerReadLimitLastWinsAndComposes verifies option-application order
+// (last wins for ReadLimit, plain field assignment) and that
+// WithServerReadLimit does not interfere with sibling ServerOpts.
+func (s *WebSocketSuite) TestWithServerReadLimitLastWinsAndComposes() {
+	srv := NewServer(WithServerReadLimit(64), WithServerReadLimit(4096), WithDuplicateConnectionPolicy(KeepNew)).(*server)
+	s.Equal(int64(4096), srv.timeoutConfig.ReadLimit)
+	s.Equal(KeepNew, srv.duplicatePolicy)
+	// Other timeouts still at defaults.
+	s.Equal(defaultWriteWait, srv.timeoutConfig.WriteWait)
+	s.Equal(defaultPingWait, srv.timeoutConfig.PingWait)
+}
+
+// TestServerReadLimitExceededViaOption is a behavioral clone of
+// TestServerReadLimitExceeded, but the limit is applied via
+// NewServer(WithServerReadLimit(…)) instead of SetTimeoutConfig — proving the
+// option reaches the live connection (updateConfig → SetReadLimit).
+func (s *WebSocketSuite) TestServerReadLimitExceededViaOption() {
+	const limit = 64
+	oversized := bytes.Repeat([]byte("a"), limit*4)
+
+	srv := NewServer(WithServerReadLimit(limit)).(*server)
+	serverDisconnectedC := make(chan struct{}, 1)
+	srv.SetDisconnectedClientHandler(func(ws Channel) {
+		serverDisconnectedC <- struct{}{}
+	})
+
+	stopServerOnCleanup(s.T(), srv)
+	port := s.startServer(srv, serverPath)
+
+	host := fmt.Sprintf("localhost:%v", port)
+	u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+	err := s.client.Start(u.String())
+	s.NoError(err)
+
+	err = s.client.Write(oversized)
+	s.NoError(err)
+
+	select {
+	case <-serverDisconnectedC:
+	case <-time.After(2 * time.Second):
+		s.Fail("timeout waiting for server to drop the over-limit connection")
+	}
+}
+
+// TestWithServerReadLimitNonPositiveIsUnlimited verifies that 0 and negative
+// values both behave as unlimited — the apply gate is strictly > 0, so neither
+// value interferes with message delivery.
+func (s *WebSocketSuite) TestWithServerReadLimitNonPositiveIsUnlimited() {
+	large := bytes.Repeat([]byte("y"), 4*1024*1024) // 4 MB, -race-friendly
+	for _, v := range []int64{0, -1} {
+		limit := v
+		s.Run(fmt.Sprintf("limit=%d", limit), func() {
+			received := make(chan int, 1)
+			srv := NewServer(WithServerReadLimit(limit)).(*server)
+			srv.SetMessageHandler(func(ws Channel, data []byte) error {
+				received <- len(data)
+				return nil
+			})
+
+			stopServer := stopServerOnCleanup(s.T(), srv)
+			port := s.startServer(srv, serverPath)
+			host := fmt.Sprintf("localhost:%v", port)
+			u := url.URL{Scheme: "ws", Host: host, Path: testPath}
+			// A fresh client per row: row 1 stops its client, and a stopped
+			// client cannot be meaningfully restarted, so reusing it would make
+			// the two rows test different things.
+			cl := newWebsocketClient(s.T(), nil)
+			// Failure-path net: if a Require().NoError below aborts this row
+			// before the explicit cl.Stop(), disable auto-reconnect and
+			// register a cleanup Stop so the client doesn't leak and zombie-
+			// redial the ephemeral port. Stop is safe to call twice.
+			cl.SetAutoReconnect(false)
+			s.T().Cleanup(func() { cl.Stop() })
+			err := cl.Start(u.String())
+			s.Require().NoError(err)
+
+			err = cl.Write(large)
+			s.Require().NoError(err)
+
+			select {
+			case n := <-received:
+				s.Equal(len(large), n)
+			case <-time.After(2 * time.Second):
+				s.Failf("timeout waiting for large message delivery", "limit=%d", limit)
+			}
+			s.True(cl.IsConnected())
+
+			cl.Stop()
+			stopServer()
+			// Wait for teardown.
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) {
+				if !cl.IsConnected() && connectionCount(srv) == 0 {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		})
+	}
 }
 
 func TestWebSockets(t *testing.T) {

@@ -532,14 +532,18 @@ type CentralSystem interface {
 //
 // The endpoint and server parameters may be omitted, in order to use a default configuration:
 //
-//	client := NewServer(nil, nil)
+//	client := NewCentralSystem(nil, nil)
 //
 // It is recommended to use the default configuration, unless a custom networking / ocppj layer is required.
 // The default ocppj endpoint supports all OCPP 1.6 profiles out-of-the-box.
 //
 // If you need a TLS server, you may use the following:
 //
-//	cs := NewServer(nil, ws.NewServer(ws.WithServerTLSConfig("certificatePath", "privateKeyPath", nil)))
+//	cs := NewCentralSystem(nil, ws.NewServer(ws.WithServerTLSConfig("certificatePath", "privateKeyPath", nil)))
+//
+// If all you need is a default central system plus a few transport hardening
+// knobs (e.g. a read limit), use NewDefaultCentralSystem — it does not require
+// you to construct a ws.Server yourself.
 func NewCentralSystem(endpoint *ocppj.Server, server ws.Server) CentralSystem {
 	if server == nil {
 		server = ws.NewServer()
@@ -587,4 +591,50 @@ func NewCentralSystem(endpoint *ocppj.Server, server ws.Server) CentralSystem {
 		}
 	})
 	return &cs
+}
+
+// CentralSystemOpt configures a central system built by NewDefaultCentralSystem.
+//
+// CentralSystemOpt is exported so it can appear in the constructor's signature,
+// but centralSystemConfig is not: a consumer cannot write their own
+// CentralSystemOpt, only pass the package-provided ones (currently
+// WithServerReadLimit). The seam is deliberately facade-internal — the exported
+// type exists solely so package-provided option constructors have something to
+// return — not a consumer extension point.
+type CentralSystemOpt func(*centralSystemConfig)
+
+type centralSystemConfig struct {
+	wsOpts []ws.ServerOpt
+}
+
+// WithServerReadLimit bounds the size in bytes of a single inbound websocket
+// message accepted from a charge point. Any value <= 0 means unlimited, which
+// is the default. Exceeding the limit DROPS the connection (the charge point's
+// disconnect handler fires); it does not merely skip the oversized message, so
+// size it well above the largest legitimate message — 1 MB (1<<20) is generous
+// headroom for OCPP 1.6 traffic.
+//
+// The limit is bound when a connection is upgraded, so it applies to every
+// charge point that connects after Start.
+func WithServerReadLimit(limit int64) CentralSystemOpt {
+	return func(c *centralSystemConfig) {
+		c.wsOpts = append(c.wsOpts, ws.WithServerReadLimit(limit))
+	}
+}
+
+// NewDefaultCentralSystem creates an OCPP 1.6 central system on the default
+// ocppj endpoint and the default websocket transport, configured by opts.
+// With no options it is equivalent to NewCentralSystem(nil, nil).
+//
+// Use this constructor to reach common transport hardening knobs without
+// importing the ws package. If you need a custom ocppj endpoint or a custom
+// ws.Server, use NewCentralSystem and configure the ws.Server yourself (see
+// ws.NewServer and the ws.With… options) — options passed here only ever
+// configure objects this constructor creates.
+func NewDefaultCentralSystem(opts ...CentralSystemOpt) CentralSystem {
+	cfg := centralSystemConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	return NewCentralSystem(nil, ws.NewServer(cfg.wsOpts...))
 }

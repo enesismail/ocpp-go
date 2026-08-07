@@ -212,6 +212,21 @@ func WithDuplicateConnectionEvictionTimeout(d time.Duration) ServerOpt {
 	}
 }
 
+// WithServerReadLimit sets the per-message inbound read limit (bytes) on the
+// server's timeout configuration at construction time, leaving every other
+// timeout at its default. Unlike SetTimeoutConfig with a struct literal —
+// which silently zeroes WriteWait/PingWait — this cannot disable the write
+// and ping deadlines.
+//
+// See ServerTimeoutConfig.ReadLimit for full semantics: the limit is bound at
+// upgrade time, exceeding it drops the connection, and any value <= 0 means
+// unlimited (the default).
+func WithServerReadLimit(limit int64) ServerOpt {
+	return func(s *server) {
+		s.timeoutConfig.ReadLimit = limit
+	}
+}
+
 // NewServer Creates a new websocket server.
 //
 // Additional options may be added using the AddOption function.
