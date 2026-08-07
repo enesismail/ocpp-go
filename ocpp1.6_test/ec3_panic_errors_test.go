@@ -45,7 +45,36 @@ func ec3PrepareV16Server(suite *OcppV16TestSuite, clientID string, forward bool)
 		server.NewClientHandler(channel)
 	})
 	client.On("Write", mock.Anything).Return(nil)
+	// Stop/IsConnected are needed only by the charge point's teardown (see
+	// ec3StopOnCleanup): ocppj.Client.Stop probes IsConnected and, when it
+	// reports true, waits for a disconnect callback the mock never delivers.
+	client.On("Stop").Return().Maybe()
+	client.On("IsConnected").Return(false).Maybe()
 	return channel, writes
+}
+
+// ec3StopOnCleanup registers a bounded teardown for a facade this test started.
+// The Stop runs on its own goroutine behind an ec3Wait watchdog: Stop joins the
+// in-flight handler generation, so a regressed build can wedge inside it, and a
+// bare call would hang the whole suite instead of failing this test. Running it
+// from t.Cleanup covers the t.Fatal paths too, so the facade's dispatcher and
+// handler goroutines cannot outlive the test into the next SetupTest.
+func ec3StopOnCleanup(t *testing.T, name string, stop func()) {
+	t.Helper()
+	t.Cleanup(func() {
+		doneC := make(chan struct{})
+		go func() {
+			stop()
+			close(doneC)
+		}()
+		select {
+		case <-doneC:
+		case <-time.After(ec3Wait):
+			// Errorf rather than Fatal: a Fatal here would skip the remaining
+			// cleanups and leave the other facade of the pair running.
+			t.Errorf("%s Stop did not return", name)
+		}
+	})
 }
 
 func ec3FreshV16CentralSystem(server *MockWebsocketServer) (ocpp16.CentralSystem, *ocppj.Server) {
@@ -94,7 +123,9 @@ func (suite *OcppV16TestSuite) driveV16InboundPanic(clientID, messageID, value s
 	suite.centralSystem.SetCoreHandler(listener)
 	channel, writes := ec3PrepareV16Server(suite, clientID, true)
 	suite.centralSystem.Start(8887, "somePath")
+	ec3StopOnCleanup(suite.T(), "central system", suite.centralSystem.Stop)
 	require.NoError(suite.T(), suite.chargePoint.Start("someUrl"))
+	ec3StopOnCleanup(suite.T(), "charge point", suite.chargePoint.Stop)
 	require.NoError(suite.T(), suite.mockWsServer.MessageHandler(channel, []byte(fmt.Sprintf(`[2,"%s","BootNotification",{"chargePointModel":"model1","chargePointVendor":"ABL"}]`, messageID))))
 	return writes
 }
@@ -162,7 +193,9 @@ func (suite *OcppV16TestSuite) TestEC3EndpointHookRegisteredBeforeConstructionSu
 	errorsC := centralSystem.Errors()
 	channel, writes := ec3PrepareV16Server(suite, clientID, true)
 	centralSystem.Start(8887, "somePath")
+	ec3StopOnCleanup(suite.T(), "central system", centralSystem.Stop)
 	require.NoError(suite.T(), suite.chargePoint.Start("someUrl"))
+	ec3StopOnCleanup(suite.T(), "charge point", suite.chargePoint.Stop)
 	require.NoError(suite.T(), suite.mockWsServer.MessageHandler(channel, []byte(`[2,"ec3-before-request","BootNotification",{"chargePointModel":"model1","chargePointVendor":"ABL"}]`)))
 	select {
 	case <-prevC:
@@ -186,7 +219,9 @@ func (suite *OcppV16TestSuite) TestEC3PanicStormWithUndrainedErrorsDoesNotWedge(
 	suite.centralSystem.SetCoreHandler(listener)
 	channel, writes := ec3PrepareV16Server(suite, "ec3-storm", false)
 	suite.centralSystem.Start(8887, "somePath")
+	ec3StopOnCleanup(t, "central system", suite.centralSystem.Stop)
 	require.NoError(t, suite.chargePoint.Start("someUrl"))
+	ec3StopOnCleanup(t, "charge point", suite.chargePoint.Stop)
 	for i := 0; i < 18; i++ {
 		id := fmt.Sprintf("ec3-storm-%d", i)
 		require.NoError(t, suite.mockWsServer.MessageHandler(channel, []byte(fmt.Sprintf(`[2,"%s","BootNotification",{"chargePointModel":"model1","chargePointVendor":"ABL"}]`, id))))
@@ -242,6 +277,7 @@ func (suite *OcppV16TestSuite) TestEC3StopDrainPanicReportedOnErrors() {
 		writeC <- data
 	})
 	centralSystem.Start(8887, "somePath")
+	ec3StopOnCleanup(t, "central system", centralSystem.Stop)
 	suite.mockWsServer.NewClientHandler(NewMockWebSocket(clientID))
 	id := defaultMessageId
 	err := centralSystem.SendRequestAsync(clientID, core.NewChangeAvailabilityRequest(1, core.AvailabilityTypeOperative), func(ocpp.Response, error) {
@@ -264,24 +300,54 @@ func (suite *OcppV16TestSuite) TestEC3StopDrainPanicReportedOnErrors() {
 		t.Fatal("central system Stop did not return")
 	}
 
+	// Two entries are possible here and neither their arrival times nor their
+	// order are fixed: the MANDATORY recovered panic from the stop-drain cancel
+	// callback, and an OPTIONAL "no handler available for canceled request"
+	// report when the drain races the disconnect path. classify counts whichever
+	// arrives.
 	count := 0
 	panicCount := 0
+	classify := func(reported error) {
+		var panicErr *ocppj.HandlerPanicError
+		if errors.As(reported, &panicErr) {
+			kindOK := panicErr.Panic.Kind == ocppj.ErrorHandlerKind || panicErr.Panic.Kind == ocppj.DisconnectHandlerKind
+			idOK := (panicErr.Panic.Kind == ocppj.ErrorHandlerKind && panicErr.Panic.RequestID == id) || (panicErr.Panic.Kind == ocppj.DisconnectHandlerKind && panicErr.Panic.RequestID == "")
+			if kindOK && idOK {
+				count++
+				panicCount++
+			}
+			return
+		}
+		if strings.Contains(reported.Error(), "no handler available for canceled request") {
+			count++
+		}
+	}
+
+	// Phase 1 - await the mandatory panic entry under the FULL ec3Wait
+	// watchdog. The cancel callback is dispatched off the dispatcher pump, so it
+	// can legitimately be scheduled long after Stop() has returned: entering the
+	// short quiet window below first would let that window close with nothing
+	// observed at all and fail a healthy build.
+	panicDeadline := time.After(ec3Wait)
+	for panicCount == 0 {
+		select {
+		case reported := <-errorsC:
+			classify(reported)
+		case <-panicDeadline:
+			t.Fatal("stop-drain Errors() never reported the recovered panic")
+		}
+	}
+
+	// Phase 2 - the optional second entry. Errors() never closes, so a
+	// restarting quiet window is the terminator: once nothing more arrives for
+	// 300ms, the final count has settled.
 	quiet := time.NewTimer(300 * time.Millisecond)
 	defer quiet.Stop()
+	settleDeadline := time.After(ec3Wait)
 	for {
 		select {
 		case reported := <-errorsC:
-			var panicErr *ocppj.HandlerPanicError
-			if errors.As(reported, &panicErr) {
-				kindOK := panicErr.Panic.Kind == ocppj.ErrorHandlerKind || panicErr.Panic.Kind == ocppj.DisconnectHandlerKind
-				idOK := (panicErr.Panic.Kind == ocppj.ErrorHandlerKind && panicErr.Panic.RequestID == id) || (panicErr.Panic.Kind == ocppj.DisconnectHandlerKind && panicErr.Panic.RequestID == "")
-				if kindOK && idOK {
-					count++
-					panicCount++
-				}
-			} else if strings.Contains(reported.Error(), "no handler available for canceled request") {
-				count++
-			}
+			classify(reported)
 			if !quiet.Stop() {
 				select {
 				case <-quiet.C:
@@ -293,7 +359,7 @@ func (suite *OcppV16TestSuite) TestEC3StopDrainPanicReportedOnErrors() {
 			require.Contains(t, []int{1, 2}, count)
 			require.GreaterOrEqual(t, panicCount, 1)
 			return
-		case <-time.After(ec3Wait):
+		case <-settleDeadline:
 			t.Fatal("stop-drain Errors() did not reach a quiet period")
 		}
 	}
@@ -319,7 +385,27 @@ func (suite *OcppV16TestSuite) setupEC3V16Client() (chan []byte, chan string) {
 	listener.On("OnChangeAvailability", mock.Anything).Run(func(mock.Arguments) { panic(<-panicValues) })
 	suite.chargePoint.SetCoreHandler(listener)
 	require.NoError(suite.T(), suite.chargePoint.Start("someUrl"))
+	// Stop also releases any producer left parked in the blocking error() (its
+	// stopC arm), so no goroutine outlives the test on the t.Fatal paths either.
+	ec3StopOnCleanup(suite.T(), "charge point", suite.chargePoint.Stop)
 	return writeC, panicValues
+}
+
+// driveV16OrphanResponse drives one ORDINARY (non-panic) error() producer: a
+// heartbeat sent through the raw ocppj client has no facade callback
+// registered, so the facade's asyncCallbackHandler goroutine reports "no
+// handler available for incoming response" through the BLOCKING cp.error().
+func (suite *OcppV16TestSuite) driveV16OrphanResponse(writeC chan []byte, label string) {
+	t := suite.T()
+	t.Helper()
+	_, err := suite.ocppjChargePoint.SendRequest(core.NewHeartbeatRequest())
+	require.NoError(t, err)
+	select {
+	case <-writeC:
+	case <-time.After(ec3Wait):
+		t.Fatalf("%s existing error probe was not written", label)
+	}
+	require.NoError(t, suite.mockWsClient.MessageHandler([]byte(`[3,"1234",{"currentTime":"2026-01-01T00:00:00Z"}]`)))
 }
 
 // driveV16ClientPanic pushes value for the pre-installed core handler (see
@@ -343,19 +429,48 @@ func (suite *OcppV16TestSuite) TestEC3ClientPanicRouteIsNonBlocking() {
 	hookC := make(chan struct{}, 4)
 	suite.chargePoint.SetOnHandlerPanic(func(ocppj.HandlerPanic) { hookC <- struct{}{} })
 	writeC, panicValues := suite.setupEC3V16Client()
-	_, err := suite.ocppjChargePoint.SendRequest(core.NewHeartbeatRequest())
-	require.NoError(t, err)
+
+	// Establish FIRST that the ordinary error() path really is blocking on a
+	// full cap-1 errC. Without this, every assertion below would also hold for a
+	// (wrong) globally non-blocking error(), leaving the guard vacuous. Two
+	// ordinary producers are driven back to back and are processed in FIFO order
+	// by the single asyncCallbackHandler goroutine: the first fills errC, the
+	// second must then PARK inside error().
+	suite.driveV16OrphanResponse(writeC, "first")
+	suite.driveV16OrphanResponse(writeC, "second")
+
+	// The park is observable: that same goroutine is the sole consumer of
+	// cp.incoming, so while it is parked an inbound CALL whose handler panics
+	// produces no CALL_ERROR write at all. A non-blocking error() would instead
+	// drop the second report and let this write through immediately.
+	panicValues <- "ec3-client-parked-panic"
+	require.NoError(t, suite.mockWsClient.MessageHandler([]byte(`[2,"ec3-client-parked","ChangeAvailability",{"connectorId":1,"type":"Operative"}]`)))
 	select {
 	case <-writeC:
-	case <-time.After(ec3Wait):
-		t.Fatal("first existing error probe was not written")
+		t.Fatal("ordinary error() did not block while the Errors() buffer was full")
+	case <-time.After(150 * time.Millisecond):
 	}
-	require.NoError(t, suite.mockWsClient.MessageHandler([]byte(`[3,"1234",{"currentTime":"2026-01-01T00:00:00Z"}]`)))
+
+	// Release the parked producer with a single drain; its error takes the freed
+	// slot and the queued CALL is finally handled. The panic route therefore runs
+	// with errC full again and must NOT park - both the CALL_ERROR write and the
+	// hook have to arrive.
 	select {
 	case <-errorsC:
 	case <-time.After(ec3Wait):
 		t.Fatal("first existing error did not fill Errors()")
 	}
+	select {
+	case <-writeC:
+	case <-time.After(ec3Wait):
+		t.Fatal("the parked producer was never released")
+	}
+	select {
+	case <-hookC:
+	case <-time.After(ec3Wait):
+		t.Fatal("panic hook did not fire for the CALL queued behind the parked producer")
+	}
+
 	suite.driveV16ClientPanic(writeC, panicValues, "ec3-client-one", "ec3-client-one-panic")
 	suite.driveV16ClientPanic(writeC, panicValues, "ec3-client-two", "ec3-client-two-panic")
 	for i := 0; i < 2; i++ {
@@ -365,16 +480,11 @@ func (suite *OcppV16TestSuite) TestEC3ClientPanicRouteIsNonBlocking() {
 			t.Fatalf("client panic hook count = %d, want 2", i)
 		}
 	}
-	_, err = suite.ocppjChargePoint.SendRequest(core.NewHeartbeatRequest())
-	require.NoError(t, err)
-	select {
-	case <-writeC:
-	case <-time.After(ec3Wait):
-		t.Fatal("second existing error probe was not written")
-	}
-	require.NoError(t, suite.mockWsClient.MessageHandler([]byte(`[3,"1234",{"currentTime":"2026-01-01T00:00:00Z"}]`)))
+	// A last ordinary producer, deliberately left parked on the full buffer: the
+	// teardown registered by setupEC3V16Client releases it through Stop's stopC
+	// arm, so it does not outlive the test.
+	suite.driveV16OrphanResponse(writeC, "third")
 	time.Sleep(100 * time.Millisecond)
-	suite.chargePoint.Stop()
 }
 
 func (suite *OcppV16TestSuite) TestEC3ClientPanicBeforeErrorsArmedIsSilent() {
@@ -393,5 +503,4 @@ func (suite *OcppV16TestSuite) TestEC3ClientPanicBeforeErrorsArmedIsSilent() {
 		suite.T().Fatalf("unexpected retroactive client panic report: %v", reported)
 	default:
 	}
-	suite.chargePoint.Stop()
 }

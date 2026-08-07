@@ -453,6 +453,14 @@ func (cp *chargePoint) SetCertificateHandler(handler certificates.ChargePointHan
 // ones racing shutdown — use this callback; Errors() is a monitoring stream,
 // not an inventory. Set it before Start.
 //
+// The chain order is observable: on a panic this charge point attempts the
+// Errors() report FIRST, then invokes any hook that was registered on the
+// underlying *ocppj.Client BEFORE construction, then this callback. All three
+// run inside one recover, so a panicking ENDPOINT hook suppresses this callback
+// (and a panicking callback here suppresses nothing). No hook can suppress the
+// Errors() report, which is attempted before either of them runs - it remains
+// best-effort for the buffer reasons above, never because a hook panicked.
+//
 // A panic recovered inside the dispatcher (a raw CanceledRequestHandler, kind
 // ocppj.CancelHandlerKind) reaches this callback only on a
 // *ocppj.DefaultClientDispatcher: a custom ClientDispatcher never receives

@@ -825,6 +825,13 @@ func (cs *csms) SetDataHandler(handler data.CSMSHandler) {
 // should not panic (a panic here is recovered and logged, but suppresses
 // nothing that ran before it). See ocppj.Server.SetOnHandlerPanic.
 //
+// The chain order is observable: on a panic this CSMS reports on Errors()
+// FIRST, then invokes any hook that was registered on the underlying
+// *ocppj.Server BEFORE construction, then this callback. All three run inside
+// one recover, so a panicking ENDPOINT hook suppresses this callback (and a
+// panicking callback here suppresses nothing). The Errors() report is emitted
+// before either hook runs, so no hook can suppress it.
+//
 // Calling SetOnHandlerPanic on the underlying *ocppj.Server AFTER constructing
 // this CSMS replaces the routing wrapper and silently disables the Errors()
 // reporting; register the hook here instead. A hook registered on the endpoint
