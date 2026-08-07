@@ -188,9 +188,8 @@ func TestNewDefaultCentralSystemAppliesReadLimit(t *testing.T) {
 	controlPort := reservedPort(t)
 	controlCS := ocpp16.NewDefaultCentralSystem()
 
-	controlDeliveredC := make(chan struct{}, 1)
-	// We just need to prove the control does NOT drop the connection — no handler
-	// needed for delivery; the disconnect handler firing (or not) is the signal.
+	// We just need to prove the control does NOT drop the connection — the
+	// disconnect handler firing (or not) is the signal.
 	controlDisconnectedC := make(chan struct{}, 1)
 	controlCS.SetChargePointDisconnectedHandler(func(_ ocpp16.ChargePointConnection) {
 		controlDisconnectedC <- struct{}{}
@@ -248,7 +247,6 @@ func TestNewDefaultCentralSystemAppliesReadLimit(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		// Expected: no disconnect, message was delivered.
 	}
-	_ = controlDeliveredC // silence unused
 }
 
 // TestNewDefaultCentralSystemNoOptsMatchesLegacyDefault is a cheap smoke test:
