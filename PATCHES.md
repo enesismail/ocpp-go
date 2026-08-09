@@ -1013,3 +1013,20 @@ with `errors.As`. Registering a hook directly on an `ocppj.Server`/`ocppj.Client
 on the facade instead. Panics recovered inside a custom
 `ClientDispatcher`/`ServerDispatcher` are not reported; panic reporting is only
 supported with the default dispatchers.
+
+## Vendored OCA JSON schemas
+
+`schemas/v201/`, `schemas/v16/base/` and `schemas/v16/security/` hold the Open Charge
+Alliance's published OCPP 2.0.1 and OCPP 1.6 JSON schemas exactly as OCA distributes
+them. No file under `schemas/` may ever be edited, reformatted, or otherwise modified —
+any correction this project needs to a schema's declared constraints belongs in this
+project's own Go code, never in the schema file itself.
+
+| File | Why keep it |
+|------|-------------|
+| `schemas/NOTICE` | records the license these files are redistributed under and the provenance of each vendored set |
+| `schemas/SHA256SUMS` | the per-file integrity manifest that proves the vendored tree still matches what was fetched |
+| `scripts/fetch-schemas.sh` | re-fetches and verifies the schemas against a fresh OCA download, and rebuilds the vendored tree from nothing if that is ever needed |
+
+**Guard:** `schemas/schemas_test.go` hashes every vendored file against
+`schemas/SHA256SUMS` and fails the build the moment a byte changes.

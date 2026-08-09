@@ -1,0 +1,74 @@
+Vendored OCPP JSON schemas
+===========================
+
+The JSON schema files under schemas/v201/, schemas/v16/base/ and schemas/v16/security/
+are copyright the Open Charge Alliance (OCA) and are part of the published OCPP 2.0.1
+and OCPP 1.6 specifications.
+
+These files are redistributed here exactly as published by OCA, under the terms of the
+Creative Commons Attribution-NoDerivatives 4.0 International Public License
+(CC BY-ND 4.0): https://creativecommons.org/licenses/by-nd/4.0/
+
+Every file in these three directories is byte-identical to OCA's own distribution
+archive. Nothing here has been reformatted, reordered, re-encoded, or otherwise
+modified — not even a trailing newline. Any correction this project needs to a
+schema's declared constraints is implemented in this project's own Go source code
+(never by editing a file in this tree); see PATCHES.md for the standing rule and its
+guard test.
+
+Provenance
+----------
+
+schemas/v201/ (128 files)
+  Publication:        OCPP 2.0.1 Edition 4, "all files" bundle
+  Schema date (OCA):  2020-03-31, as documented in the bundle's ReadMe.md file list
+  Archive entry dates (observed): the JSON-schemas sub-archive's own file entries are
+                       dated 2020-04-01 17:07; the outer bundle's directory entry for
+                       that sub-archive is dated 2026-07-13 (OCA repackages the outer
+                       bundle from time to time; the schema files themselves are
+                       unchanged since 2020, which is why schemas/SHA256SUMS pins
+                       per-file hashes rather than the archive hash)
+  Source archive:      https://openchargealliance.org/wp-content/uploads/downloads/OCPP-2.0.1_all_files-12.zip
+  Contained at:        OCPP-2.0.1_all_files/OCPP-2.0.1_part3_JSON_schemas.zip
+  Download date:       2026-08-08
+  Outer archive sha256:  192482c82a5e27a2319d2142be2d8c074b68a22851ff5a12d0541efc1eda775a (10,332,310 bytes)
+  Nested archive sha256: 6279c40b74929cce7fca439622194a8890a0d250de5665f3e4d80ef8529c51ce (151,476 bytes)
+  File count:           128
+
+schemas/v16/base/ (56 files)
+  Publication:        OCPP 1.6 documentation bundle (Edition 2 plus errata), JSON
+                       schemas under schemas/json/
+  Schema date:         each schema's own "id" field carries the namespace date
+                       2019:12; the containing archive's file entries are dated
+                       2025-04-29 (a documentation repackaging date, not a schema
+                       revision date)
+  Source archive:      https://openchargealliance.org/wp-content/uploads/2025/04/OCPP_1.6_documentation.zip
+  Contained at:        OCPP_1.6_documentation/schemas/json/
+  Download date:       2026-08-08
+  Archive sha256:      2a1d80284ca60449e85951fc55bc0538b5d45bd6f97c6d9228745acacb52c11b (924,666 bytes)
+  File count:          56
+
+schemas/v16/security/ (22 files)
+  Publication:        OCPP 1.6 Security Whitepaper, Edition 4
+  Schema date:         the nested archive's file entries are dated 2020-04-01 17:02;
+                       each schema's own "$id" field carries the namespace date
+                       2020:3. The nested archive is byte-identical between Security
+                       Whitepaper Editions 3 and 4; Edition 4 is vendored because it
+                       is the current publication.
+  Source archive:      https://openchargealliance.org/wp-content/uploads/downloads/OCPP-1.6-security-whitepaper-edition-4.zip
+  Contained at:        JSON_schemas.zip (nested inside the whitepaper archive)
+  Download date:       2026-08-08
+  Outer archive sha256:  158b883e8ee712fd80fad3610b69fad355f7831d7a0ccdd996ce6b5452ce6859 (797,656 bytes)
+  Nested archive sha256: 5c69b84a5b4efe99d90a6c432034f726894c51a02203c274c00c361caf15a889 (10,561 bytes)
+  File count:            22
+
+Verifying and re-obtaining these files
+---------------------------------------
+
+schemas/SHA256SUMS lists the sha256 of every vendored file. From the repository root:
+
+    shasum -a 256 -c schemas/SHA256SUMS
+
+scripts/fetch-schemas.sh can verify the vendored tree offline (--check), compare it
+against a fresh download from OCA (--verify-remote), or rebuild it from scratch
+(--refresh). Run it with --help for details.
