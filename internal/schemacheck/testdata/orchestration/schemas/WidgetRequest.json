@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:WidgetRequest",
+  "definitions": {
+    "DetailType": {
+      "type": "object",
+      "javaType": "Detail",
+      "properties": {
+        "code": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "extra": {
+          "type": "string",
+          "maxLength": 20
+        }
+      },
+      "required": ["code", "extra"],
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "maxLength": 50
+    },
+    "status": {
+      "type": "string",
+      "enum": ["OK", "Bad"]
+    },
+    "detail": {
+      "$ref": "#/definitions/DetailType"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/DetailType"
+      },
+      "minItems": 1
+    },
+    "comment": {
+      "type": "string",
+      "maxLength": 200
+    }
+  },
+  "required": ["name", "detail"],
+  "additionalProperties": false
+}

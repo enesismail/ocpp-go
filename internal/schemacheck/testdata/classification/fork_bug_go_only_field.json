@@ -1,0 +1,1 @@
+{"expectedClass":"FORK_BUG","input":{"go":{"name":"Extra","jsonName":"extra","wireType":"string"},"schema":{},"goPresent":true,"schemaPresent":false}}

@@ -1,0 +1,1 @@
+{"expectedClass":"FORK_BUG","input":{"go":{"jsonName":"value","wireType":"string"},"schema":{"pointer":"#/properties/value","type":"integer"},"goPresent":true,"schemaPresent":true}}

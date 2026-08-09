@@ -1,0 +1,22 @@
+{
+  "comment": "Models the real cross-version case: ocpp1.6/logging/get_log.go binds the local name types to ocpp1.6/types, while ocpp1.6/logging/log_status_notification.go binds the same local name types to ocpp2.0.1/types. The identical selector text must resolve to two different targets depending on which file it is resolved for.",
+  "files": [
+    {
+      "file": "ocpp1.6/logging/get_log.go",
+      "imports": [
+        { "alias": "types", "path": "ocpp1.6/types" }
+      ]
+    },
+    {
+      "file": "ocpp1.6/logging/log_status_notification.go",
+      "imports": [
+        { "alias": "types", "path": "ocpp2.0.1/types" }
+      ]
+    }
+  ],
+  "selector": "types.DateTime",
+  "resolutions": [
+    { "file": "ocpp1.6/logging/get_log.go", "resolved": "ocpp1.6/types.DateTime" },
+    { "file": "ocpp1.6/logging/log_status_notification.go", "resolved": "ocpp2.0.1/types.DateTime" }
+  ]
+}

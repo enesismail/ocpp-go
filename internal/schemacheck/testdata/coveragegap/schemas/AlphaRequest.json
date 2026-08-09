@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:AlphaRequest",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "maxLength": 20
+    }
+  },
+  "required": ["name"],
+  "additionalProperties": false
+}

@@ -1,0 +1,1 @@
+{"expectedClass":"IDENTICAL","input":{"go":{"name":"ChargingPriority","jsonName":"chargingPriority","declaredType":"int","wireType":"int","pointer":false,"omitempty":false},"schema":{"pointer":"#/properties/chargingPriority","type":"integer","required":false},"goPresent":true,"schemaPresent":true}}

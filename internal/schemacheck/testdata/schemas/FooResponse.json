@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:1.6:2020:3:FooResponse",
+  "type": "object",
+  "definitions": {
+    "Status": {
+      "type": "string",
+      "enum": ["Accepted", "Rejected"]
+    }
+  },
+  "properties": {
+    "status": { "$ref": "#/definitions/Status" }
+  }
+}

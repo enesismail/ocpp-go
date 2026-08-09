@@ -1,0 +1,23 @@
+{
+  "comment": "Cross-block resolution within one version, via an aliased import. Shaped like the tree but not copied from it: the first file mirrors ocpp1.6/remotetrigger/trigger_message.go, which really does import ocpp1.6/core and ocpp1.6/firmware side by side in one import block. The second file is constructed — no file under ocpp1.6/ or ocpp2.0.1/ aliases an import today, and no two packages within one version share a package name, so one version's tree offers no pair of real files in which the same selector text diverges. The real, observed divergence is the cross-version case in cross_version.json. Both fixtures exercise the same rule: a selector's meaning comes from the import bindings of the file it appears in, so the identical text core.HeartbeatRequest must resolve against each file's own bindings and land on two different targets. Resolution answers which package a prefix names; it does not assert that the named type is declared there. Import paths are written in tree-relative short form.",
+  "files": [
+    {
+      "file": "ocpp1.6/remotetrigger/trigger_message.go",
+      "imports": [
+        { "alias": "core", "path": "ocpp1.6/core" },
+        { "alias": "firmware", "path": "ocpp1.6/firmware" }
+      ]
+    },
+    {
+      "file": "fixture/aliased_block_import.go",
+      "imports": [
+        { "alias": "core", "path": "ocpp1.6/firmware" }
+      ]
+    }
+  ],
+  "selector": "core.HeartbeatRequest",
+  "resolutions": [
+    { "file": "ocpp1.6/remotetrigger/trigger_message.go", "resolved": "ocpp1.6/core.HeartbeatRequest" },
+    { "file": "fixture/aliased_block_import.go", "resolved": "ocpp1.6/firmware.HeartbeatRequest" }
+  ]
+}

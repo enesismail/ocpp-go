@@ -1,0 +1,1 @@
+{"expectedClass":"FORK_BUG","input":{"go":{"name":"Interval","jsonName":"interval","wireType":"int","declaredType":"int","pointer":false,"omitempty":false},"schema":{"pointer":"#/properties/interval","type":"string","required":true},"goPresent":true,"schemaPresent":true}}

@@ -1,0 +1,1 @@
+{"expectedClass":"FORK_BUG","input":{"go":{"name":"Tbc","jsonName":"tbc","declaredType":"*bool","wireType":"bool","pointer":true,"omitempty":false,"validate":["omitempty"]},"schema":{"pointer":"#/properties/tbc","type":"boolean","required":false},"goPresent":true,"schemaPresent":true}}

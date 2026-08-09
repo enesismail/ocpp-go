@@ -1,0 +1,14 @@
+# "severty" is a misspelling of "severity". A decoder that ignored unknown
+# keys would drop the judgement and leave the row rated as nothing, with the
+# file still looking complete to whoever wrote it.
+version: vtree
+
+requireExplicit:
+  - FORK_BUG
+
+fields:
+  - message: Widget
+    side: request
+    path: secret
+    classification: SPEC_FIDELITY
+    severty: BLOCKING_INTEROP

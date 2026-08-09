@@ -1,0 +1,1 @@
+{"expectedClass":"SCHEMA_FAITHFUL_CHANGE","input":{"go":{"name":"Value","jsonName":"value","wireType":"string","declaredType":"*string","pointer":true,"omitempty":true},"schema":{"pointer":"#/properties/value","type":"string","required":false},"goPresent":true,"schemaPresent":true}}

@@ -1,0 +1,1 @@
+{"expectedClass":"UNEXPLAINED","input":{"go":{"name":"Value","jsonName":"value","wireType":"string","declaredType":"CustomOpaqueType","pointer":false,"omitempty":false},"schema":{"pointer":"#/properties/value","type":"string","required":true},"goPresent":true,"schemaPresent":true}}

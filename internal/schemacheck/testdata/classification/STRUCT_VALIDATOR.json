@@ -1,0 +1,1 @@
+{"expectedClass":"STRUCT_VALIDATOR","input":{"go":{"name":"Value","jsonName":"value","wireType":"string","declaredType":"string","pointer":false,"omitempty":false,"structValidators":["validateValue"]},"schema":{"pointer":"#/properties/value","type":"string","required":true},"goPresent":true,"schemaPresent":true}}

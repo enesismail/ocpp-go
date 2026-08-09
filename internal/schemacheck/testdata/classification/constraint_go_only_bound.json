@@ -1,0 +1,1 @@
+{"expectedClass":"OVERRIDE_CANDIDATE","input":{"go":{"name":"RequestID","jsonName":"requestId","wireType":"int","declaredType":"int","pointer":false,"omitempty":false,"validate":["gte=0"]},"schema":{"pointer":"#/properties/requestId","type":"integer","required":false},"goPresent":true,"schemaPresent":true}}
