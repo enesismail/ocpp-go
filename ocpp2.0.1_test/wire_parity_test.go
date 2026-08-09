@@ -640,7 +640,7 @@ func buildCodegen(root string) (string, error) {
 		return "", fmt.Errorf("create scratch dir for the generator binary: %w", err)
 	}
 	binPath := filepath.Join(dir, "codegen")
-	cmd := exec.Command("go", "build", "-o", binPath, "./internal/codegen")
+	cmd := exec.Command("go", "build", "-buildvcs=false", "-o", binPath, "./internal/codegen")
 	cmd.Dir = root
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
