@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:WidgetResponse",
+  "type": "object",
+  "properties": {
+    "accepted": {
+      "type": "boolean"
+    },
+    "level": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 50
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 50
+    }
+  },
+  "required": ["accepted", "reason"],
+  "additionalProperties": false
+}

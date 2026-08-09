@@ -1,0 +1,1 @@
+{"expectedClass":"SCHEMA_FAITHFUL_CHANGE","input":{"go":{"name":"ChargingPriority","jsonName":"chargingPriority","declaredType":"int","wireType":"int","pointer":false,"omitempty":true},"schema":{"pointer":"#/properties/chargingPriority","type":"integer","required":false},"goPresent":true,"schemaPresent":true}}

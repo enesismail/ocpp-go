@@ -1,0 +1,1 @@
+{"expectedClass":"IDENTICAL","input":{"go":{"name":"Interval","jsonName":"interval","wireType":"int","declaredType":"int","pointer":false,"omitempty":false},"schema":{"pointer":"#/properties/interval","type":"integer","required":true},"goPresent":true,"schemaPresent":true}}

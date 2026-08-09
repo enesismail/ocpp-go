@@ -1,0 +1,1 @@
+{"expectedClass":"IDENTICAL","input":{"go":{"name":"Values","jsonName":"values","wireType":"[]string","declaredType":"[]string","pointer":false,"slice":true,"elementType":"string","omitempty":false},"schema":{"pointer":"#/properties/values","type":"array","required":true},"goPresent":true,"schemaPresent":true}}

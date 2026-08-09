@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:fixture:Inline",
+  "type": "object",
+  "properties": {
+    "nested": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer", "exclusiveMinimum": 5, "exclusiveMaximum": 100 },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

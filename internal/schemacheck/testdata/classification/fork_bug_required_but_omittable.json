@@ -1,0 +1,1 @@
+{"expectedClass":"FORK_BUG","input":{"go":{"name":"RequestID","jsonName":"requestId","wireType":"int","declaredType":"*int","pointer":true,"omitempty":true,"validate":["omitempty"]},"schema":{"pointer":"#/properties/requestId","type":"integer","required":true},"goPresent":true,"schemaPresent":true}}

@@ -1,0 +1,95 @@
+# A complete registry for the fixture corpus under testdata/orchestration.
+# Complete is the operative word: every row of the run is judged, either by a
+# class-wide default naming the exact rows it was reviewed against or by a
+# per-row entry, and every judgement pins both the comparison class and the
+# rule — the comparator's own sentence about what is wrong — that it was
+# written against.
+version: vtree
+
+classes:
+  IDENTICAL:
+    classification: NOT_A_DIVERGENCE
+    severity: NONE
+    note: ""
+    covers:
+      - row: Widget.request.detail.code
+        rule: ""
+      - row: Widget.request.detail.notes
+        rule: ""
+      - row: Widget.request.name
+        rule: ""
+      - row: Widget.request.tags.code
+        rule: ""
+      - row: Widget.request.tags.notes
+        rule: ""
+      - row: Widget.response.accepted
+        rule: ""
+  ADDITIVE:
+    classification: UPSTREAM_INHERITED
+    severity: CORRECTNESS
+    note: "the schema declares an optional property the hand-written struct has no field for"
+    covers:
+      - row: Widget.request.comment
+        rule: "schema has this optional field; a schema-faithful struct would gain it and nothing that exists today would break"
+      - row: Widget.response.note
+        rule: "schema has this optional field; a schema-faithful struct would gain it and nothing that exists today would break"
+  STRUCT_VALIDATOR:
+    classification: UPSTREAM_INHERITED
+    severity: COSMETIC
+    note: "a cross-field rule the schema vocabulary cannot state either way"
+    covers:
+      - row: Widget.request.detail
+        rule: "cross-field struct validation rule isValidDetail has no schema counterpart and needs human adjudication"
+      - row: Widget.request.tags
+        rule: "cross-field struct validation rule isValidDetail has no schema counterpart and needs human adjudication"
+  SCHEMA_FAITHFUL_CHANGE:
+    classification: UPSTREAM_INHERITED
+    severity: COSMETIC
+    note: ""
+    covers:
+      - row: Widget.request.status
+        rule: "string enum -> named enum type"
+  OVERRIDE_CANDIDATE:
+    classification: UPSTREAM_INHERITED
+    severity: CORRECTNESS
+    note: "a hand-written bound the schema does not impose"
+    covers:
+      - row: Widget.response.level
+        rule: "hand-written constraint max=5 is stricter than schema maximum=10 and looks deliberate"
+
+requireExplicit:
+  - FORK_BUG
+
+fields:
+  - message: Widget
+    side: request
+    path: "detail.extra"
+    class: FORK_BUG
+    rule: "schema-required field missing from Go: the schema marks it required but the hand-written struct has no field for it"
+    classification: SPEC_FIDELITY
+    severity: BLOCKING_INTEROP
+    note: "a property the schema requires and the struct does not declare"
+  - message: Widget
+    side: request
+    path: "secret"
+    class: FORK_BUG
+    rule: "Go field not in schema: the hand-written struct declares a field the schema does not authorize"
+    classification: SPEC_FIDELITY
+    severity: BLOCKING_INTEROP
+    note: "a property the schema does not authorize"
+  - message: Widget
+    side: request
+    path: "tags.extra"
+    class: FORK_BUG
+    rule: "schema-required field missing from Go: the schema marks it required but the hand-written struct has no field for it"
+    classification: SPEC_FIDELITY
+    severity: BLOCKING_INTEROP
+    note: "a property the schema requires and the struct does not declare"
+  - message: Widget
+    side: response
+    path: "reason"
+    class: FORK_BUG
+    rule: "schema-required field missing from Go: the schema marks it required but the hand-written struct has no field for it"
+    classification: DELIBERATE
+    severity: COSMETIC
+    note: "kept on purpose"

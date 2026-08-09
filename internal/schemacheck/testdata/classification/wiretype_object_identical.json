@@ -1,0 +1,1 @@
+{"expectedClass":"IDENTICAL","input":{"go":{"name":"Modem","jsonName":"modem","wireType":"ModemType","declaredType":"ModemType","pointer":false,"omitempty":false},"schema":{"pointer":"#/properties/modem","type":"object","required":true},"goPresent":true,"schemaPresent":true}}

@@ -1,0 +1,1 @@
+{"expectedClass":"SCHEMA_FAITHFUL_CHANGE","input":{"go":{"name":"Timestamp","jsonName":"timestamp","declaredType":"DateTime","wireType":"string","pointer":false,"omitempty":false,"validate":["required"]},"schema":{"pointer":"#/properties/timestamp","type":"string","required":true,"format":"date-time"},"goPresent":true,"schemaPresent":true}}

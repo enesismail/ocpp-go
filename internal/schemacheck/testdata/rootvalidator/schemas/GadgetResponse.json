@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:GadgetResponse",
+  "type": "object",
+  "properties": {
+    "serial": {
+      "type": "string",
+      "maxLength": 20
+    }
+  },
+  "required": ["serial"],
+  "additionalProperties": false
+}

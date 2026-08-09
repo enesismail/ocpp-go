@@ -1,0 +1,1 @@
+{"expectedClass":"IDENTICAL","input":{"go":{"name":"Timestamp","jsonName":"timestamp","declaredType":"*types.DateTime","wireType":"string","pointer":true,"omitempty":false},"schema":{"pointer":"#/properties/timestamp","type":"string","required":true,"format":"date-time"},"goPresent":true,"schemaPresent":true}}

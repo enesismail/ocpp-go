@@ -1,0 +1,1 @@
+{"expectedClass":"IDENTICAL","input":{"go":{"name":"Data","jsonName":"data","declaredType":"interface{}","wireType":"interface{}","pointer":false,"omitempty":true},"schema":{"pointer":"#/properties/data","type":null,"required":false},"goPresent":true,"schemaPresent":true}}

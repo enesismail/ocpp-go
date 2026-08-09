@@ -1,0 +1,1 @@
+{"expectedClass":"IDENTICAL","input":{"go":{"name":"IdTokenInfo","jsonName":"idTokenInfo","declaredType":"types.IdTokenInfo","wireType":"types.IdTokenInfo","pointer":false,"omitempty":true,"validate":["omitempty"]},"schema":{"pointer":"#/properties/idTokenInfo","type":"object","required":true},"goPresent":true,"schemaPresent":true}}

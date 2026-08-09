@@ -1,0 +1,1 @@
+{"expectedClass":"FORK_BUG","input":{"go":{"name":"Limit","jsonName":"limit","wireType":"float64","declaredType":"float64","pointer":false,"omitempty":false},"schema":{"pointer":"#/properties/limit","type":"boolean","required":true},"goPresent":true,"schemaPresent":true}}

@@ -1,0 +1,1 @@
+{"expectedClass":"IDENTICAL","input":{"go":{"name":"VendorID","jsonName":"vendorId","wireType":"string","declaredType":"string","pointer":false,"omitempty":false,"validate":["required","min=1","max=255"]},"schema":{"pointer":"#/properties/vendorId","type":"string","required":true,"constraints":{"minLength":1,"maxLength":255}},"goPresent":true,"schemaPresent":true}}

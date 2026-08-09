@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:fixture:Response",
+  "type": "object",
+  "description": "fixture response schema",
+  "definitions": {
+    "Status": {
+      "type": "string",
+      "enum": ["Accepted", "Rejected"]
+    },
+    "ModemType": {
+      "type": "object",
+      "properties": {
+        "iccid": { "type": "string", "maxLength": 20 }
+      }
+    }
+  },
+  "properties": {
+    "status": { "$ref": "#/definitions/Status" },
+    "previousStatus": { "$ref": "#/definitions/Status" },
+    "modem": { "$ref": "#/definitions/ModemType" },
+    "timestamp": { "type": "string", "format": "date-time", "javaType": "Instant", "comment": "vendor note", "description": "the current server time" }
+  }
+}

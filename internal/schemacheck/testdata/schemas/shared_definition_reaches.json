@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:example:SharedDefinitionReaches",
+  "definitions": {
+    "CustomDataType": {
+      "type": "object",
+      "properties": {
+        "vendorId": {
+          "type": "string",
+          "maxLength": 255
+        }
+      },
+      "required": [
+        "vendorId"
+      ]
+    },
+    "ModemType": {
+      "type": "object",
+      "properties": {
+        "customData": {
+          "$ref": "#/definitions/CustomDataType"
+        },
+        "iccid": {
+          "type": "string"
+        }
+      }
+    },
+    "StationType": {
+      "type": "object",
+      "properties": {
+        "customData": {
+          "$ref": "#/definitions/CustomDataType"
+        },
+        "modem": {
+          "$ref": "#/definitions/ModemType"
+        }
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "customData": {
+      "$ref": "#/definitions/CustomDataType"
+    },
+    "station": {
+      "$ref": "#/definitions/StationType"
+    }
+  }
+}

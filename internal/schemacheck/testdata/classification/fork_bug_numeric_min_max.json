@@ -1,0 +1,1 @@
+{"expectedClass":"FORK_BUG","input":{"go":{"name":"Priority","jsonName":"priority","wireType":"int","declaredType":"int","pointer":false,"omitempty":false,"validate":["min=-9","max=9"]},"schema":{"pointer":"#/properties/priority","type":"integer","required":false,"constraints":{"minimum":-9,"maximum":8}},"goPresent":true,"schemaPresent":true}}

@@ -1,0 +1,1 @@
+{"expectedClass":"FORK_BUG","input":{"go":{},"schema":{"pointer":"#/properties/value","type":"string","required":true},"goPresent":false,"schemaPresent":true}}

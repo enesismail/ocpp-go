@@ -1,0 +1,1 @@
+{"expectedClass":"IDENTICAL","input":{"go":{"name":"StatusInfo","jsonName":"statusInfo","declaredType":"*types.StatusInfo","wireType":"types.StatusInfo","pointer":true,"omitempty":true,"validate":["omitempty"]},"schema":{"pointer":"#/properties/statusInfo","type":"object","required":false},"goPresent":true,"schemaPresent":true}}

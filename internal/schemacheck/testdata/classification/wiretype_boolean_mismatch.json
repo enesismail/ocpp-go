@@ -1,0 +1,1 @@
+{"expectedClass":"FORK_BUG","input":{"go":{"name":"Offline","jsonName":"offline","wireType":"bool","declaredType":"bool","pointer":false,"omitempty":false},"schema":{"pointer":"#/properties/offline","type":"integer","required":true},"goPresent":true,"schemaPresent":true}}
