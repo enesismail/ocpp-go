@@ -217,6 +217,38 @@ Upstream: **#246** (@sbindzau) — no upstream fix merged; this is a fork-local 
 > and the guard tests together. The guard tests are the real backstop — the line numbers
 > are only a navigation aid.
 
+## OCPP 1.6 certificate-hash validator ownership
+
+`CertificateHashData.HashAlgorithm` carried `validate:"required,hashAlgorithm"` — a validate
+token no package under `ocpp1.6/` registers. The registry behind `types.Validate` is one
+process-wide validator shared by both protocol versions, and ocpp2.0.1's types package happens
+to register a bare `hashAlgorithm` over the same three values, so any build whose import graph
+reaches ocpp2.0.1 validated this field correctly **by accident** (the full 1.6 facade is such a
+build, via `ocpp1.6/logging`). A build importing a 1.6 profile package directly — e.g.
+`ocpp1.6/certificates` with `ocpp1.6/types` — left the token unregistered, and validating any
+certificate hash (a `DeleteCertificateRequest`, a `GetInstalledCertificateIdsResponse` carrying
+at least one entry) **panicked** instead of validating:
+`Undefined validation function 'hashAlgorithm'`. The fork renames the token to a 1.6-owned
+`hashAlgorithm16` and registers it beside the type, following the `<name>16` convention the
+1.6 tree already uses for every other cross-version-ambiguous token (`genericStatus16`,
+`certificateUse16`, …). The accepted value set (`SHA256`/`SHA384`/`SHA512`) is unchanged, the
+JSON property name is unchanged; only the tag's validator token and its registration move.
+
+| File:line | Symbol | Why keep it |
+|-----------|--------|-------------|
+| `ocpp1.6/types/security_extension.go:94` | tag `validate:"required,hashAlgorithm16"` | 1.6 owns its own validator; no cross-version registry coupling |
+| `ocpp1.6/types/security_extension.go:82,109` | `isValidHashAlgorithm` + local `init()` registration | the registration lives beside the type it validates |
+
+**Guard:** `ocpp1.6/types/security_extension_test.go` runs in a test binary whose import graph
+does **not** include ocpp2.0.1, so the field's validator must be registered by `ocpp1.6/types`
+itself — reverting the registration turns the suite into the original panic, not a soft
+failure. Its three cases pin: all three declared algorithms accepted, an unknown algorithm
+rejected by tag `hashAlgorithm16`, an absent algorithm rejected by `required`.
+
+Upstream: the correct registration briefly existed during the security-extension development
+(commit `d2d2b0c` added `hashAlgorithm16` alongside `genericStatus16`) and was dropped in the
+squashed merge of **#266**; upstream master still carries the unregistered bare token.
+
 ## ChargePoint/ChargingStation disconnect & reconnect hooks
 
 The shared `ocppj.Client` already has disconnect/reconnect hooks, but the 1.6
