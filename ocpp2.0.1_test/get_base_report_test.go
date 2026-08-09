@@ -27,7 +27,7 @@ func (suite *OcppV2TestSuite) TestGetBaseReportRequestValidation() {
 func (suite *OcppV2TestSuite) TestGetBaseReportConfirmationValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{provisioning.GetBaseReportResponse{Status: types.GenericDeviceModelStatusAccepted}, true},
+		{provisioning.GetBaseReportResponse{Status: types.GenericDeviceModelStatusTypeAccepted}, true},
 		{provisioning.GetBaseReportResponse{Status: "invalidDeviceModelStatus"}, false},
 		{provisioning.GetBaseReportResponse{}, false},
 	}
@@ -41,7 +41,7 @@ func (suite *OcppV2TestSuite) TestGetBaseReportE2EMocked() {
 	wsUrl := "someUrl"
 	requestID := 42
 	reportBase := provisioning.ReportTypeConfigurationInventory
-	status := types.GenericDeviceModelStatusAccepted
+	status := types.GenericDeviceModelStatusTypeAccepted
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"reportBase":"%v"}]`, messageId, provisioning.GetBaseReportFeatureName, requestID, reportBase)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v"}]`, messageId, status)
 	getBaseReportConfirmation := provisioning.NewGetBaseReportResponse(status)

@@ -12,7 +12,7 @@ const ClearedChargingLimitFeatureName = "ClearedChargingLimit"
 
 // The field definition of the ClearedChargingLimit request payload sent by the Charging Station to the CSMS.
 type ClearedChargingLimitRequest struct {
-	ChargingLimitSource types.ChargingLimitSourceType `json:"chargingLimitSource" validate:"required,chargingLimitSource"`
+	ChargingLimitSource types.ChargingLimitSourceType `json:"chargingLimitSource" validate:"required,chargingLimitSourceType201"`
 	EvseID              *int                          `json:"evseId,omitempty" validate:"omitempty,gte=0"`
 }
 

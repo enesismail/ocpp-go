@@ -22,8 +22,8 @@ type PublishFirmwareRequest struct {
 // This field definition of the PublishFirmware response payload, sent by the Charging Station to the CSMS in response to a PublishFirmwareRequest.
 // In case the request was invalid, or couldn't be processed, an error will be sent instead.
 type PublishFirmwareResponse struct {
-	Status     types.GenericStatus `json:"status" validate:"required,genericStatus"`
-	StatusInfo *types.StatusInfo   `json:"statusInfo,omitempty" validate:"omitempty"`
+	Status     types.GenericStatusType `json:"status" validate:"required,genericStatusType201"`
+	StatusInfo *types.StatusInfo       `json:"statusInfo,omitempty" validate:"omitempty"`
 }
 
 // The CSMS sends a PublishFirmwareRequest to instruct the Local Controller to download and publish the firmware,
@@ -63,6 +63,6 @@ func NewPublishFirmwareRequest(location string, checksum string, requestID int) 
 }
 
 // Creates a new PublishFirmwareResponse, containing all required fields. Optional fields may be set afterwards.
-func NewPublishFirmwareResponse(status types.GenericStatus) *PublishFirmwareResponse {
+func NewPublishFirmwareResponse(status types.GenericStatusType) *PublishFirmwareResponse {
 	return &PublishFirmwareResponse{Status: status}
 }

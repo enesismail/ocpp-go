@@ -1,0 +1,1 @@
+{"master_sha":"98f2c89ca5b95d6f482ea0f84c7a16de7feca67b","payload":{"evseId":2,"chargingProfile":{"id":3,"stackLevel":0,"chargingProfilePurpose":"ChargingStationMaxProfile","chargingProfileKind":"Absolute","chargingSchedule":[{"id":3,"chargingRateUnit":"W","chargingSchedulePeriod":[{"startPeriod":0,"limit":11000},{"startPeriod":1800,"limit":7400}]}]}}}

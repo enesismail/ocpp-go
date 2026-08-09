@@ -64,7 +64,7 @@ func (handler *ChargingStationHandler) OnTriggerMessage(request *remotecontrol.T
 	case remotecontrol.MessageTriggerBootNotification:
 		// Boot Notification
 		go func() {
-			_, e := chargingStation.BootNotification(provisioning.BootReasonTriggered, handler.model, handler.vendor)
+			_, e := chargingStation.BootNotification(provisioning.BootReasonTypeTriggered, handler.model, handler.vendor)
 			checkError(e)
 			logDefault(provisioning.BootNotificationFeatureName).Info("boot notification completed")
 		}()

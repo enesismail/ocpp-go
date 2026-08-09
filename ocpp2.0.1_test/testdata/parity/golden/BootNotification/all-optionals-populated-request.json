@@ -1,0 +1,1 @@
+{"master_sha":"98f2c89ca5b95d6f482ea0f84c7a16de7feca67b","payload":{"reason":"FirmwareUpdate","chargingStation":{"serialNumber":"SN-001","model":"ACME-Pro","vendorName":"ACME","firmwareVersion":"1.2.3","modem":{"iccid":"89010000000000000001","imsi":"310260123456789"}}}}

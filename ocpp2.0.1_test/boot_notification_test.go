@@ -16,23 +16,23 @@ import (
 func (suite *OcppV2TestSuite) TestBootNotificationRequestValidation() {
 	t := suite.T()
 	var requestTable = []GenericTestEntry{
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version", Modem: &provisioning.ModemType{Iccid: "test", Imsi: "test"}}}, true},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version", Modem: &provisioning.ModemType{Iccid: "test"}}}, true},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version", Modem: &provisioning.ModemType{Imsi: "test"}}}, true},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version", Modem: &provisioning.ModemType{}}}, true},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version"}}, true},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{SerialNumber: "number", Model: "test", VendorName: "test"}}, true},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{Model: "test", VendorName: "test"}}, true},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{Model: "test"}}, false},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{VendorName: "test"}}, false},
-		{provisioning.BootNotificationRequest{ChargingStation: provisioning.ChargingStationType{Model: "test", VendorName: "test"}}, false},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{Model: ">20..................", VendorName: "test"}}, false},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{Model: "test", VendorName: ">50................................................"}}, false},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{SerialNumber: ">25.......................", Model: "test", VendorName: "test"}}, false},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{Model: "test", VendorName: "test", FirmwareVersion: ">50................................................"}}, false},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{Model: "test", VendorName: "test", Modem: &provisioning.ModemType{Iccid: ">20.................."}}}, false},
-		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonPowerUp, ChargingStation: provisioning.ChargingStationType{Model: "test", VendorName: "test", Modem: &provisioning.ModemType{Imsi: ">20.................."}}}, false},
-		{provisioning.BootNotificationRequest{Reason: "invalidReason", ChargingStation: provisioning.ChargingStationType{Model: "test", VendorName: "test"}}, false},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version", Modem: &provisioning.Modem{Iccid: "test", Imsi: "test"}}}, true},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version", Modem: &provisioning.Modem{Iccid: "test"}}}, true},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version", Modem: &provisioning.Modem{Imsi: "test"}}}, true},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version", Modem: &provisioning.Modem{}}}, true},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{SerialNumber: "number", Model: "test", VendorName: "test", FirmwareVersion: "version"}}, true},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{SerialNumber: "number", Model: "test", VendorName: "test"}}, true},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{Model: "test", VendorName: "test"}}, true},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{Model: "test"}}, false},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{VendorName: "test"}}, false},
+		{provisioning.BootNotificationRequest{ChargingStation: provisioning.ChargingStation{Model: "test", VendorName: "test"}}, false},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{Model: ">20..................", VendorName: "test"}}, false},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{Model: "test", VendorName: ">50................................................"}}, false},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{SerialNumber: ">25.......................", Model: "test", VendorName: "test"}}, false},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{Model: "test", VendorName: "test", FirmwareVersion: ">50................................................"}}, false},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{Model: "test", VendorName: "test", Modem: &provisioning.Modem{Iccid: ">20.................."}}}, false},
+		{provisioning.BootNotificationRequest{Reason: provisioning.BootReasonTypePowerUp, ChargingStation: provisioning.ChargingStation{Model: "test", VendorName: "test", Modem: &provisioning.Modem{Imsi: ">20.................."}}}, false},
+		{provisioning.BootNotificationRequest{Reason: "invalidReason", ChargingStation: provisioning.ChargingStation{Model: "test", VendorName: "test"}}, false},
 	}
 	ExecuteGenericTestTable(t, requestTable)
 }
@@ -40,12 +40,18 @@ func (suite *OcppV2TestSuite) TestBootNotificationRequestValidation() {
 func (suite *OcppV2TestSuite) TestBootNotificationConfirmationValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{provisioning.BootNotificationResponse{CurrentTime: types.NewDateTime(time.Now()), Interval: 60, Status: provisioning.RegistrationStatusAccepted}, true},
-		{provisioning.BootNotificationResponse{CurrentTime: types.NewDateTime(time.Now()), Status: provisioning.RegistrationStatusAccepted}, true},
-		{provisioning.BootNotificationResponse{CurrentTime: types.NewDateTime(time.Now()), Interval: -1, Status: provisioning.RegistrationStatusAccepted}, false},
+		{provisioning.BootNotificationResponse{CurrentTime: types.NewDateTime(time.Now()), Interval: 60, Status: provisioning.RegistrationStatusTypeAccepted}, true},
+		// Interval omitted (zero value): was accepted under master's hand-written tag
+		// (validate:"gte=0", no "required"), which diverged from the schema's own
+		// "interval" required:true. The generated field carries "required,gte=0"
+		// (a bound-preserving override applies here), matching the schema
+		// faithfully -- a zero Interval is now correctly rejected. Semantic
+		// change, not mechanical.
+		{provisioning.BootNotificationResponse{CurrentTime: types.NewDateTime(time.Now()), Status: provisioning.RegistrationStatusTypeAccepted}, false},
+		{provisioning.BootNotificationResponse{CurrentTime: types.NewDateTime(time.Now()), Interval: -1, Status: provisioning.RegistrationStatusTypeAccepted}, false},
 		{provisioning.BootNotificationResponse{CurrentTime: types.NewDateTime(time.Now()), Interval: 60, Status: "invalidRegistrationStatus"}, false},
 		{provisioning.BootNotificationResponse{CurrentTime: types.NewDateTime(time.Now()), Interval: 60}, false},
-		{provisioning.BootNotificationResponse{Interval: 60, Status: provisioning.RegistrationStatusAccepted}, false},
+		{provisioning.BootNotificationResponse{Interval: 60, Status: provisioning.RegistrationStatusTypeAccepted}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
 }
@@ -56,12 +62,17 @@ func (suite *OcppV2TestSuite) TestBootNotificationE2EMocked() {
 	messageId := "1234"
 	wsUrl := "someUrl"
 	interval := 60
-	reason := provisioning.BootReasonPowerUp
+	reason := provisioning.BootReasonTypePowerUp
 	chargePointModel := "model1"
 	chargePointVendor := "ABL"
-	registrationStatus := provisioning.RegistrationStatusAccepted
+	registrationStatus := provisioning.RegistrationStatusTypeAccepted
 	currentTime := types.NewDateTime(time.Now())
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"reason":"%v","chargingStation":{"model":"%v","vendorName":"%v"}}]`, messageId, provisioning.BootNotificationFeatureName, reason, chargePointModel, chargePointVendor)
+	// Field order (chargingStation before reason) matches the generated
+	// struct's declaration order, which derives from the schema; the
+	// literal below is written in that order. JSON content and assertion
+	// strength are unchanged -- only the byte order of an exact-string
+	// comparison.
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"chargingStation":{"model":"%v","vendorName":"%v"},"reason":"%v"}]`, messageId, provisioning.BootNotificationFeatureName, chargePointModel, chargePointVendor, reason)
 	responseJson := fmt.Sprintf(`[3,"%v",{"currentTime":"%v","interval":%v,"status":"%v"}]`, messageId, currentTime.FormatTimestamp(), interval, registrationStatus)
 	bootNotificationConfirmation := provisioning.NewBootNotificationResponse(currentTime, interval, registrationStatus)
 	channel := NewMockWebSocket(wsId)
@@ -91,8 +102,13 @@ func (suite *OcppV2TestSuite) TestBootNotificationInvalidEndpoint() {
 	messageId := defaultMessageId
 	chargePointModel := "model1"
 	chargePointVendor := "ABL"
-	reason := provisioning.BootReasonPowerUp
-	bootNotificationRequest := provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor)
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"reason":"%v","chargingStation":{"model":"%v","vendorName":"%v"}}]`, messageId, provisioning.BootNotificationFeatureName, reason, chargePointModel, chargePointVendor)
+	reason := provisioning.BootReasonTypePowerUp
+	bootNotificationRequest := provisioning.NewBootNotificationRequest(provisioning.ChargingStation{Model: chargePointModel, VendorName: chargePointVendor}, reason)
+	// Field order (chargingStation before reason) matches the generated
+	// struct's declaration order, which derives from the schema; the
+	// literal below is written in that order. JSON content and assertion
+	// strength are unchanged -- only the byte order of an exact-string
+	// comparison.
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"chargingStation":{"model":"%v","vendorName":"%v"},"reason":"%v"}]`, messageId, provisioning.BootNotificationFeatureName, chargePointModel, chargePointVendor, reason)
 	testUnsupportedRequestFromCentralSystem(suite, bootNotificationRequest, requestJson, messageId)
 }

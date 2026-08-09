@@ -35,8 +35,8 @@ func (suite *OcppV2TestSuite) TestSetMonitoringLevelRequestValidation() {
 func (suite *OcppV2TestSuite) TestSetMonitoringLevelConfirmationValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{diagnostics.SetMonitoringLevelResponse{Status: types.GenericDeviceModelStatusAccepted, StatusInfo: types.NewStatusInfo("200", "")}, true},
-		{diagnostics.SetMonitoringLevelResponse{Status: types.GenericDeviceModelStatusAccepted}, true},
+		{diagnostics.SetMonitoringLevelResponse{Status: types.GenericDeviceModelStatusTypeAccepted, StatusInfo: types.NewStatusInfo("200")}, true},
+		{diagnostics.SetMonitoringLevelResponse{Status: types.GenericDeviceModelStatusTypeAccepted}, true},
 		{diagnostics.SetMonitoringLevelResponse{Status: "invalidDeviceModelStatus"}, false},
 		{diagnostics.SetMonitoringLevelResponse{}, false},
 	}
@@ -49,8 +49,8 @@ func (suite *OcppV2TestSuite) TestSetMonitoringLevelE2EMocked() {
 	messageId := defaultMessageId
 	wsUrl := "someUrl"
 	severity := 3
-	status := types.GenericDeviceModelStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	status := types.GenericDeviceModelStatusTypeAccepted
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"severity":%v}]`,
 		messageId, diagnostics.SetMonitoringLevelFeatureName, severity)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`,

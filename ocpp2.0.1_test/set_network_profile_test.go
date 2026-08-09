@@ -83,13 +83,13 @@ func (suite *OcppV2TestSuite) TestSetNetworkProfileRequestValidation() {
 func (suite *OcppV2TestSuite) TestSetNetworkProfileResponseValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{provisioning.SetNetworkProfileResponse{Status: provisioning.SetNetworkProfileStatusAccepted, StatusInfo: types.NewStatusInfo("200", "")}, true},
-		{provisioning.SetNetworkProfileResponse{Status: provisioning.SetNetworkProfileStatusRejected, StatusInfo: types.NewStatusInfo("200", "")}, true},
-		{provisioning.SetNetworkProfileResponse{Status: provisioning.SetNetworkProfileStatusFailed, StatusInfo: types.NewStatusInfo("200", "")}, true},
+		{provisioning.SetNetworkProfileResponse{Status: provisioning.SetNetworkProfileStatusAccepted, StatusInfo: types.NewStatusInfo("200")}, true},
+		{provisioning.SetNetworkProfileResponse{Status: provisioning.SetNetworkProfileStatusRejected, StatusInfo: types.NewStatusInfo("200")}, true},
+		{provisioning.SetNetworkProfileResponse{Status: provisioning.SetNetworkProfileStatusFailed, StatusInfo: types.NewStatusInfo("200")}, true},
 		{provisioning.SetNetworkProfileResponse{Status: provisioning.SetNetworkProfileStatusAccepted}, true},
 		{provisioning.SetNetworkProfileResponse{}, false},
-		{provisioning.SetNetworkProfileResponse{Status: provisioning.SetNetworkProfileStatusAccepted, StatusInfo: types.NewStatusInfo("", "")}, false},
-		{provisioning.SetNetworkProfileResponse{Status: "invalidSetNetworkProfileStatus", StatusInfo: types.NewStatusInfo("200", "")}, false},
+		{provisioning.SetNetworkProfileResponse{Status: provisioning.SetNetworkProfileStatusAccepted, StatusInfo: types.NewStatusInfo("")}, false},
+		{provisioning.SetNetworkProfileResponse{Status: "invalidSetNetworkProfileStatus", StatusInfo: types.NewStatusInfo("200")}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
 }
@@ -104,7 +104,7 @@ func (suite *OcppV2TestSuite) TestSetNetworkProfileE2EMocked() {
 	apn := provisioning.APN{APN: "internet.t-mobile", APNUsername: "user1", APNPassword: "deadc0de", SimPin: newInt(1234), PreferredNetwork: "26201", UseOnlyPreferredNetwork: false, APNAuthentication: provisioning.APNAuthenticationAuto}
 	data := provisioning.NetworkConnectionProfile{OCPPVersion: provisioning.OCPPVersion20, OCPPTransport: provisioning.OCPPTransportJSON, CSMSUrl: "http://someUrl:8767", MessageTimeout: 30, SecurityProfile: 1, OCPPInterface: provisioning.OCPPInterfaceWired0, VPN: &vpn, APN: &apn}
 	status := provisioning.SetNetworkProfileStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"configurationSlot":%v,"connectionData":{"ocppVersion":"%v","ocppTransport":"%v","ocppCsmsUrl":"%v","messageTimeout":%v,"securityProfile":%v,"ocppInterface":"%v","vpn":{"server":"%v","user":"%v","group":"%v","password":"%v","key":"%v","type":"%v"},"apn":{"apn":"%v","apnUserName":"%v","apnPassword":"%v","simPin":%v,"preferredNetwork":"%v","apnAuthentication":"%v"}}}]`,
 		messageId, provisioning.SetNetworkProfileFeatureName, configurationSlot, data.OCPPVersion, data.OCPPTransport, data.CSMSUrl, data.MessageTimeout, data.SecurityProfile, data.OCPPInterface, vpn.Server, vpn.User, vpn.Group, vpn.Password, vpn.Key, vpn.Type, apn.APN, apn.APNUsername, apn.APNPassword, *apn.SimPin, apn.PreferredNetwork, apn.APNAuthentication)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`, messageId, status, statusInfo.ReasonCode)

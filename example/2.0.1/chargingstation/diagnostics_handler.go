@@ -32,18 +32,18 @@ func (handler *ChargingStationHandler) OnGetLog(request *diagnostics.GetLogReque
 func (handler *ChargingStationHandler) OnGetMonitoringReport(request *diagnostics.GetMonitoringReportRequest) (response *diagnostics.GetMonitoringReportResponse, err error) {
 	logDefault(request.GetFeatureName()).Infof("request %d to upload report with criteria %v, component variables %v", request.RequestID, request.MonitoringCriteria, request.ComponentVariable)
 	// TODO: start asynchronous report upload via NotifyMonitoringReportRequest
-	return diagnostics.NewGetMonitoringReportResponse(types.GenericDeviceModelStatusAccepted), nil
+	return diagnostics.NewGetMonitoringReportResponse(types.GenericDeviceModelStatusTypeAccepted), nil
 }
 
 func (handler *ChargingStationHandler) OnSetMonitoringBase(request *diagnostics.SetMonitoringBaseRequest) (response *diagnostics.SetMonitoringBaseResponse, err error) {
 	logDefault(request.GetFeatureName()).Infof("monitoring base %s set successfully", request.MonitoringBase)
-	return diagnostics.NewSetMonitoringBaseResponse(types.GenericDeviceModelStatusAccepted), nil
+	return diagnostics.NewSetMonitoringBaseResponse(types.GenericDeviceModelStatusTypeAccepted), nil
 }
 
 func (handler *ChargingStationHandler) OnSetMonitoringLevel(request *diagnostics.SetMonitoringLevelRequest) (response *diagnostics.SetMonitoringLevelResponse, err error) {
 	handler.monitoringLevel = request.Severity
 	logDefault(request.GetFeatureName()).Infof("set monitoring severity level to %d", handler.monitoringLevel)
-	return diagnostics.NewSetMonitoringLevelResponse(types.GenericDeviceModelStatusAccepted), nil
+	return diagnostics.NewSetMonitoringLevelResponse(types.GenericDeviceModelStatusTypeAccepted), nil
 }
 
 func (handler *ChargingStationHandler) OnSetVariableMonitoring(request *diagnostics.SetVariableMonitoringRequest) (response *diagnostics.SetVariableMonitoringResponse, err error) {

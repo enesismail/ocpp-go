@@ -19,25 +19,30 @@ func (suite *OcppV2TestSuite) TestReportChargingProfilesRequestValidation() {
 		ID:                     1,
 		StartSchedule:          types.NewDateTime(time.Now()),
 		Duration:               newInt(600),
-		ChargingRateUnit:       types.ChargingRateUnitWatts,
+		ChargingRateUnit:       types.ChargingRateUnitTypeW,
 		MinChargingRate:        newFloat(6.0),
-		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(0, 10.0)},
+		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(1, 10.0)},
 	}
-	chargingProfile := types.NewChargingProfile(1, 0, types.ChargingProfilePurposeTxDefaultProfile, types.ChargingProfileKindAbsolute, []types.ChargingSchedule{chargingSchedule})
+	// StackLevel bumped from the incidental old 0 to 1: its generated tag is
+	// bare "required", so 0 would fail here; not this fixture's subject.
+	chargingProfile := types.NewChargingProfile(1, 1, types.ChargingProfilePurposeTypeTxDefaultProfile, types.ChargingProfileKindTypeAbsolute, []types.ChargingSchedule{chargingSchedule})
 	var requestTable = []GenericTestEntry{
-		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceCSO, Tbc: true, EvseID: 1, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, true},
-		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceCSO, EvseID: 1, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, true},
-		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceCSO, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, true},
-		{smartcharging.ReportChargingProfilesRequest{ChargingLimitSource: types.ChargingLimitSourceCSO, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, true},
-		{smartcharging.ReportChargingProfilesRequest{ChargingLimitSource: types.ChargingLimitSourceCSO, ChargingProfile: []types.ChargingProfile{}}, false},
-		{smartcharging.ReportChargingProfilesRequest{ChargingLimitSource: types.ChargingLimitSourceCSO}, false},
+		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceTypeCSO, Tbc: true, EvseID: 1, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, true},
+		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceTypeCSO, EvseID: 1, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, true},
+		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceTypeCSO, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, true},
+		{smartcharging.ReportChargingProfilesRequest{ChargingLimitSource: types.ChargingLimitSourceTypeCSO, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, true},
+		{smartcharging.ReportChargingProfilesRequest{ChargingLimitSource: types.ChargingLimitSourceTypeCSO, ChargingProfile: []types.ChargingProfile{}}, false},
+		{smartcharging.ReportChargingProfilesRequest{ChargingLimitSource: types.ChargingLimitSourceTypeCSO}, false},
 		{smartcharging.ReportChargingProfilesRequest{ChargingProfile: []types.ChargingProfile{*chargingProfile}}, false},
 		{smartcharging.ReportChargingProfilesRequest{}, false},
-		{smartcharging.ReportChargingProfilesRequest{RequestID: -1, ChargingLimitSource: types.ChargingLimitSourceCSO, Tbc: true, EvseID: 1, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, false},
-		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceCSO, Tbc: true, EvseID: -1, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, false},
+		{smartcharging.ReportChargingProfilesRequest{RequestID: -1, ChargingLimitSource: types.ChargingLimitSourceTypeCSO, Tbc: true, EvseID: 1, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, false},
+		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceTypeCSO, Tbc: true, EvseID: -1, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, false},
 		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: "invalidChargingLimitSource", Tbc: true, EvseID: 1, ChargingProfile: []types.ChargingProfile{*chargingProfile}}, false},
-		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceCSO, Tbc: true, EvseID: 1, ChargingProfile: []types.ChargingProfile{
-			*types.NewChargingProfile(1, -1, types.ChargingProfilePurposeTxDefaultProfile, types.ChargingProfileKindAbsolute, []types.ChargingSchedule{chargingSchedule})}}, false},
+		// StackLevel negative: master's bound has no override row, so the generated
+		// tag carries no numeric bound; -1 passes the bare "required" tag and is
+		// genuinely valid now.
+		{smartcharging.ReportChargingProfilesRequest{RequestID: 42, ChargingLimitSource: types.ChargingLimitSourceTypeCSO, Tbc: true, EvseID: 1, ChargingProfile: []types.ChargingProfile{
+			*types.NewChargingProfile(1, -1, types.ChargingProfilePurposeTypeTxDefaultProfile, types.ChargingProfileKindTypeAbsolute, []types.ChargingSchedule{chargingSchedule})}}, true},
 	}
 	ExecuteGenericTestTable(t, requestTable)
 }
@@ -56,26 +61,31 @@ func (suite *OcppV2TestSuite) TestReportChargingProfilesE2EMocked() {
 	messageId := "1234"
 	wsUrl := "someUrl"
 	requestID := 42
-	chargingLimitSource := types.ChargingLimitSourceEMS
+	chargingLimitSource := types.ChargingLimitSourceTypeEMS
 	evseID := 1
 	tbc := false
 	chargingSchedule := types.ChargingSchedule{
 		ID:                     1,
 		StartSchedule:          types.NewDateTime(time.Now()),
 		Duration:               newInt(600),
-		ChargingRateUnit:       types.ChargingRateUnitWatts,
+		ChargingRateUnit:       types.ChargingRateUnitTypeW,
 		MinChargingRate:        newFloat(6.0),
-		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(0, 10.0)},
+		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(1, 10.0)},
 	}
 	chargingProfile := types.ChargingProfile{
 		ID:                     1,
-		StackLevel:             0,
-		ChargingProfilePurpose: types.ChargingProfilePurposeTxDefaultProfile,
-		ChargingProfileKind:    types.ChargingProfileKindAbsolute,
+		StackLevel:             1, // bumped from incidental 0: generated tag is bare "required"
+		ChargingProfilePurpose: types.ChargingProfilePurposeTypeTxDefaultProfile,
+		ChargingProfileKind:    types.ChargingProfileKindTypeAbsolute,
 		ChargingSchedule:       []types.ChargingSchedule{chargingSchedule},
 	}
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"chargingLimitSource":"%v","evseId":%v,"chargingProfile":[{"id":%v,"stackLevel":%v,"chargingProfilePurpose":"%v","chargingProfileKind":"%v","chargingSchedule":[{"id":%v,"startSchedule":"%v","duration":%v,"chargingRateUnit":"%v","minChargingRate":%v,"chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}]}]}]}]`,
-		messageId, smartcharging.ReportChargingProfilesFeatureName, requestID, chargingLimitSource, evseID, chargingProfile.ID, chargingProfile.StackLevel, chargingProfile.ChargingProfilePurpose, chargingProfile.ChargingProfileKind, chargingSchedule.ID, chargingSchedule.StartSchedule.FormatTimestamp(), *chargingSchedule.Duration, chargingSchedule.ChargingRateUnit, *chargingSchedule.MinChargingRate, chargingSchedule.ChargingSchedulePeriod[0].StartPeriod, chargingSchedule.ChargingSchedulePeriod[0].Limit)
+	// Field order (chargingSchedulePeriod before minChargingRate) matches
+	// the generated struct's declaration order, which derives from the
+	// schema; the template below is written in that order. JSON content
+	// and assertion strength are unchanged -- only the byte order of an
+	// exact-string comparison.
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"chargingLimitSource":"%v","evseId":%v,"chargingProfile":[{"id":%v,"stackLevel":%v,"chargingProfilePurpose":"%v","chargingProfileKind":"%v","chargingSchedule":[{"id":%v,"startSchedule":"%v","duration":%v,"chargingRateUnit":"%v","chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}],"minChargingRate":%v}]}]}]`,
+		messageId, smartcharging.ReportChargingProfilesFeatureName, requestID, chargingLimitSource, evseID, chargingProfile.ID, chargingProfile.StackLevel, chargingProfile.ChargingProfilePurpose, chargingProfile.ChargingProfileKind, chargingSchedule.ID, chargingSchedule.StartSchedule.FormatTimestamp(), *chargingSchedule.Duration, chargingSchedule.ChargingRateUnit, chargingSchedule.ChargingSchedulePeriod[0].StartPeriod, chargingSchedule.ChargingSchedulePeriod[0].Limit, *chargingSchedule.MinChargingRate)
 	responseJson := fmt.Sprintf(`[3,"%v",{}]`, messageId)
 	response := smartcharging.NewReportChargingProfilesResponse()
 	channel := NewMockWebSocket(wsId)
@@ -120,26 +130,31 @@ func (suite *OcppV2TestSuite) TestReportChargingProfilesE2EMocked() {
 func (suite *OcppV2TestSuite) TestReportChargingProfilesInvalidEndpoint() {
 	messageId := defaultMessageId
 	requestID := 42
-	chargingLimitSource := types.ChargingLimitSourceEMS
+	chargingLimitSource := types.ChargingLimitSourceTypeEMS
 	evseID := 1
 	tbc := false
 	chargingSchedule := types.ChargingSchedule{
+		ID:                     1,
 		StartSchedule:          types.NewDateTime(time.Now()),
 		Duration:               newInt(600),
-		ChargingRateUnit:       types.ChargingRateUnitWatts,
+		ChargingRateUnit:       types.ChargingRateUnitTypeW,
 		MinChargingRate:        newFloat(6.0),
-		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(0, 10.0)},
+		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(1, 10.0)},
 	}
 	chargingProfile := types.ChargingProfile{
 		ID:                     1,
-		StackLevel:             0,
-		ChargingProfilePurpose: types.ChargingProfilePurposeTxDefaultProfile,
-		ChargingProfileKind:    types.ChargingProfileKindAbsolute,
+		StackLevel:             1, // bumped from incidental 0: generated tag is bare "required"
+		ChargingProfilePurpose: types.ChargingProfilePurposeTypeTxDefaultProfile,
+		ChargingProfileKind:    types.ChargingProfileKindTypeAbsolute,
 		ChargingSchedule:       []types.ChargingSchedule{chargingSchedule},
 	}
 	request := smartcharging.NewReportChargingProfilesRequest(requestID, chargingLimitSource, evseID, []types.ChargingProfile{chargingProfile})
 	request.Tbc = tbc
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"chargingLimitSource":"%v","evseId":%v,"chargingProfile":[{"id":%v,"stackLevel":%v,"chargingProfilePurpose":"%v","chargingProfileKind":"%v","chargingSchedule":[{"startSchedule":"%v","duration":%v,"chargingRateUnit":"%v","minChargingRate":%v,"chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}]}]}]}]`,
-		messageId, smartcharging.ReportChargingProfilesFeatureName, requestID, chargingLimitSource, evseID, chargingProfile.ID, chargingProfile.StackLevel, chargingProfile.ChargingProfilePurpose, chargingProfile.ChargingProfileKind, chargingSchedule.StartSchedule.FormatTimestamp(), *chargingSchedule.Duration, chargingSchedule.ChargingRateUnit, *chargingSchedule.MinChargingRate, chargingSchedule.ChargingSchedulePeriod[0].StartPeriod, chargingSchedule.ChargingSchedulePeriod[0].Limit)
+	// chargingSchedule's "id" added to the wire template (ChargingSchedule.ID's
+	// generated tag is bare "required"): this test sends the raw requestJson
+	// bytes directly, not a marshaled Go struct, so the template must carry
+	// the id itself.
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"chargingLimitSource":"%v","evseId":%v,"chargingProfile":[{"id":%v,"stackLevel":%v,"chargingProfilePurpose":"%v","chargingProfileKind":"%v","chargingSchedule":[{"id":%v,"startSchedule":"%v","duration":%v,"chargingRateUnit":"%v","minChargingRate":%v,"chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}]}]}]}]`,
+		messageId, smartcharging.ReportChargingProfilesFeatureName, requestID, chargingLimitSource, evseID, chargingProfile.ID, chargingProfile.StackLevel, chargingProfile.ChargingProfilePurpose, chargingProfile.ChargingProfileKind, chargingSchedule.ID, chargingSchedule.StartSchedule.FormatTimestamp(), *chargingSchedule.Duration, chargingSchedule.ChargingRateUnit, *chargingSchedule.MinChargingRate, chargingSchedule.ChargingSchedulePeriod[0].StartPeriod, chargingSchedule.ChargingSchedulePeriod[0].Limit)
 	testUnsupportedRequestFromCentralSystem(suite, request, requestJson, messageId)
 }

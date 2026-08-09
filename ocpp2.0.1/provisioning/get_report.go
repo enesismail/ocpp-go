@@ -41,7 +41,7 @@ type GetReportRequest struct {
 // This field definition of the GetReport response payload, sent by the Charging Station to the CSMS in response to a GetReportRequest.
 // In case the request was invalid, or couldn't be processed, an error will be sent instead.
 type GetReportResponse struct {
-	Status types.GenericDeviceModelStatus `json:"status" validate:"required,genericDeviceModelStatus"`
+	Status types.GenericDeviceModelStatusType `json:"status" validate:"required,genericDeviceModelStatusType201"`
 }
 
 // The CSO may trigger the CSMS to request a report from a Charging Station.
@@ -76,7 +76,7 @@ func NewGetReportRequest() *GetReportRequest {
 }
 
 // Creates a new GetReportResponse, containing all required fields. There are no optional fields for this message.
-func NewGetReportResponse(status types.GenericDeviceModelStatus) *GetReportResponse {
+func NewGetReportResponse(status types.GenericDeviceModelStatusType) *GetReportResponse {
 	return &GetReportResponse{Status: status}
 }
 

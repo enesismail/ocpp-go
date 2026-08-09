@@ -12,15 +12,15 @@ const SignCertificateFeatureName = "SignCertificate"
 
 // The field definition of the SignCertificate request payload sent by the Charging Station to the CSMS.
 type SignCertificateRequest struct {
-	CSR             string                      `json:"csr" validate:"required,max=5500"`                                     // The Charging Station SHALL send the public key in form of a Certificate Signing Request (CSR) as described in RFC 2986 and then PEM encoded.
-	CertificateType types.CertificateSigningUse `json:"certificateType,omitempty" validate:"omitempty,certificateSigningUse"` // Indicates the type of certificate that is to be signed.
+	CSR             string                          `json:"csr" validate:"required,max=5500"`                                            // The Charging Station SHALL send the public key in form of a Certificate Signing Request (CSR) as described in RFC 2986 and then PEM encoded.
+	CertificateType types.CertificateSigningUseType `json:"certificateType,omitempty" validate:"omitempty,certificateSigningUseType201"` // Indicates the type of certificate that is to be signed.
 }
 
 // This field definition of the SignCertificate response payload, sent by the CSMS to the Charging Station in response to a SignCertificateRequest.
 // In case the request was invalid, or couldn't be processed, an error will be sent instead.
 type SignCertificateResponse struct {
-	Status     types.GenericStatus `json:"status" validate:"required,genericStatus"`  // Specifies whether the CSMS can process the request.
-	StatusInfo *types.StatusInfo   `json:"statusInfo,omitempty" validate:"omitempty"` // Detailed status information.
+	Status     types.GenericStatusType `json:"status" validate:"required,genericStatusType201"` // Specifies whether the CSMS can process the request.
+	StatusInfo *types.StatusInfo       `json:"statusInfo,omitempty" validate:"omitempty"`       // Detailed status information.
 }
 
 // If a Charging Station detected, that its certificate is due to expire, it will generate a new public/private key pair,
@@ -57,6 +57,6 @@ func NewSignCertificateRequest(csr string) *SignCertificateRequest {
 }
 
 // Creates a new SignCertificateResponse, containing all required fields. Optional fields may be set afterwards.
-func NewSignCertificateResponse(status types.GenericStatus) *SignCertificateResponse {
+func NewSignCertificateResponse(status types.GenericStatusType) *SignCertificateResponse {
 	return &SignCertificateResponse{Status: status}
 }

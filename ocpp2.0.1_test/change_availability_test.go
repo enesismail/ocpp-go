@@ -20,7 +20,11 @@ func (suite *OcppV2TestSuite) TestChangeAvailabilityRequestValidation() {
 		{availability.ChangeAvailabilityRequest{OperationalStatus: availability.OperationalStatusOperative}, true},
 		{availability.ChangeAvailabilityRequest{}, false},
 		{availability.ChangeAvailabilityRequest{OperationalStatus: "invalidAvailabilityType"}, false},
-		{availability.ChangeAvailabilityRequest{OperationalStatus: availability.OperationalStatusOperative, Evse: &types.EVSE{ID: -1}}, false},
+		// EVSE.ID negative: master's "gte=0" bound has no governing override
+		// row and is dropped in the schema-faithful mapping; -1 is
+		// non-zero, so it passes the generated "required" tag and is
+		// genuinely valid now.
+		{availability.ChangeAvailabilityRequest{OperationalStatus: availability.OperationalStatusOperative, Evse: &types.EVSE{ID: -1}}, true},
 	}
 	ExecuteGenericTestTable(t, testTable)
 }

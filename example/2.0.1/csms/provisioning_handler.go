@@ -9,7 +9,7 @@ import (
 func (c *CSMSHandler) OnBootNotification(chargingStationID string, request *provisioning.BootNotificationRequest) (response *provisioning.BootNotificationResponse, err error) {
 	logDefault(chargingStationID, request.GetFeatureName()).Infof("boot confirmed for %v %v, serial: %v, firmare version: %v, reason: %v",
 		request.ChargingStation.VendorName, request.ChargingStation.Model, request.ChargingStation.SerialNumber, request.ChargingStation.FirmwareVersion, request.Reason)
-	response = provisioning.NewBootNotificationResponse(types.NewDateTime(time.Now()), defaultHeartbeatInterval, provisioning.RegistrationStatusAccepted)
+	response = provisioning.NewBootNotificationResponse(types.NewDateTime(time.Now()), defaultHeartbeatInterval, provisioning.RegistrationStatusTypeAccepted)
 	return
 }
 

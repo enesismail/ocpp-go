@@ -13,7 +13,7 @@ const ReportChargingProfilesFeatureName = "ReportChargingProfiles"
 // The field definition of the ReportChargingProfiles request payload sent by the Charging Station to the CSMS.
 type ReportChargingProfilesRequest struct {
 	RequestID           int                           `json:"requestId" validate:"gte=0"`
-	ChargingLimitSource types.ChargingLimitSourceType `json:"chargingLimitSource" validate:"required,chargingLimitSource"`
+	ChargingLimitSource types.ChargingLimitSourceType `json:"chargingLimitSource" validate:"required,chargingLimitSourceType201"`
 	Tbc                 bool                          `json:"tbc,omitempty" validate:"omitempty"`
 	EvseID              int                           `json:"evseId" validate:"gte=0"`
 	ChargingProfile     []types.ChargingProfile       `json:"chargingProfile" validate:"required,min=1,dive"`

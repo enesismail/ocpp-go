@@ -1,0 +1,18 @@
+[
+  {
+    "message": "TransactionEvent",
+    "case": "violation-seq-no-negative-request",
+    "path": "seqNo",
+    "class": "OVERRIDE_CANDIDATE",
+    "citation": "TransactionEvent.request.seqNo",
+    "note": "master's SequenceNo carries a hand-written gte=0 bound the schema does not require; the generated SeqNo field carries only required (no governing override row exists for it). A negative seqNo, which master rejected, is accepted by the generated validator: any present non-pointer int value, positive or negative, satisfies a bare required tag, because that tag can only check presence, not range, on a non-pointer numeric field once its bound is dropped -- the same limitation that separately makes a required tag unable to tell an explicit, legitimate zero apart from an absent field on this kind of type."
+  },
+  {
+    "message": "TransactionEvent",
+    "case": "violation-maximum-charging-priority-response",
+    "path": "idTokenInfo.chargingPriority",
+    "class": "OVERRIDE_CANDIDATE",
+    "citation": "TransactionEvent.response.idTokenInfo.chargingPriority",
+    "note": "master's IdTokenInfo.ChargingPriority carries a hand-written min=-9,max=9 bound the schema does not require; the generated IDTokenInfo.ChargingPriority field carries only omitempty (no governing override row). A value of 10, which master rejected on the max bound, is accepted by the generated validator since no bound survives the mapping. Same root cause as the seqNo row above -- a numeric bound dropped from the generated tag with no override row to restore it -- on the response side's shared IDTokenInfo type."
+  }
+]

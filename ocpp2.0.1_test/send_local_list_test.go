@@ -15,12 +15,12 @@ import (
 func (suite *OcppV2TestSuite) TestSendLocalListRequestValidation() {
 	t := suite.T()
 	authData := localauth.AuthorizationData{
-		IdToken: types.IdToken{
-			IdToken:        "token1",
-			Type:           types.IdTokenTypeKeyCode,
+		IdToken: types.IDToken{
+			IDToken:        "token1",
+			Type:           types.IDTokenTypeKeyCode,
 			AdditionalInfo: nil,
 		},
-		IdTokenInfo: types.NewIdTokenInfo(types.AuthorizationStatusAccepted),
+		IdTokenInfo: types.NewIDTokenInfo(types.AuthorizationStatusTypeAccepted),
 	}
 	var requestTable = []GenericTestEntry{
 		{localauth.SendLocalListRequest{VersionNumber: 42, UpdateType: localauth.UpdateTypeDifferential, LocalAuthorizationList: []localauth.AuthorizationData{authData}}, true},
@@ -30,7 +30,7 @@ func (suite *OcppV2TestSuite) TestSendLocalListRequestValidation() {
 		{localauth.SendLocalListRequest{UpdateType: localauth.UpdateTypeDifferential}, true},
 		{localauth.SendLocalListRequest{}, false},
 		{localauth.SendLocalListRequest{VersionNumber: -1, UpdateType: localauth.UpdateTypeDifferential, LocalAuthorizationList: []localauth.AuthorizationData{authData}}, false},
-		{localauth.SendLocalListRequest{VersionNumber: 42, UpdateType: "invalidUpdateType", LocalAuthorizationList: []localauth.AuthorizationData{{IdToken: types.IdToken{IdToken: "tokenWithoutType"}}}}, false},
+		{localauth.SendLocalListRequest{VersionNumber: 42, UpdateType: "invalidUpdateType", LocalAuthorizationList: []localauth.AuthorizationData{{IdToken: types.IDToken{IDToken: "tokenWithoutType"}}}}, false},
 	}
 	ExecuteGenericTestTable(t, requestTable)
 }
@@ -38,11 +38,11 @@ func (suite *OcppV2TestSuite) TestSendLocalListRequestValidation() {
 func (suite *OcppV2TestSuite) TestSendLocalListResponseValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{localauth.SendLocalListResponse{Status: localauth.SendLocalListStatusAccepted, StatusInfo: types.NewStatusInfo("200", "")}, true},
+		{localauth.SendLocalListResponse{Status: localauth.SendLocalListStatusAccepted, StatusInfo: types.NewStatusInfo("200")}, true},
 		{localauth.SendLocalListResponse{Status: localauth.SendLocalListStatusAccepted}, true},
 		{localauth.SendLocalListResponse{}, false},
-		{localauth.SendLocalListResponse{Status: "invalidStatus", StatusInfo: types.NewStatusInfo("200", "")}, false},
-		{localauth.SendLocalListResponse{Status: localauth.SendLocalListStatusAccepted, StatusInfo: types.NewStatusInfo("", "")}, false},
+		{localauth.SendLocalListResponse{Status: "invalidStatus", StatusInfo: types.NewStatusInfo("200")}, false},
+		{localauth.SendLocalListResponse{Status: localauth.SendLocalListStatusAccepted, StatusInfo: types.NewStatusInfo("")}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
 }
@@ -55,17 +55,17 @@ func (suite *OcppV2TestSuite) TestSendLocalListE2EMocked() {
 	versionNumber := 1
 	updateType := localauth.UpdateTypeDifferential
 	authData := localauth.AuthorizationData{
-		IdToken: types.IdToken{
-			IdToken:        "token1",
-			Type:           types.IdTokenTypeKeyCode,
+		IdToken: types.IDToken{
+			IDToken:        "token1",
+			Type:           types.IDTokenTypeKeyCode,
 			AdditionalInfo: nil,
 		},
-		IdTokenInfo: types.NewIdTokenInfo(types.AuthorizationStatusAccepted),
+		IdTokenInfo: types.NewIDTokenInfo(types.AuthorizationStatusTypeAccepted),
 	}
 	status := localauth.SendLocalListStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"versionNumber":%v,"updateType":"%v","localAuthorizationList":[{"idTokenInfo":{"status":"%v"},"idToken":{"idToken":"%v","type":"%v"}}]}]`,
-		messageId, localauth.SendLocalListFeatureName, versionNumber, updateType, authData.IdTokenInfo.Status, authData.IdToken.IdToken, authData.IdToken.Type)
+		messageId, localauth.SendLocalListFeatureName, versionNumber, updateType, authData.IdTokenInfo.Status, authData.IdToken.IDToken, authData.IdToken.Type)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`,
 		messageId, status, statusInfo.ReasonCode)
 	sendLocalListResponse := localauth.NewSendLocalListResponse(status)
@@ -81,7 +81,7 @@ func (suite *OcppV2TestSuite) TestSendLocalListE2EMocked() {
 		assert.Equal(t, updateType, request.UpdateType)
 		require.NotNil(t, request.LocalAuthorizationList)
 		require.Len(t, request.LocalAuthorizationList, 1)
-		assert.Equal(t, authData.IdToken.IdToken, request.LocalAuthorizationList[0].IdToken.IdToken)
+		assert.Equal(t, authData.IdToken.IDToken, request.LocalAuthorizationList[0].IdToken.IDToken)
 		assert.Equal(t, authData.IdToken.Type, request.LocalAuthorizationList[0].IdToken.Type)
 		require.NotNil(t, request.LocalAuthorizationList[0].IdTokenInfo)
 		assert.Equal(t, authData.IdTokenInfo.Status, request.LocalAuthorizationList[0].IdTokenInfo.Status)
@@ -116,16 +116,16 @@ func (suite *OcppV2TestSuite) TestSendLocalListInvalidEndpoint() {
 	versionNumber := 1
 	updateType := localauth.UpdateTypeDifferential
 	authData := localauth.AuthorizationData{
-		IdToken: types.IdToken{
-			IdToken:        "token1",
-			Type:           types.IdTokenTypeKeyCode,
+		IdToken: types.IDToken{
+			IDToken:        "token1",
+			Type:           types.IDTokenTypeKeyCode,
 			AdditionalInfo: nil,
 		},
-		IdTokenInfo: types.NewIdTokenInfo(types.AuthorizationStatusAccepted),
+		IdTokenInfo: types.NewIDTokenInfo(types.AuthorizationStatusTypeAccepted),
 	}
 	localListVersionRequest := localauth.NewSendLocalListRequest(versionNumber, updateType)
 	localListVersionRequest.LocalAuthorizationList = []localauth.AuthorizationData{authData}
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"versionNumber":%v,"updateType":"%v","localAuthorizationList":[{"idTokenInfo":{"status":"%v"},"idToken":{"idToken":"%v","type":"%v"}}]}]`,
-		messageId, localauth.SendLocalListFeatureName, versionNumber, updateType, authData.IdTokenInfo.Status, authData.IdToken.IdToken, authData.IdToken.Type)
+		messageId, localauth.SendLocalListFeatureName, versionNumber, updateType, authData.IdTokenInfo.Status, authData.IdToken.IDToken, authData.IdToken.Type)
 	testUnsupportedRequestFromChargingStation(suite, localListVersionRequest, requestJson, messageId)
 }

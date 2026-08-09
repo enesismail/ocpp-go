@@ -88,13 +88,13 @@ func (suite *OcppV2TestSuite) TestACChargingParametersValidation() {
 func (suite *OcppV2TestSuite) TestNotifyEVChargingNeedsConfirmationValidation() {
 	t := suite.T()
 	var responseTable = []GenericTestEntry{
-		{smartcharging.NotifyEVChargingNeedsResponse{Status: smartcharging.EVChargingNeedsStatusAccepted, StatusInfo: types.NewStatusInfo("ok", "someInfo")}, true},
+		{smartcharging.NotifyEVChargingNeedsResponse{Status: smartcharging.EVChargingNeedsStatusAccepted, StatusInfo: &types.StatusInfo{ReasonCode: "ok", AdditionalInfo: "someInfo"}}, true},
 		{smartcharging.NotifyEVChargingNeedsResponse{Status: smartcharging.EVChargingNeedsStatusAccepted}, true},
 		{smartcharging.NotifyEVChargingNeedsResponse{Status: smartcharging.EVChargingNeedsStatusRejected}, true},
 		{smartcharging.NotifyEVChargingNeedsResponse{Status: smartcharging.EVChargingNeedsStatusProcessing}, true},
 		{smartcharging.NotifyEVChargingNeedsResponse{}, false},
 		{smartcharging.NotifyEVChargingNeedsResponse{Status: "invalidStatus"}, false},
-		{smartcharging.NotifyEVChargingNeedsResponse{Status: smartcharging.EVChargingNeedsStatusAccepted, StatusInfo: types.NewStatusInfo("", "invalidStatusInfo")}, false},
+		{smartcharging.NotifyEVChargingNeedsResponse{Status: smartcharging.EVChargingNeedsStatusAccepted, StatusInfo: &types.StatusInfo{ReasonCode: "", AdditionalInfo: "invalidStatusInfo"}}, false},
 	}
 	ExecuteGenericTestTable(t, responseTable)
 }
@@ -119,7 +119,7 @@ func (suite *OcppV2TestSuite) TestNotifyEVChargingNeedsE2EMocked() {
 		DCChargingParameters:    nil,
 	}
 	status := smartcharging.EVChargingNeedsStatusAccepted
-	statusInfo := types.NewStatusInfo("ok", "someInfo")
+	statusInfo := &types.StatusInfo{ReasonCode: "ok", AdditionalInfo: "someInfo"}
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"maxScheduleTuples":%v,"evseId":%v,"chargingNeeds":{"requestedEnergyTransfer":"%v","departureTime":"%v","acChargingParameters":{"energyAmount":%v,"evMinCurrent":%v,"evMaxCurrent":%v,"evMaxVoltage":%v}}}]`,
 		messageId, smartcharging.NotifyEVChargingNeedsFeatureName, *maxScheduleTuples, evseID, chargingNeeds.RequestedEnergyTransfer, chargingNeeds.DepartureTime.FormatTimestamp(), acChargingParams.EnergyAmount, acChargingParams.EVMinCurrent, acChargingParams.EVMaxCurrent, acChargingParams.EVMaxVoltage)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v","additionalInfo":"%v"}}]`,

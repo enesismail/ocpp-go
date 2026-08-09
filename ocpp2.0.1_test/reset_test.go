@@ -28,13 +28,13 @@ func (suite *OcppV2TestSuite) TestResetRequestValidation() {
 func (suite *OcppV2TestSuite) TestResetResponseValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{provisioning.ResetResponse{Status: provisioning.ResetStatusAccepted, StatusInfo: types.NewStatusInfo("200", "")}, true},
-		{provisioning.ResetResponse{Status: provisioning.ResetStatusRejected, StatusInfo: types.NewStatusInfo("200", "")}, true},
-		{provisioning.ResetResponse{Status: provisioning.ResetStatusScheduled, StatusInfo: types.NewStatusInfo("200", "")}, true},
+		{provisioning.ResetResponse{Status: provisioning.ResetStatusAccepted, StatusInfo: types.NewStatusInfo("200")}, true},
+		{provisioning.ResetResponse{Status: provisioning.ResetStatusRejected, StatusInfo: types.NewStatusInfo("200")}, true},
+		{provisioning.ResetResponse{Status: provisioning.ResetStatusScheduled, StatusInfo: types.NewStatusInfo("200")}, true},
 		{provisioning.ResetResponse{Status: provisioning.ResetStatusAccepted}, true},
 		{provisioning.ResetResponse{}, false},
-		{provisioning.ResetResponse{Status: provisioning.ResetStatusAccepted, StatusInfo: types.NewStatusInfo("", "")}, false},
-		{provisioning.ResetResponse{Status: "invalidResetStatus", StatusInfo: types.NewStatusInfo("200", "")}, false},
+		{provisioning.ResetResponse{Status: provisioning.ResetStatusAccepted, StatusInfo: types.NewStatusInfo("")}, false},
+		{provisioning.ResetResponse{Status: "invalidResetStatus", StatusInfo: types.NewStatusInfo("200")}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
 }
@@ -47,7 +47,7 @@ func (suite *OcppV2TestSuite) TestResetE2EMocked() {
 	resetType := provisioning.ResetTypeImmediate
 	evseID := newInt(42)
 	status := provisioning.ResetStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"type":"%v","evseId":%v}]`,
 		messageId, provisioning.ResetFeatureName, resetType, *evseID)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`, messageId, status, statusInfo.ReasonCode)

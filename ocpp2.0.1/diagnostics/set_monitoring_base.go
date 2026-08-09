@@ -38,8 +38,8 @@ type SetMonitoringBaseRequest struct {
 // This field definition of the SetMonitoringBase response payload, sent by the Charging Station to the CSMS in response to a SetMonitoringBaseRequest.
 // In case the request was invalid, or couldn't be processed, an error will be sent instead.
 type SetMonitoringBaseResponse struct {
-	Status     types.GenericDeviceModelStatus `json:"status" validate:"required,genericDeviceModelStatus"` // Indicates whether the Charging Station was able to accept the request.
-	StatusInfo *types.StatusInfo              `json:"statusInfo,omitempty" validate:"omitempty"`           // Detailed status information.
+	Status     types.GenericDeviceModelStatusType `json:"status" validate:"required,genericDeviceModelStatusType201"` // Indicates whether the Charging Station was able to accept the request.
+	StatusInfo *types.StatusInfo                  `json:"statusInfo,omitempty" validate:"omitempty"`                  // Detailed status information.
 }
 
 // A CSMS has the ability to request the Charging Station to activate a set of preconfigured
@@ -77,7 +77,7 @@ func NewSetMonitoringBaseRequest(monitoringBase MonitoringBase) *SetMonitoringBa
 }
 
 // Creates a new SetMonitoringBaseResponse, containing all required fields. Optional fields may be set afterwards.
-func NewSetMonitoringBaseResponse(status types.GenericDeviceModelStatus) *SetMonitoringBaseResponse {
+func NewSetMonitoringBaseResponse(status types.GenericDeviceModelStatusType) *SetMonitoringBaseResponse {
 	return &SetMonitoringBaseResponse{Status: status}
 }
 

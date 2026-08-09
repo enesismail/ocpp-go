@@ -1,0 +1,7 @@
+[
+  "BootNotificationResponse",
+  "HeartbeatRequest",
+  "HeartbeatResponse",
+  "SetChargingProfileResponse",
+  "TransactionEventResponse"
+]

@@ -71,17 +71,17 @@ func NewVariableCharacteristics(dataType DataType, supportsMonitoring bool) *Var
 
 // VariableAttribute describes the attribute data of a variable.
 type VariableAttribute struct {
-	Type       types.Attribute `json:"type,omitempty" validate:"omitempty,attribute"`        // Actual, MinSet, MaxSet, etc. Defaults to Actual if absent.
-	Value      string          `json:"value,omitempty" validate:"max=2500"`                  // Value of the attribute. May only be omitted when mutability is set to 'WriteOnly'.
-	Mutability Mutability      `json:"mutability,omitempty" validate:"omitempty,mutability"` // Defines the mutability of this attribute. Default is ReadWrite when omitted.
-	Persistent bool            `json:"persistent,omitempty"`                                 // If true, value will be persistent across system reboots or power down. Default when omitted is false.
-	Constant   bool            `json:"constant,omitempty"`                                   // If true, value that will never be changed by the Charging Station at runtime. Default when omitted is false.
+	Type       types.AttributeType `json:"type,omitempty" validate:"omitempty,attributeType201"` // Actual, MinSet, MaxSet, etc. Defaults to Actual if absent.
+	Value      string              `json:"value,omitempty" validate:"max=2500"`                  // Value of the attribute. May only be omitted when mutability is set to 'WriteOnly'.
+	Mutability Mutability          `json:"mutability,omitempty" validate:"omitempty,mutability"` // Defines the mutability of this attribute. Default is ReadWrite when omitted.
+	Persistent bool                `json:"persistent,omitempty"`                                 // If true, value will be persistent across system reboots or power down. Default when omitted is false.
+	Constant   bool                `json:"constant,omitempty"`                                   // If true, value that will never be changed by the Charging Station at runtime. Default when omitted is false.
 }
 
 // NewVariableAttribute creates a VariableAttribute struct, with all default values set.
 func NewVariableAttribute() VariableAttribute {
 	return VariableAttribute{
-		Type:       types.AttributeActual,
+		Type:       types.AttributeTypeActual,
 		Mutability: MutabilityReadWrite,
 	}
 }

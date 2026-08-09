@@ -98,9 +98,9 @@ func DefaultProfiles() []*ocpp.Profile {
 // To send asynchronous messages and avoid blocking the calling thread, refer to SendRequestAsync.
 type ChargingStation interface {
 	// Sends a BootNotificationRequest to the CSMS, along with information about the charging station.
-	BootNotification(reason provisioning.BootReason, model string, chargePointVendor string, props ...func(request *provisioning.BootNotificationRequest)) (*provisioning.BootNotificationResponse, error)
+	BootNotification(reason provisioning.BootReasonType, model string, chargePointVendor string, props ...func(request *provisioning.BootNotificationRequest)) (*provisioning.BootNotificationResponse, error)
 	// Requests explicit authorization to the CSMS, provided a valid IdToken (typically the customer's). The CSMS may either authorize or reject the token.
-	Authorize(idToken string, tokenType types.IdTokenType, props ...func(request *authorization.AuthorizeRequest)) (*authorization.AuthorizeResponse, error)
+	Authorize(idToken string, tokenType types.IDTokenType, props ...func(request *authorization.AuthorizeRequest)) (*authorization.AuthorizeResponse, error)
 	// Notifies the CSMS, that a previously set charging limit was cleared.
 	ClearedChargingLimit(chargingLimitSource types.ChargingLimitSourceType, props ...func(request *smartcharging.ClearedChargingLimitRequest)) (*smartcharging.ClearedChargingLimitResponse, error)
 	// Performs a custom data transfer to the CSMS. The message payload is not pre-defined and must be supported by the CSMS. Every vendor may implement their own proprietary logic for this message.
@@ -110,7 +110,7 @@ type ChargingStation interface {
 	// Requests a new certificate, required for an ISO 15118 EV, from the CSMS.
 	Get15118EVCertificate(schemaVersion string, action iso15118.CertificateAction, exiRequest string, props ...func(request *iso15118.Get15118EVCertificateRequest)) (*iso15118.Get15118EVCertificateResponse, error)
 	// Requests the CSMS to provide OCSP certificate status for the charging station's 15118 certificates.
-	GetCertificateStatus(ocspRequestData types.OCSPRequestDataType, props ...func(request *iso15118.GetCertificateStatusRequest)) (*iso15118.GetCertificateStatusResponse, error)
+	GetCertificateStatus(ocspRequestData types.OCSPRequestData, props ...func(request *iso15118.GetCertificateStatusRequest)) (*iso15118.GetCertificateStatusResponse, error)
 	// Notifies the CSMS that the Charging Station is still alive. The response is used for time synchronization purposes.
 	Heartbeat(props ...func(request *availability.HeartbeatRequest)) (*availability.HeartbeatResponse, error)
 	// Updates the CSMS with the current log upload status.
@@ -146,7 +146,7 @@ type ChargingStation interface {
 	// Informs the CSMS about a connector status change.
 	StatusNotification(timestamp *types.DateTime, status availability.ConnectorStatus, evseID int, connectorID int, props ...func(request *availability.StatusNotificationRequest)) (*availability.StatusNotificationResponse, error)
 	// Sends information to the CSMS about a transaction, used for billing purposes.
-	TransactionEvent(t transactions.TransactionEvent, timestamp *types.DateTime, reason transactions.TriggerReason, seqNo int, info transactions.Transaction, props ...func(request *transactions.TransactionEventRequest)) (*transactions.TransactionEventResponse, error)
+	TransactionEvent(t transactions.TransactionEventType, timestamp *types.DateTime, reason transactions.TriggerReasonType, seqNo int, info transactions.Transaction, props ...func(request *transactions.TransactionEventRequest)) (*transactions.TransactionEventResponse, error)
 	// Registers a handler for incoming security profile messages
 	SetSecurityHandler(handler security.ChargingStationHandler)
 	// Registers a handler for incoming provisioning profile messages
@@ -526,11 +526,11 @@ type CSMS interface {
 	// Publishes a firmware to a local controller, allowing charging stations to download the same firmware from the local controller directly.
 	PublishFirmware(clientId string, callback func(*firmware.PublishFirmwareResponse, error), location string, checksum string, requestID int, props ...func(request *firmware.PublishFirmwareRequest)) error
 	// Remotely triggers a transaction to be started on a charging station.
-	RequestStartTransaction(clientId string, callback func(*remotecontrol.RequestStartTransactionResponse, error), remoteStartID int, IdToken types.IdToken, props ...func(request *remotecontrol.RequestStartTransactionRequest)) error
+	RequestStartTransaction(clientId string, callback func(*remotecontrol.RequestStartTransactionResponse, error), remoteStartID int, IdToken types.IDToken, props ...func(request *remotecontrol.RequestStartTransactionRequest)) error
 	// Remotely triggers an ongoing transaction to be stopped on a charging station.
 	RequestStopTransaction(clientId string, callback func(*remotecontrol.RequestStopTransactionResponse, error), transactionID string, props ...func(request *remotecontrol.RequestStopTransactionRequest)) error
 	// Attempts to reserve a connector for an EV, on a specific charging station.
-	ReserveNow(clientId string, callback func(*reservation.ReserveNowResponse, error), id int, expiryDateTime *types.DateTime, idToken types.IdToken, props ...func(request *reservation.ReserveNowRequest)) error
+	ReserveNow(clientId string, callback func(*reservation.ReserveNowResponse, error), id int, expiryDateTime *types.DateTime, idToken types.IDToken, props ...func(request *reservation.ReserveNowRequest)) error
 	// Instructs the Charging Station to reset itself.
 	Reset(clientId string, callback func(*provisioning.ResetResponse, error), t provisioning.ResetType, props ...func(request *provisioning.ResetRequest)) error
 	// Sends a local authorization list to a charging station, which can be used for the authorization of idTokens.

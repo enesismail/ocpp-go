@@ -82,8 +82,8 @@ type ReserveNowRequest struct {
 	ExpiryDateTime *types.DateTime `json:"expiryDateTime" validate:"required"`
 	ConnectorType  ConnectorType   `json:"connectorType,omitempty" validate:"omitempty,connectorType"`
 	EvseID         *int            `json:"evseId,omitempty" validate:"omitempty,gte=0"`
-	IdToken        types.IdToken   `json:"idToken" validate:"required,dive"`
-	GroupIdToken   *types.IdToken  `json:"groupIdToken,omitempty" validate:"omitempty,dive"`
+	IdToken        types.IDToken   `json:"idToken" validate:"required,dive"`
+	GroupIdToken   *types.IDToken  `json:"groupIdToken,omitempty" validate:"omitempty,dive"`
 }
 
 // This field definition of the ReserveNow response payload, sent by the Charging Station to the CSMS in response to a ReserveNowRequest.
@@ -125,7 +125,7 @@ func (c ReserveNowResponse) GetFeatureName() string {
 }
 
 // Creates a new ReserveNowRequest, containing all required fields. Optional fields may be set afterwards.
-func NewReserveNowRequest(id int, expiryDateTime *types.DateTime, idToken types.IdToken) *ReserveNowRequest {
+func NewReserveNowRequest(id int, expiryDateTime *types.DateTime, idToken types.IDToken) *ReserveNowRequest {
 	return &ReserveNowRequest{ID: id, ExpiryDateTime: expiryDateTime, IdToken: idToken}
 }
 

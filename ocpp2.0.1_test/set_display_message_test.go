@@ -16,9 +16,9 @@ import (
 func (suite *OcppV2TestSuite) TestSetDisplayMessageRequestValidation() {
 	t := suite.T()
 	var requestTable = []GenericTestEntry{
-		{display.SetDisplayMessageRequest{Message: display.MessageInfo{ID: 42, Priority: display.MessagePriorityAlwaysFront, State: display.MessageStateIdle, StartDateTime: types.NewDateTime(time.Now()), Message: types.MessageContent{Format: types.MessageFormatUTF8, Content: "hello world"}}}, true},
+		{display.SetDisplayMessageRequest{Message: display.MessageInfo{ID: 42, Priority: display.MessagePriorityAlwaysFront, State: display.MessageStateIdle, StartDateTime: types.NewDateTime(time.Now()), Message: types.MessageContent{Format: types.MessageFormatTypeUTF8, Content: "hello world"}}}, true},
 		{display.SetDisplayMessageRequest{}, false},
-		{display.SetDisplayMessageRequest{Message: display.MessageInfo{ID: 42, Priority: "invalidPriority", State: display.MessageStateIdle, StartDateTime: types.NewDateTime(time.Now()), Message: types.MessageContent{Format: types.MessageFormatUTF8, Content: "hello world"}}}, false},
+		{display.SetDisplayMessageRequest{Message: display.MessageInfo{ID: 42, Priority: "invalidPriority", State: display.MessageStateIdle, StartDateTime: types.NewDateTime(time.Now()), Message: types.MessageContent{Format: types.MessageFormatTypeUTF8, Content: "hello world"}}}, false},
 	}
 	ExecuteGenericTestTable(t, requestTable)
 }
@@ -26,7 +26,7 @@ func (suite *OcppV2TestSuite) TestSetDisplayMessageRequestValidation() {
 func (suite *OcppV2TestSuite) TestSetDisplayMessageConfirmationValidation() {
 	t := suite.T()
 	var responseTable = []GenericTestEntry{
-		{display.SetDisplayMessageResponse{Status: display.DisplayMessageStatusAccepted, StatusInfo: types.NewStatusInfo("200", "")}, true},
+		{display.SetDisplayMessageResponse{Status: display.DisplayMessageStatusAccepted, StatusInfo: types.NewStatusInfo("200")}, true},
 		{display.SetDisplayMessageResponse{Status: display.DisplayMessageStatusAccepted}, true},
 		{display.SetDisplayMessageResponse{Status: display.DisplayMessageStatusNotSupportedMessageFormat}, true},
 		{display.SetDisplayMessageResponse{Status: display.DisplayMessageStatusNotSupportedState}, true},
@@ -50,12 +50,12 @@ func (suite *OcppV2TestSuite) TestSetDisplayMessageE2EMocked() {
 		State:         display.MessageStateIdle,
 		StartDateTime: types.NewDateTime(time.Now()),
 		Message: types.MessageContent{
-			Format:  types.MessageFormatUTF8,
+			Format:  types.MessageFormatTypeUTF8,
 			Content: "hello world",
 		},
 	}
 	status := display.DisplayMessageStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"message":{"id":%v,"priority":"%v","state":"%v","startDateTime":"%v","message":{"format":"%v","content":"%v"}}}]`,
 		messageId, display.SetDisplayMessageFeatureName, message.ID, message.Priority, message.State, message.StartDateTime.FormatTimestamp(), message.Message.Format, message.Message.Content)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`,
@@ -104,7 +104,7 @@ func (suite *OcppV2TestSuite) TestSetDisplayMessageInvalidEndpoint() {
 		State:         display.MessageStateIdle,
 		StartDateTime: types.NewDateTime(time.Now()),
 		Message: types.MessageContent{
-			Format:  types.MessageFormatUTF8,
+			Format:  types.MessageFormatTypeUTF8,
 			Content: "hello world",
 		},
 	}

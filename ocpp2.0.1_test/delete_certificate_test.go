@@ -15,7 +15,7 @@ import (
 func (suite *OcppV2TestSuite) TestDeleteCertificateRequestValidation() {
 	t := suite.T()
 	var requestTable = []GenericTestEntry{
-		{iso15118.DeleteCertificateRequest{CertificateHashData: types.CertificateHashData{HashAlgorithm: types.SHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}}, true},
+		{iso15118.DeleteCertificateRequest{CertificateHashData: types.CertificateHashData{HashAlgorithm: types.HashAlgorithmTypeSHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}}, true},
 		{iso15118.DeleteCertificateRequest{}, false},
 		{iso15118.DeleteCertificateRequest{CertificateHashData: types.CertificateHashData{HashAlgorithm: "invalidHashAlgorithm", IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}}, false},
 	}
@@ -39,7 +39,7 @@ func (suite *OcppV2TestSuite) TestDeleteCertificateE2EMocked() {
 	wsId := "test_id"
 	messageId := defaultMessageId
 	wsUrl := "someUrl"
-	certificateHashData := types.CertificateHashData{HashAlgorithm: types.SHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}
+	certificateHashData := types.CertificateHashData{HashAlgorithm: types.HashAlgorithmTypeSHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}
 	status := iso15118.DeleteCertificateStatusAccepted
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"certificateHashData":{"hashAlgorithm":"%v","issuerNameHash":"%v","issuerKeyHash":"%v","serialNumber":"%v"}}]`,
 		messageId, iso15118.DeleteCertificateFeatureName, certificateHashData.HashAlgorithm, certificateHashData.IssuerNameHash, certificateHashData.IssuerKeyHash, certificateHashData.SerialNumber)
@@ -77,7 +77,7 @@ func (suite *OcppV2TestSuite) TestDeleteCertificateE2EMocked() {
 
 func (suite *OcppV2TestSuite) TestDeleteCertificateInvalidEndpoint() {
 	messageId := defaultMessageId
-	certificateHashData := types.CertificateHashData{HashAlgorithm: types.SHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}
+	certificateHashData := types.CertificateHashData{HashAlgorithm: types.HashAlgorithmTypeSHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}
 	deleteCertificateRequest := iso15118.NewDeleteCertificateRequest(certificateHashData)
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"certificateHashData":{"hashAlgorithm":"%v","issuerNameHash":"%v","issuerKeyHash":"%v","serialNumber":"%v"}}]`,
 		messageId, iso15118.DeleteCertificateFeatureName, certificateHashData.HashAlgorithm, certificateHashData.IssuerNameHash, certificateHashData.IssuerKeyHash, certificateHashData.SerialNumber)

@@ -1,0 +1,1 @@
+{"evseId":-1,"chargingProfile":{"id":1,"stackLevel":0,"chargingProfilePurpose":"TxProfile","chargingProfileKind":"Absolute","chargingSchedule":[{"id":1,"chargingRateUnit":"W","chargingSchedulePeriod":[{"startPeriod":0,"limit":16}]}]}}

@@ -25,11 +25,11 @@ func (suite *OcppV2TestSuite) TestCancelReservationRequestValidation() {
 func (suite *OcppV2TestSuite) TestCancelReservationConfirmationValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{reservation.CancelReservationResponse{Status: reservation.CancelReservationStatusAccepted, StatusInfo: types.NewStatusInfo("200", "ok")}, true},
+		{reservation.CancelReservationResponse{Status: reservation.CancelReservationStatusAccepted, StatusInfo: &types.StatusInfo{ReasonCode: "200", AdditionalInfo: "ok"}}, true},
 		{reservation.CancelReservationResponse{Status: reservation.CancelReservationStatusAccepted}, true},
 		{reservation.CancelReservationResponse{Status: "invalidCancelReservationStatus"}, false},
 		{reservation.CancelReservationResponse{}, false},
-		{reservation.CancelReservationResponse{Status: reservation.CancelReservationStatusAccepted, StatusInfo: types.NewStatusInfo("", "")}, false},
+		{reservation.CancelReservationResponse{Status: reservation.CancelReservationStatusAccepted, StatusInfo: types.NewStatusInfo("")}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
 }

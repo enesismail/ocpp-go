@@ -1,0 +1,1 @@
+{"master_sha":"98f2c89ca5b95d6f482ea0f84c7a16de7feca67b","input":{"evseId":-1,"chargingProfile":{"id":1,"stackLevel":0,"chargingProfilePurpose":"TxProfile","chargingProfileKind":"Absolute","chargingSchedule":[{"id":1,"chargingRateUnit":"W","chargingSchedulePeriod":[{"startPeriod":0,"limit":16}]}]}},"accepted":false,"tag":"gte"}

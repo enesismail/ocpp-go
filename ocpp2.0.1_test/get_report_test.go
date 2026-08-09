@@ -17,7 +17,7 @@ func (suite *OcppV2TestSuite) TestGetReportRequestValidation() {
 	componentVariables := []types.ComponentVariable{
 		{
 			Component: types.Component{Name: "component1", Instance: "instance1", EVSE: &types.EVSE{ID: 2, ConnectorID: newInt(2)}},
-			Variable:  types.Variable{Name: "variable1", Instance: "instance1"},
+			Variable:  &types.Variable{Name: "variable1", Instance: "instance1"},
 		},
 	}
 	var requestTable = []GenericTestEntry{
@@ -30,7 +30,7 @@ func (suite *OcppV2TestSuite) TestGetReportRequestValidation() {
 		{provisioning.GetReportRequest{RequestID: newInt(-1)}, false},
 		{provisioning.GetReportRequest{ComponentCriteria: []provisioning.ComponentCriterion{"invalidComponentCriterion"}}, false},
 		{provisioning.GetReportRequest{ComponentCriteria: []provisioning.ComponentCriterion{provisioning.ComponentCriterionActive, provisioning.ComponentCriterionEnabled, provisioning.ComponentCriterionAvailable, provisioning.ComponentCriterionProblem, provisioning.ComponentCriterionActive}}, false},
-		{provisioning.GetReportRequest{ComponentVariable: []types.ComponentVariable{{Variable: types.Variable{Name: "variable1", Instance: "instance1"}}}}, false},
+		{provisioning.GetReportRequest{ComponentVariable: []types.ComponentVariable{{Variable: &types.Variable{Name: "variable1", Instance: "instance1"}}}}, false},
 	}
 	ExecuteGenericTestTable(t, requestTable)
 }
@@ -38,7 +38,7 @@ func (suite *OcppV2TestSuite) TestGetReportRequestValidation() {
 func (suite *OcppV2TestSuite) TestGetReportConfirmationValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{provisioning.GetReportResponse{Status: types.GenericDeviceModelStatusAccepted}, true},
+		{provisioning.GetReportResponse{Status: types.GenericDeviceModelStatusTypeAccepted}, true},
 		{provisioning.GetReportResponse{Status: "invalidDeviceModelStatus"}, false},
 		{provisioning.GetReportResponse{}, false},
 	}
@@ -54,13 +54,13 @@ func (suite *OcppV2TestSuite) TestGetReportE2EMocked() {
 	componentCriteria := []provisioning.ComponentCriterion{provisioning.ComponentCriterionActive, provisioning.ComponentCriterionAvailable}
 	componentVariable := types.ComponentVariable{
 		Component: types.Component{Name: "component1", Instance: "instance1", EVSE: &types.EVSE{ID: 2, ConnectorID: newInt(2)}},
-		Variable:  types.Variable{Name: "variable1", Instance: "instance1"},
+		Variable:  &types.Variable{Name: "variable1", Instance: "instance1"},
 	}
 	componentVariables := []types.ComponentVariable{componentVariable}
-	status := types.GenericDeviceModelStatusAccepted
+	status := types.GenericDeviceModelStatusTypeAccepted
 
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"componentCriteria":["%v","%v"],"componentVariable":[{"component":{"name":"%v","instance":"%v","evse":{"id":%v,"connectorId":%v}},"variable":{"name":"%v","instance":"%v"}}]}]`,
-		messageId, provisioning.GetReportFeatureName, *requestID, componentCriteria[0], componentCriteria[1], componentVariable.Component.Name, componentVariable.Component.Instance, componentVariable.Component.EVSE.ID, *componentVariable.Component.EVSE.ConnectorID, componentVariable.Variable.Name, componentVariable.Variable.Instance)
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"componentCriteria":["%v","%v"],"componentVariable":[{"component":{"evse":{"id":%v,"connectorId":%v},"name":"%v","instance":"%v"},"variable":{"name":"%v","instance":"%v"}}]}]`,
+		messageId, provisioning.GetReportFeatureName, *requestID, componentCriteria[0], componentCriteria[1], componentVariable.Component.EVSE.ID, *componentVariable.Component.EVSE.ConnectorID, componentVariable.Component.Name, componentVariable.Component.Instance, componentVariable.Variable.Name, componentVariable.Variable.Instance)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v"}]`, messageId, status)
 	getReportConfirmation := provisioning.NewGetReportResponse(status)
 	channel := NewMockWebSocket(wsId)
@@ -111,15 +111,15 @@ func (suite *OcppV2TestSuite) TestGetReportInvalidEndpoint() {
 	componentCriteria := []provisioning.ComponentCriterion{provisioning.ComponentCriterionActive, provisioning.ComponentCriterionAvailable}
 	componentVariable := types.ComponentVariable{
 		Component: types.Component{Name: "component1", Instance: "instance1", EVSE: &types.EVSE{ID: 2, ConnectorID: newInt(2)}},
-		Variable:  types.Variable{Name: "variable1", Instance: "instance1"},
+		Variable:  &types.Variable{Name: "variable1", Instance: "instance1"},
 	}
 	componentVariables := []types.ComponentVariable{componentVariable}
 	getReportRequest := provisioning.NewGetReportRequest()
 	getReportRequest.RequestID = requestID
 	getReportRequest.ComponentCriteria = componentCriteria
 	getReportRequest.ComponentVariable = componentVariables
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"componentCriteria":["%v","%v"],"componentVariable":[{"component":{"name":"%v","instance":"%v","evse":{"id":%v,"connectorId":%v}},"variable":{"name":"%v","instance":"%v"}}]}]`,
-		messageId, provisioning.GetReportFeatureName, *requestID, componentCriteria[0], componentCriteria[1], componentVariable.Component.Name, componentVariable.Component.Instance, componentVariable.Component.EVSE.ID, *componentVariable.Component.EVSE.ConnectorID, componentVariable.Variable.Name, componentVariable.Variable.Instance)
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"componentCriteria":["%v","%v"],"componentVariable":[{"component":{"evse":{"id":%v,"connectorId":%v},"name":"%v","instance":"%v"},"variable":{"name":"%v","instance":"%v"}}]}]`,
+		messageId, provisioning.GetReportFeatureName, *requestID, componentCriteria[0], componentCriteria[1], componentVariable.Component.EVSE.ID, *componentVariable.Component.EVSE.ConnectorID, componentVariable.Component.Name, componentVariable.Component.Instance, componentVariable.Variable.Name, componentVariable.Variable.Instance)
 
 	testUnsupportedRequestFromChargingStation(suite, getReportRequest, requestJson, messageId)
 }

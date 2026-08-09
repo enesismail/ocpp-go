@@ -44,7 +44,7 @@ func (suite *OcppV2TestSuite) TestUnlockConnectorE2EMocked() {
 	evseID := 2
 	connectorID := 1
 	status := remotecontrol.UnlockStatusUnlocked
-	statusInfo := types.NewStatusInfo("200", "")
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"evseId":%v,"connectorId":%v}]`,
 		messageId, remotecontrol.UnlockConnectorFeatureName, evseID, connectorID)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`,

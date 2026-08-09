@@ -37,7 +37,7 @@ type CustomerInformationRequest struct {
 	Report              bool                       `json:"report"`
 	Clear               bool                       `json:"clear"`
 	CustomerIdentifier  string                     `json:"customerIdentifier,omitempty" validate:"max=64"`
-	IdToken             *types.IdToken             `json:"idToken,omitempty" validate:"omitempty,dive"`
+	IdToken             *types.IDToken             `json:"idToken,omitempty" validate:"omitempty,dive"`
 	CustomerCertificate *types.CertificateHashData `json:"customerCertificate,omitempty" validate:"omitempty,dive"`
 }
 
