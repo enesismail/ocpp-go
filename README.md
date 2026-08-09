@@ -9,6 +9,8 @@
 >
 > **Upstream authorship is preserved.** Adopted changes retain their original commit authorship; see `NOTICE.md` for contributor credits and `CHANGELOG.md` for notable divergences (both planned). We aim to send fixes back upstream rather than compete with it, and build/test restoration is currently in progress.
 >
+> **[What actually changed between the OCPP 2.0.1 and OCPP 2.1 JSON schemas](docs/others/ocpp-2.1-schema-delta.md)** — a field-by-field diff of the two published Part 3 schema sets: 27 new messages, one new required field, and every enum, requiredness and `maxLength` change in between. Reproducible from the script alongside it.
+>
 > **Contributions are welcome.** Thanks to the original author and to all previous contributors whose work this fork builds on.
 
 # ocpp-go
