@@ -61,6 +61,10 @@ Planned milestones and features:
 -   [x] OCPP 2.0.1 (examples working, but will need more real-world testing) (documentation
     available [here](docs/ocpp-2.0.1.md))
 
+### Reference notes
+
+-   [What actually changed between the OCPP 2.0.1 and OCPP 2.1 JSON schemas](docs/others/ocpp-2.1-schema-delta.md) — a field-level comparison of the two versions' published payload schemas, with a self-contained reproduction script.
+
 ### Features
 
 The library offers several advanced features, especially at websocket and ocpp-j level.
