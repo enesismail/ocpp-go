@@ -1,0 +1,9 @@
+version: v201
+tagOverrides: []
+dedupAllowlist:
+  - definition: UnknownDriftDefinition
+    rule: add
+    rationale: A same-named definition collision between two schema files is expected here and is not a structural conflict.
+    source: "Published message specification, UnknownDriftDefinition dedup allowlist entry"
+    author: "Generator maintainer"
+    date: 2026-08-08

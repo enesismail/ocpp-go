@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: SliceFixture
+    property: items
+    tag: "min=1"
+    rule: add
+    rationale: The published schema permits an unbounded list, but this boundary keeps it within the supported operational range.
+    source: "Published message specification, SliceFixture items constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

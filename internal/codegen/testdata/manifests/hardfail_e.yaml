@@ -1,0 +1,17 @@
+version: v201
+schemaDir: schemas/hardfail
+goModule: github.com/enesismail/ocpp-go
+goTree: ocpp2.0.1
+typesPackage: ocpp2.0.1/types
+messages:
+  - name: FirstRow
+    block: availability
+    direction: CS->CSMS
+    request: FixtureMessageRequest.json
+    response: FixtureMessageResponse.json
+    emit: true
+  - name: SecondRow
+    block: availability
+    request: SecondFixtureMessageRequest.json
+    response: SecondFixtureMessageResponse.json
+    emit: true

@@ -1,0 +1,1 @@
+Devices []Device `json:"devices,omitempty" validate:"omitempty,max=1024,dive"`

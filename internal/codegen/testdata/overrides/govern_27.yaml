@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: RecordFieldFixture
+    property: value
+    tag: dive
+    rule: add
+    rationale: The published schema places no per-item constraint here, but this project validates each item once the field carries more than one value.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

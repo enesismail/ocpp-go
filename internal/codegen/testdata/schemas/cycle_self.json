@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:cycle_self",
+  "title": "cycle_self",
+  "type": "object",
+  "properties": {
+    "node": {
+      "$ref": "#/definitions/NodeType"
+    }
+  },
+  "definitions": {
+    "NodeType": {
+      "type": "object",
+      "properties": {
+        "next": {
+          "$ref": "#/definitions/NodeType"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+// RenderDefinition never emits an enum's init(). Registration is assembled
+// once per generated file by the caller, so two enums sharing a file
+// produce one combined init() (RenderDefinition's own doc comment; pinned
+// end to end by the whole-file goldens widget_message.golden and
+// widget_types_gen.golden).
+
+type StatusType string
+
+const (
+	StatusTypeAccepted StatusType = "Accepted"
+	StatusTypeRejected StatusType = "Rejected"
+)
+
+func isValidStatusType(fl validator.FieldLevel) bool {
+	status := StatusType(fl.Field().String())
+	switch status {
+	case StatusTypeAccepted, StatusTypeRejected:
+		return true
+	default:
+		return false
+	}
+}

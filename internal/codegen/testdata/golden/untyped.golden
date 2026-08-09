@@ -1,0 +1,1 @@
+Data any `json:"data,omitempty" validate:"omitempty"`

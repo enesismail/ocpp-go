@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:required_inheritance",
+  "title": "required_inheritance",
+  "type": "object",
+  "properties": {"outer": {"$ref": "#/definitions/OuterType"}},
+  "definitions": {
+    "OuterType": {"type": "object", "properties": {"middle": {"$ref": "#/definitions/MiddleType"}, "note": {"type": "string"}}, "required": ["middle", "note"]},
+    "MiddleType": {"type": "object", "properties": {"leaf": {"type": "string"}, "note": {"type": "string"}}, "required": ["leaf"]}
+  }
+}

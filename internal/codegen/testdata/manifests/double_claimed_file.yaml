@@ -1,0 +1,21 @@
+version: v201
+schemaDir: schemas
+goModule: github.com/enesismail/ocpp-go
+goTree: ocpp2.0.1
+typesPackage: ocpp2.0.1/types
+messages:
+  - name: FirstMessage
+    block: availability
+    direction: CS->CSMS
+    request: FixtureMessageRequest.json
+    response: FixtureMessageResponse.json
+    emit: false
+  # SecondMessage arrives at files FirstMessage already claimed, so it is the
+  # offending row: naming the file alone would leave an editor of a long
+  # manifest to find which of the two rows to change.
+  - name: SecondMessage
+    block: availability
+    direction: CS->CSMS
+    request: FixtureMessageRequest.json
+    response: FixtureMessageResponse.json
+    emit: false

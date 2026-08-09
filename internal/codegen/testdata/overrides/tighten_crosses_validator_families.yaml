@@ -1,0 +1,12 @@
+version: v201
+tagOverrides:
+  - definition: RecordFieldFixture
+    property: value
+    tag: "gte=50"
+    from: "lte=100"
+    rule: tighten
+    rationale: The published schema bounds this value from above; this project also states the operational range it accepts, which the published schema does not.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

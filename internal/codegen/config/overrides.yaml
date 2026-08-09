@@ -1,0 +1,30 @@
+# Corrections applied to generated validation, for cases where this project
+# enforces a stricter rule than the published JSON schema. Schema files are
+# never modified; every correction lives here and reaches the wire as a Go
+# validation tag.
+#
+# Owner: Generator maintainer
+# Every row must carry rule, rationale, source, author and date (plus `from`
+# when rule is tighten). Generation fails on an incomplete row, on a row that
+# no longer matches any schema property, and on any field this file does not
+# define (strict decoding).
+
+version: v201
+
+tagOverrides:
+  - definition: BootNotificationResponse
+    property: interval
+    tag: gte=0
+    rule: add
+    rationale: >
+      The schema declares interval as an integer with no minimum, so a negative
+      value validates. A negative heartbeat interval has no meaning: a charging
+      station receiving one cannot schedule anything from it. This project
+      rejects it at the message boundary instead of passing it to callers.
+      The published schema accepts such a payload; this rule is deliberately
+      stricter.
+    source: "OCPP 2.0.1 Part 2, BootNotification response — interval is the number of seconds between heartbeats"
+    author: Generator maintainer
+    date: 2026-08-08
+
+dedupAllowlist: []   # same record fields required for any entry

@@ -1,0 +1,1 @@
+{"definitions":[{"name":"MeasurandEnumType","kind":"enum","values":["Energy.Active.Import.Register"]},{"name":"PhaseEnumType","kind":"enum","values":["L1-N"]},{"name":"ReadingContextEnumType","kind":"enum","values":["Transaction.Begin"]}],"messages":[]}

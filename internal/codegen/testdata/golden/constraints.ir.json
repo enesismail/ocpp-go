@@ -1,0 +1,1 @@
+{"definitions":[{"name":"MappingRequest","kind":"root","properties":[{"name":"code","type":"string","maxLength":20,"minLength":2,"pattern":"^[A-Z]+$"}]}],"messages":[]}

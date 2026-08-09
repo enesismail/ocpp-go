@@ -1,0 +1,1 @@
+Enabled *bool `json:"enabled,omitempty" validate:"omitempty"`

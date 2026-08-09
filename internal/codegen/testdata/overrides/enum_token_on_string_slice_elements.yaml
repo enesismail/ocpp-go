@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: SliceFixture
+    property: items
+    tag: "registrationStatusType201"
+    rule: add
+    rationale: The published schema types this value loosely, but this project accepts only the values the corresponding enumeration lists, and rejects anything else at the message boundary.
+    source: "Published message specification, enumerated value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: SliceFixture
+    property: items
+    tag: dive
+    rule: add
+    rationale: The published schema places no per-item constraint here, but this row proposes a second dive alongside one the base mapping already carries.
+    source: "Published message specification, SliceFixture items constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

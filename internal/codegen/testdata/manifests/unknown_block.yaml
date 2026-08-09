@@ -1,0 +1,25 @@
+version: v201
+schemaDir: schemas/hardfail
+goModule: github.com/enesismail/ocpp-go
+# goTree is resolved against the Go module root (found by walking up from
+# this file's own directory to go.mod), not against schemaDir or this
+# file's directory — this fixture relies on that walk landing on this
+# repository's own go.mod and its real ocpp2.0.1/ tree, which has no
+# "not-a-block" directory, for the unknown-block check below to fire.
+goTree: ocpp2.0.1
+typesPackage: ocpp2.0.1/types
+messages:
+  # Row 1 names a real block, so the error below has to identify row 2 by
+  # something other than "the only row there is".
+  - name: FirstRow
+    block: availability
+    direction: CS->CSMS
+    request: FixtureMessageRequest.json
+    response: FixtureMessageResponse.json
+    emit: false
+  - name: SecondRow
+    block: not-a-block
+    direction: CS->CSMS
+    request: SecondFixtureMessageRequest.json
+    response: SecondFixtureMessageResponse.json
+    emit: false

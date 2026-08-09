@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:direct_indirection",
+  "title": "direct_indirection",
+  "type": "object",
+  "properties": {
+    "value": {
+      "$ref": "#/definitions/FirstType"
+    }
+  },
+  "definitions": {
+    "FirstType": {
+      "$ref": "#/definitions/SecondType"
+    },
+    "SecondType": {
+      "type": "string"
+    }
+  }
+}

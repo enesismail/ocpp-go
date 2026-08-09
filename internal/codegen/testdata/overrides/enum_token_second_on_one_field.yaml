@@ -1,0 +1,19 @@
+version: v201
+tagOverrides:
+  - definition: StringFixture
+    property: label
+    tag: chargingLimitSourceType201
+    rule: add
+    rationale: The published schema types this value loosely, but this project accepts only the values the charging limit source enumeration lists.
+    source: "Published message specification, enumerated value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+  - definition: StringFixture
+    property: label
+    tag: registrationStatusType201
+    rule: add
+    rationale: The published schema types this value loosely, but this project accepts only the values the registration status enumeration lists.
+    source: "Published message specification, enumerated value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

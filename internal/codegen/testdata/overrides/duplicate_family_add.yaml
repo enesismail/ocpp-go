@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: StringFixture
+    property: label
+    tag: max=10
+    rule: add
+    rationale: The published schema permits an unbounded label, but this boundary keeps its length within the supported public form.
+    source: "Published message specification, StringFixture label length constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

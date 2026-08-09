@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: RecordFieldFixture
+    property: value
+    tag: "gte=0 "
+    rule: add
+    rationale: The published schema places no bound on this value, but this project constrains it at the message boundary even though the published schema accepts a wider range.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

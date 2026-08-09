@@ -1,0 +1,21 @@
+version: v201
+tagOverrides:
+  - definition: SliceFixture
+    property: items
+    tag: max=20
+    from: max=36
+    rule: tighten
+    rationale: The published schema permits a longer value in each list entry than this project stores, so the per-entry ceiling is lowered even though the published schema accepts the longer one.
+    source: "Published message specification, SliceFixture items element length"
+    author: "Generator maintainer"
+    date: 2026-08-08
+  - definition: SliceFixture
+    property: items
+    tag: max=3
+    from: max=5
+    rule: tighten
+    rationale: The published schema permits more entries in the list than this project processes in one message, so the item count is lowered even though the published schema accepts more.
+    source: "Published message specification, SliceFixture items cardinality"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

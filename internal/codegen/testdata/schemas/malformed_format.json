@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:malformed_format",
+  "title": "malformed_format",
+  "type": "object",
+  "properties": {
+    "plain": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "value": {
+      "type": "string",
+      "format": ["date-time"]
+    }
+  },
+  "definitions": {}
+}

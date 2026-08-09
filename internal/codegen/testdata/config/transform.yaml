@@ -1,0 +1,13 @@
+# Exported identifier words used by the generator.
+initialisms:
+  - ID
+  - URL
+  - URI
+  - EVSE
+  - EV
+  - SOC
+  - OCSP
+  - ISO
+  - CSMS
+  - AC
+  - DC

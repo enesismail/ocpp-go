@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: RecordFieldFixture
+    property: value
+    tag: "fixtureRegisteredValidator=0"
+    rule: add
+    rationale: The published schema places no domain constraint here, but this project validates the value against a registered custom rule.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

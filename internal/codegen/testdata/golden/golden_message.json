@@ -1,0 +1,74 @@
+{
+  "definitions": [
+    {
+      "name": "SharedType",
+      "kind": "object",
+      "properties": [
+        {
+          "name": "value",
+          "pointer": "#/definitions/SharedType/properties/value",
+          "type": "string",
+          "required": false
+        }
+      ],
+      "reserved": false,
+      "occurrences": 1,
+      "files": [
+        "root_kind.json"
+      ]
+    },
+    {
+      "name": "root_kind",
+      "kind": "root",
+      "properties": [
+        {
+          "name": "shared",
+          "pointer": "#/properties/shared",
+          "required": false,
+          "ref": "#/definitions/SharedType"
+        }
+      ],
+      "reserved": false,
+      "occurrences": 1,
+      "files": [
+        "root_kind.json"
+      ]
+    },
+    {
+      "name": "transitive_nesting_response",
+      "kind": "root",
+      "properties": [
+        {
+          "name": "status",
+          "pointer": "#/properties/status",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "reserved": false,
+      "occurrences": 1,
+      "files": [
+        "transitive_nesting_response.json"
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "name": "GoldenMessage",
+      "block": "diagnostics",
+      "direction": "CS-\u003eCSMS",
+      "request": "root_kind.json",
+      "response": "transitive_nesting_response.json",
+      "requestRoot": "root_kind",
+      "responseRoot": "transitive_nesting_response",
+      "roots": [
+        "root_kind",
+        "transitive_nesting_response"
+      ],
+      "reach": [
+        "SharedType"
+      ],
+      "emit": true
+    }
+  ]
+}

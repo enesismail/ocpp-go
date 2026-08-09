@@ -1,0 +1,1 @@
+Status StatusType `json:"status,omitempty" validate:"omitempty,statusType201"`

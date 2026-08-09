@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:enum_ref",
+  "title": "enum_ref",
+  "type": "object",
+  "properties": {
+    "status": {
+      "$ref": "#/definitions/StatusEnumType"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "definitions": {
+    "StatusEnumType": {
+      "type": "string",
+      "enum": [
+        "Accepted",
+        "Rejected"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

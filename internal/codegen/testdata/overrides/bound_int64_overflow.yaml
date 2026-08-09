@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: BootNotificationResponse
+    property: interval
+    tag: "lte=9223372036854775808"
+    rule: add
+    rationale: The schema declares interval as an integer with no bound in this direction, so this project states the operational range it accepts even though the published schema accepts a wider one.
+    source: "OCPP 2.0.1 Part 2, BootNotification response — interval is the number of seconds between heartbeats"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

@@ -1,0 +1,12 @@
+version: v201
+tagOverrides:
+  - definition: IdTokenInfo
+    property: chargingPriority
+    tag: gte=5
+    from: gte=5
+    rule: tighten
+    rationale: This row proposes the same lower bound the base mapping already enforces, which is not a tightening of the published constraint.
+    source: "Published message specification, IdTokenInfo chargingPriority constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

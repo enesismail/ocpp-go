@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:cycle_mutual",
+  "title": "cycle_mutual",
+  "type": "object",
+  "properties": {
+    "left": {
+      "$ref": "#/definitions/LeftType"
+    }
+  },
+  "definitions": {
+    "LeftType": {
+      "type": "object",
+      "properties": {
+        "right": {
+          "$ref": "#/definitions/RightType"
+        }
+      }
+    },
+    "RightType": {
+      "type": "object",
+      "properties": {
+        "left": {
+          "$ref": "#/definitions/LeftType"
+        }
+      }
+    }
+  }
+}

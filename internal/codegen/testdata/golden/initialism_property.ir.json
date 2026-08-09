@@ -1,0 +1,1 @@
+{"definitions":[{"name":"MappingRequest","kind":"root","properties":[{"name":"evseId","ref":"#/definitions/EVSEType"}]},{"name":"EVSEType","kind":"object"}],"messages":[]}

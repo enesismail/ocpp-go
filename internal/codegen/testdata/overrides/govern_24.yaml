@@ -1,0 +1,8 @@
+version: v201
+tagOverrides: []
+dedupAllowlist:
+  - definition: RecordFieldFixture
+    rule: add
+    source: "Published message specification, RecordFieldFixture dedup allowlist entry"
+    author: "Generator maintainer"
+    date: 2026-08-08

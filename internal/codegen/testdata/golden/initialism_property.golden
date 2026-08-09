@@ -1,0 +1,9 @@
+// evseId exercises the naming transform's longest-match rule end to end
+// at the property level: the word "evse" matches the EVSE initialism
+// (checked before the shorter EV), giving the field name EVSEID; its $ref
+// target EVSEType strips its trailing "Type" (the object naming rule) to
+// EVSE. Both spellings come from the configured transform, unlike every
+// other golden in this directory, none of which needs a table lookup to
+// name correctly.
+
+EVSEID *EVSE `json:"evseId,omitempty" validate:"omitempty"`

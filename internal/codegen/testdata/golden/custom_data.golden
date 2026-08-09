@@ -1,0 +1,9 @@
+// The illustrative snippet that motivates the CustomData field omits a
+// validate tag entirely (`json:"customData,omitempty"` with nothing
+// after it). This golden applies the general optional-composite rule
+// instead: every optional composite carries validate:"omitempty", exactly
+// like optional_composite.golden's Device field, and CustomData is not a
+// special case for tagging — only for which type it names, and for never
+// being a generated type.
+
+CustomData *types.CustomData `json:"customData,omitempty" validate:"omitempty"`

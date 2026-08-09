@@ -1,0 +1,1 @@
+{"definitions":[{"name":"MappingRequest","kind":"root","properties":[{"name":"values","type":"array","minItems":1,"maxItems":3,"items":{"type":"string"}}]}],"messages":[]}

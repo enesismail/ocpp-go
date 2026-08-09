@@ -1,0 +1,1 @@
+{"definitions":[{"name":"MappingRequest","kind":"root","properties":[{"name":"evseStatus","ref":"#/definitions/EVSEStatusEnumType","enumDefinition":"EVSEStatusEnumType"}]},{"name":"EVSEStatusEnumType","kind":"enum","values":["Charging","Idle"]}],"messages":[]}

@@ -1,0 +1,12 @@
+version: v201
+tagOverrides:
+  - definition: SliceFixture
+    property: items
+    tag: "min=4"
+    from: "min=3"
+    rule: tighten
+    rationale: The published schema permits shorter content here than this project accepts, so the existing bound is raised.
+    source: "Published message specification, SliceFixture items constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

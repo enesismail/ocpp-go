@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:malformed_required_root",
+  "title": "malformed_required_root",
+  "type": "object",
+  "properties": {
+    "value": {
+      "type": "string"
+    },
+    "count": {
+      "type": "integer"
+    },
+    "amount": {
+      "type": "number"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "status": {
+      "$ref": "#/definitions/StatusEnumType"
+    },
+    "detail": {
+      "$ref": "#/definitions/DetailType"
+    }
+  },
+  "definitions": {
+    "StatusEnumType": {
+      "type": "string",
+      "enum": [
+        "Accepted",
+        "Rejected"
+      ]
+    },
+    "DetailType": {
+      "type": "object",
+      "properties": {
+        "note": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "note"
+      ]
+    }
+  },
+  "required": "value",
+  "additionalProperties": false
+}

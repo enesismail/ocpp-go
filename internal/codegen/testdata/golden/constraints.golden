@@ -1,0 +1,9 @@
+// pattern is not in the mapping's tag table and is not a validator.v9 built-in
+// function; registering it as a validate token would panic at validation
+// time ("Undefined validation function"), not fail to compile. An unmapped
+// schema keyword produces no validator token at all — pattern stays
+// enforced by the schema-validation layer (layer B), never by a generated
+// tag. Numeric/length bound tokens render min before max, matching the
+// existing tree's own ordering (types.go:412).
+
+Code string `json:"code,omitempty" validate:"omitempty,min=2,max=20"`

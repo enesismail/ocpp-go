@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: StringFixture
+    property: label
+    tag: gte=5
+    rule: add
+    rationale: The published schema places no lower bound here, but this project enforces a floor on the underlying value.
+    source: "Published message specification, StringFixture label constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

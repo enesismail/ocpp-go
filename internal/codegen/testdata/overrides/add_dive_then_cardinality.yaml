@@ -1,0 +1,19 @@
+version: v201
+tagOverrides:
+  - definition: SliceFixture
+    property: items
+    tag: dive
+    rule: add
+    rationale: The published schema places no constraint on the individual entries, but this project checks each one it is given rather than the list as a whole.
+    source: "Published message specification, SliceFixture items element constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+  - definition: SliceFixture
+    property: items
+    tag: min=2
+    rule: add
+    rationale: The published schema accepts a list with fewer entries than this project can act on, so the generated field states the minimum it needs even though the published schema accepts less.
+    source: "Published message specification, SliceFixture items cardinality"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

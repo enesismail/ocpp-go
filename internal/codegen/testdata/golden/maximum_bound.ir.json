@@ -1,0 +1,1 @@
+{"definitions":[{"name":"MappingRequest","kind":"root","properties":[{"name":"stateOfCharge","type":"integer","minimum":0,"maximum":100}]}],"messages":[]}

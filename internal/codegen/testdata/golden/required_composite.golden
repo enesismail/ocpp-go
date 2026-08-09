@@ -1,0 +1,11 @@
+// boot_notification.go:74 renders a required object $ref (ChargingStation
+// ChargingStationType) as validate:"required,dive" in today's hand-written
+// tree. The mapping rule table grants dive only to composite SLICE elements
+// ("arrays ... dive on composite element types"); there is no row
+// extending dive to a single required composite. That rule table is
+// authoritative over today's tree, so this fixture emits
+// validate:"required" with no dive —
+// boot_notification.go's own shape is expected to surface as a
+// SCHEMA_FAITHFUL_CHANGE row when the generated tree is diffed against the hand-written one, not reproduced here.
+
+Device Device `json:"device" validate:"required"`

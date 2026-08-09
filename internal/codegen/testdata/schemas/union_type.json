@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:union_type",
+  "title": "union_type",
+  "type": "object",
+  "properties": {
+    "plain": {
+      "type": "string",
+      "maxLength": 20
+    },
+    "value": {
+      "type": ["string", "null"],
+      "maxLength": 20
+    }
+  },
+  "definitions": {}
+}

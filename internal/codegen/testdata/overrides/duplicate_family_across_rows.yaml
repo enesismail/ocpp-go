@@ -1,0 +1,19 @@
+version: v201
+tagOverrides:
+  - definition: BootNotificationResponse
+    property: interval
+    tag: gte=0
+    rule: add
+    rationale: The schema declares interval as an integer with no minimum, so a negative value validates; a negative heartbeat interval cannot be scheduled from, and this boundary rejects it even though the published schema accepts it.
+    source: "OCPP 2.0.1 Part 2, BootNotification response — interval is the number of seconds between heartbeats"
+    author: "Generator maintainer"
+    date: 2026-08-08
+  - definition: BootNotificationResponse
+    property: interval
+    tag: gte=5
+    rule: add
+    rationale: A heartbeat interval below five seconds is shorter than this project's own dispatch window, so the generated field states that floor even though the published schema accepts a smaller one.
+    source: "OCPP 2.0.1 Part 2, BootNotification response — interval is the number of seconds between heartbeats"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

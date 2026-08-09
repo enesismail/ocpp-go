@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "not-a-valid-schema-id",
+  "title": "malformed_id",
+  "type": "object",
+  "properties": {"value": {"type": "string"}},
+  "definitions": {}
+}

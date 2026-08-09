@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:alpha_response",
+  "title": "alpha_response",
+  "type": "object",
+  "properties": {"result": {"type": "string"}},
+  "definitions": {}
+}

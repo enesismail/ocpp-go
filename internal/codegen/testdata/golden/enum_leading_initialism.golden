@@ -1,0 +1,8 @@
+// The derived validator tag, end to end: EVSEStatusEnumType strips to
+// EVSEStatusType (the enum naming rule), lower-cases only its first word
+// ("EVSE", the whole initialism run, not just "E") to get evseStatusType,
+// and appends the literal "201" — evseStatusType201. This is where the
+// tag is actually observable: RenderDefinition itself never emits a
+// registration call, only a referencing property's validate tag carries it.
+
+EVSEStatus EVSEStatusType `json:"evseStatus,omitempty" validate:"omitempty,evseStatusType201"`

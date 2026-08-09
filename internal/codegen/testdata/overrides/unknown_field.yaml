@@ -1,0 +1,12 @@
+version: v201
+unexpected: true
+tagOverrides:
+  - definition: RecordFieldFixture
+    property: value
+    tag: gte=0
+    rule: add
+    rationale: The published schema accepts a negative value, but this boundary rejects it because the value cannot be used safely.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

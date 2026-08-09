@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:dedup_conflict",
+  "title": "dedup_conflict",
+  "type": "object",
+  "properties": {
+    "shared": {
+      "$ref": "#/definitions/SharedType"
+    }
+  },
+  "definitions": {
+    "SharedType": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+version: v201
+tagOverrides:
+  - definition: StringFixture
+    property: label
+    tag: "chargingLimitSourceType201"
+    from: "registrationStatusType201"
+    rule: tighten
+    rationale: The published schema permits the values of one enumeration here, and this project accepts only the values of the narrower list it actually processes.
+    source: "Published message specification, enumerated value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

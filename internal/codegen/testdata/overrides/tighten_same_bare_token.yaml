@@ -1,0 +1,12 @@
+version: v201
+tagOverrides:
+  - definition: SliceFixture
+    property: items
+    tag: "dive"
+    from: "dive"
+    rule: tighten
+    rationale: The published schema places no constraint on the list elements, and this row proposes the element check the base mapping already performs.
+    source: "Published message specification, SliceFixture items constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

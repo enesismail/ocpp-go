@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:metadata_keywords",
+  "title": "metadata_keywords",
+  "type": "object",
+  "description": "A fixture description",
+  "javaType": "example.MetadataRequest",
+  "comment": "A fixture comment",
+  "properties": {
+    "value": {
+      "type": "string",
+      "description": "A value",
+      "javaType": "java.lang.String",
+      "comment": "wire value"
+    }
+  },
+  "definitions": {}
+}

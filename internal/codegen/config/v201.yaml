@@ -1,0 +1,396 @@
+version: v201
+schemaDir: ../../../schemas/v201 # resolved relative to this file; -schemas replaces it
+goModule: github.com/enesismail/ocpp-go
+goTree: ocpp2.0.1
+typesPackage: ocpp2.0.1/types
+
+# Every OCPP 2.0.1 message the vendored schema corpus defines. Only the four
+# rows with emit: true produce generated files today; the rest are read and
+# walked so shared types are placed correctly regardless of how many messages
+# reference them, and so a schema-reading failure anywhere in the corpus is
+# caught here rather than the first time a later row's emit flag flips on.
+messages:
+  - name: Authorize
+    block: authorization
+    direction: CS->CSMS
+    request: AuthorizeRequest.json
+    response: AuthorizeResponse.json
+    emit: false
+  - name: ClearCache
+    block: authorization
+    direction: CSMS->CS
+    request: ClearCacheRequest.json
+    response: ClearCacheResponse.json
+    emit: false
+  - name: Heartbeat
+    block: availability
+    direction: CS->CSMS
+    request: HeartbeatRequest.json
+    response: HeartbeatResponse.json
+    emit: true
+  - name: StatusNotification
+    block: availability
+    direction: CS->CSMS
+    request: StatusNotificationRequest.json
+    response: StatusNotificationResponse.json
+    emit: false
+  - name: ChangeAvailability
+    block: availability
+    direction: CSMS->CS
+    request: ChangeAvailabilityRequest.json
+    response: ChangeAvailabilityResponse.json
+    emit: false
+  - name: DataTransfer
+    block: data
+    direction: both
+    request: DataTransferRequest.json
+    response: DataTransferResponse.json
+    emit: false
+  - name: LogStatusNotification
+    block: diagnostics
+    direction: CS->CSMS
+    request: LogStatusNotificationRequest.json
+    response: LogStatusNotificationResponse.json
+    emit: false
+  - name: NotifyCustomerInformation
+    block: diagnostics
+    direction: CS->CSMS
+    request: NotifyCustomerInformationRequest.json
+    response: NotifyCustomerInformationResponse.json
+    emit: false
+  - name: NotifyEvent
+    block: diagnostics
+    direction: CS->CSMS
+    request: NotifyEventRequest.json
+    response: NotifyEventResponse.json
+    emit: false
+  - name: NotifyMonitoringReport
+    block: diagnostics
+    direction: CS->CSMS
+    request: NotifyMonitoringReportRequest.json
+    response: NotifyMonitoringReportResponse.json
+    emit: false
+  - name: ClearVariableMonitoring
+    block: diagnostics
+    direction: CSMS->CS
+    request: ClearVariableMonitoringRequest.json
+    response: ClearVariableMonitoringResponse.json
+    emit: false
+  - name: CustomerInformation
+    block: diagnostics
+    direction: CSMS->CS
+    request: CustomerInformationRequest.json
+    response: CustomerInformationResponse.json
+    emit: false
+  - name: GetLog
+    block: diagnostics
+    direction: CSMS->CS
+    request: GetLogRequest.json
+    response: GetLogResponse.json
+    emit: false
+  - name: GetMonitoringReport
+    block: diagnostics
+    direction: CSMS->CS
+    request: GetMonitoringReportRequest.json
+    response: GetMonitoringReportResponse.json
+    emit: false
+  - name: SetMonitoringBase
+    block: diagnostics
+    direction: CSMS->CS
+    request: SetMonitoringBaseRequest.json
+    response: SetMonitoringBaseResponse.json
+    emit: false
+  - name: SetMonitoringLevel
+    block: diagnostics
+    direction: CSMS->CS
+    request: SetMonitoringLevelRequest.json
+    response: SetMonitoringLevelResponse.json
+    emit: false
+  - name: SetVariableMonitoring
+    block: diagnostics
+    direction: CSMS->CS
+    request: SetVariableMonitoringRequest.json
+    response: SetVariableMonitoringResponse.json
+    emit: false
+  - name: NotifyDisplayMessages
+    block: display
+    direction: CS->CSMS
+    request: NotifyDisplayMessagesRequest.json
+    response: NotifyDisplayMessagesResponse.json
+    emit: false
+  - name: ClearDisplayMessage
+    block: display
+    direction: CSMS->CS
+    request: ClearDisplayMessageRequest.json
+    response: ClearDisplayMessageResponse.json
+    emit: false
+  - name: GetDisplayMessages
+    block: display
+    direction: CSMS->CS
+    request: GetDisplayMessagesRequest.json
+    response: GetDisplayMessagesResponse.json
+    emit: false
+  - name: SetDisplayMessage
+    block: display
+    direction: CSMS->CS
+    request: SetDisplayMessageRequest.json
+    response: SetDisplayMessageResponse.json
+    emit: false
+  - name: FirmwareStatusNotification
+    block: firmware
+    direction: CS->CSMS
+    request: FirmwareStatusNotificationRequest.json
+    response: FirmwareStatusNotificationResponse.json
+    emit: false
+  - name: PublishFirmwareStatusNotification
+    block: firmware
+    direction: CS->CSMS
+    request: PublishFirmwareStatusNotificationRequest.json
+    response: PublishFirmwareStatusNotificationResponse.json
+    emit: false
+  - name: PublishFirmware
+    block: firmware
+    direction: CSMS->CS
+    request: PublishFirmwareRequest.json
+    response: PublishFirmwareResponse.json
+    emit: false
+  - name: UnpublishFirmware
+    block: firmware
+    direction: CSMS->CS
+    request: UnpublishFirmwareRequest.json
+    response: UnpublishFirmwareResponse.json
+    emit: false
+  - name: UpdateFirmware
+    block: firmware
+    direction: CSMS->CS
+    request: UpdateFirmwareRequest.json
+    response: UpdateFirmwareResponse.json
+    emit: false
+  - name: Get15118EVCertificate
+    block: iso15118
+    direction: CS->CSMS
+    request: Get15118EVCertificateRequest.json
+    response: Get15118EVCertificateResponse.json
+    emit: false
+  - name: GetCertificateStatus
+    block: iso15118
+    direction: CS->CSMS
+    request: GetCertificateStatusRequest.json
+    response: GetCertificateStatusResponse.json
+    emit: false
+  - name: DeleteCertificate
+    block: iso15118
+    direction: CSMS->CS
+    request: DeleteCertificateRequest.json
+    response: DeleteCertificateResponse.json
+    emit: false
+  - name: GetInstalledCertificateIds
+    block: iso15118
+    direction: CSMS->CS
+    request: GetInstalledCertificateIdsRequest.json
+    response: GetInstalledCertificateIdsResponse.json
+    emit: false
+  - name: InstallCertificate
+    block: iso15118
+    direction: CSMS->CS
+    request: InstallCertificateRequest.json
+    response: InstallCertificateResponse.json
+    emit: false
+  - name: GetLocalListVersion
+    block: localauth
+    direction: CSMS->CS
+    request: GetLocalListVersionRequest.json
+    response: GetLocalListVersionResponse.json
+    emit: false
+  - name: SendLocalList
+    block: localauth
+    direction: CSMS->CS
+    request: SendLocalListRequest.json
+    response: SendLocalListResponse.json
+    emit: false
+  - name: MeterValues
+    block: meter
+    direction: CS->CSMS
+    request: MeterValuesRequest.json
+    response: MeterValuesResponse.json
+    emit: false
+  - name: BootNotification
+    block: provisioning
+    direction: CS->CSMS
+    request: BootNotificationRequest.json
+    response: BootNotificationResponse.json
+    emit: true
+  - name: NotifyReport
+    block: provisioning
+    direction: CS->CSMS
+    request: NotifyReportRequest.json
+    response: NotifyReportResponse.json
+    emit: false
+  - name: GetBaseReport
+    block: provisioning
+    direction: CSMS->CS
+    request: GetBaseReportRequest.json
+    response: GetBaseReportResponse.json
+    emit: false
+  - name: GetReport
+    block: provisioning
+    direction: CSMS->CS
+    request: GetReportRequest.json
+    response: GetReportResponse.json
+    emit: false
+  - name: GetVariables
+    block: provisioning
+    direction: CSMS->CS
+    request: GetVariablesRequest.json
+    response: GetVariablesResponse.json
+    emit: false
+  - name: Reset
+    block: provisioning
+    direction: CSMS->CS
+    request: ResetRequest.json
+    response: ResetResponse.json
+    emit: false
+  - name: SetNetworkProfile
+    block: provisioning
+    direction: CSMS->CS
+    request: SetNetworkProfileRequest.json
+    response: SetNetworkProfileResponse.json
+    emit: false
+  - name: SetVariables
+    block: provisioning
+    direction: CSMS->CS
+    request: SetVariablesRequest.json
+    response: SetVariablesResponse.json
+    emit: false
+  - name: RequestStartTransaction
+    block: remotecontrol
+    direction: CSMS->CS
+    request: RequestStartTransactionRequest.json
+    response: RequestStartTransactionResponse.json
+    emit: false
+  - name: RequestStopTransaction
+    block: remotecontrol
+    direction: CSMS->CS
+    request: RequestStopTransactionRequest.json
+    response: RequestStopTransactionResponse.json
+    emit: false
+  - name: TriggerMessage
+    block: remotecontrol
+    direction: CSMS->CS
+    request: TriggerMessageRequest.json
+    response: TriggerMessageResponse.json
+    emit: false
+  - name: UnlockConnector
+    block: remotecontrol
+    direction: CSMS->CS
+    request: UnlockConnectorRequest.json
+    response: UnlockConnectorResponse.json
+    emit: false
+  - name: ReservationStatusUpdate
+    block: reservation
+    direction: CS->CSMS
+    request: ReservationStatusUpdateRequest.json
+    response: ReservationStatusUpdateResponse.json
+    emit: false
+  - name: CancelReservation
+    block: reservation
+    direction: CSMS->CS
+    request: CancelReservationRequest.json
+    response: CancelReservationResponse.json
+    emit: false
+  - name: ReserveNow
+    block: reservation
+    direction: CSMS->CS
+    request: ReserveNowRequest.json
+    response: ReserveNowResponse.json
+    emit: false
+  - name: SecurityEventNotification
+    block: security
+    direction: CS->CSMS
+    request: SecurityEventNotificationRequest.json
+    response: SecurityEventNotificationResponse.json
+    emit: false
+  - name: SignCertificate
+    block: security
+    direction: CS->CSMS
+    request: SignCertificateRequest.json
+    response: SignCertificateResponse.json
+    emit: false
+  - name: CertificateSigned
+    block: security
+    direction: CSMS->CS
+    request: CertificateSignedRequest.json
+    response: CertificateSignedResponse.json
+    emit: false
+  - name: ClearedChargingLimit
+    block: smartcharging
+    direction: CS->CSMS
+    request: ClearedChargingLimitRequest.json
+    response: ClearedChargingLimitResponse.json
+    emit: false
+  - name: NotifyChargingLimit
+    block: smartcharging
+    direction: CS->CSMS
+    request: NotifyChargingLimitRequest.json
+    response: NotifyChargingLimitResponse.json
+    emit: false
+  - name: NotifyEVChargingNeeds
+    block: smartcharging
+    direction: CS->CSMS
+    request: NotifyEVChargingNeedsRequest.json
+    response: NotifyEVChargingNeedsResponse.json
+    emit: false
+  - name: NotifyEVChargingSchedule
+    block: smartcharging
+    direction: CS->CSMS
+    request: NotifyEVChargingScheduleRequest.json
+    response: NotifyEVChargingScheduleResponse.json
+    emit: false
+  - name: ReportChargingProfiles
+    block: smartcharging
+    direction: CS->CSMS
+    request: ReportChargingProfilesRequest.json
+    response: ReportChargingProfilesResponse.json
+    emit: false
+  - name: ClearChargingProfile
+    block: smartcharging
+    direction: CSMS->CS
+    request: ClearChargingProfileRequest.json
+    response: ClearChargingProfileResponse.json
+    emit: false
+  - name: GetChargingProfiles
+    block: smartcharging
+    direction: CSMS->CS
+    request: GetChargingProfilesRequest.json
+    response: GetChargingProfilesResponse.json
+    emit: false
+  - name: GetCompositeSchedule
+    block: smartcharging
+    direction: CSMS->CS
+    request: GetCompositeScheduleRequest.json
+    response: GetCompositeScheduleResponse.json
+    emit: false
+  - name: SetChargingProfile
+    block: smartcharging
+    direction: CSMS->CS
+    request: SetChargingProfileRequest.json
+    response: SetChargingProfileResponse.json
+    emit: true
+  - name: CostUpdated
+    block: tariffcost
+    direction: CSMS->CS
+    request: CostUpdatedRequest.json
+    response: CostUpdatedResponse.json
+    emit: false
+  - name: TransactionEvent
+    block: transactions
+    direction: CS->CSMS
+    request: TransactionEventRequest.json
+    response: TransactionEventResponse.json
+    emit: true
+  - name: GetTransactionStatus
+    block: transactions
+    direction: CSMS->CS
+    request: GetTransactionStatusRequest.json
+    response: GetTransactionStatusResponse.json
+    emit: false

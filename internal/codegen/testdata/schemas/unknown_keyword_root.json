@@ -1,0 +1,9 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:unknown_keyword_root",
+  "title": "unknown_keyword_root",
+  "type": "object",
+  "futureRootKeyword": true,
+  "properties": {"value": {"type": "string"}},
+  "definitions": {}
+}

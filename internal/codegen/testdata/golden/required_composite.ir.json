@@ -1,0 +1,1 @@
+{"definitions":[{"name":"MappingRequest","kind":"root","properties":[{"name":"device","ref":"#/definitions/DeviceType","required":true}]},{"name":"DeviceType","kind":"object"}],"messages":[]}
