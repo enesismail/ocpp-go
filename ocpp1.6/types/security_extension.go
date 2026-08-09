@@ -79,10 +79,33 @@ const (
 	SHA512 HashAlgorithmType = "SHA512"
 )
 
+func isValidHashAlgorithm(fl validator.FieldLevel) bool {
+	algorithm := HashAlgorithmType(fl.Field().String())
+	switch algorithm {
+	case SHA256, SHA384, SHA512:
+		return true
+	default:
+		return false
+	}
+}
+
 // CertificateHashDataType
 type CertificateHashData struct {
-	HashAlgorithm  HashAlgorithmType `json:"hashAlgorithm" validate:"required,hashAlgorithm"`
+	HashAlgorithm  HashAlgorithmType `json:"hashAlgorithm" validate:"required,hashAlgorithm16"`
 	IssuerNameHash string            `json:"issuerNameHash" validate:"required,max=128"`
 	IssuerKeyHash  string            `json:"issuerKeyHash" validate:"required,max=128"`
 	SerialNumber   string            `json:"serialNumber" validate:"required,max=40"`
+}
+
+// init registers this file's own validator locally: hashAlgorithm16 is
+// CertificateHashData's field, and this file is the type's sole owner, so
+// the registration lives beside it rather than in types.go's central init
+// (the pattern every non-types-package file in ocpp1.6 already follows for
+// its own tags, e.g. delete_certificate.go's deleteCertificateStatus16).
+// Deliberately local: Validate is one process-wide validator shared with
+// ocpp2.0.1, and this field's tag previously named a validator this package
+// never registered — it worked only while ocpp2.0.1 happened to register
+// the same bare name. Owning hashAlgorithm16 here removes that coupling.
+func init() {
+	_ = Validate.RegisterValidation("hashAlgorithm16", isValidHashAlgorithm)
 }
