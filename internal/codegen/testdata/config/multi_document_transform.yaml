@@ -1,0 +1,19 @@
+# Exported identifier words used by the generator.
+initialisms:
+  - ID
+  - URL
+  - URI
+  - EVSE
+  - EV
+  - SOC
+  - OCSP
+  - ISO
+  - CSMS
+  - AC
+  - DC
+---
+# A second document holding a different table, plus a field the strict
+# decode of the first document would have rejected.
+initialisms:
+  - Id
+unexpected: true

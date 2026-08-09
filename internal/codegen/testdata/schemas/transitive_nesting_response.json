@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:transitive_nesting_response",
+  "title": "transitive_nesting_response",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "definitions": {}
+}

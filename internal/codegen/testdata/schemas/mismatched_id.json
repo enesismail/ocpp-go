@@ -1,0 +1,9 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:WrongStem",
+  "title": "mismatched_id",
+  "comment": "intentionally mismatched $id suffix (WrongStem) vs file stem (mismatched_id), for the $id-matches-stem hard-fail test",
+  "type": "object",
+  "properties": {"value": {"type": "string"}},
+  "definitions": {}
+}

@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:malformed_title",
+  "title": 42,
+  "type": "object",
+  "properties": {
+    "value": {
+      "type": "string"
+    }
+  },
+  "definitions": {}
+}

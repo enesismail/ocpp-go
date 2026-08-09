@@ -1,0 +1,12 @@
+version: v201
+tagOverrides:
+  - definition: StringFixture
+    property: label
+    tag: max=30
+    from: max=20
+    rule: tighten
+    rationale: The published schema already permits a label up to twenty characters; this row proposes a longer ceiling, which is not a tightening of the published constraint.
+    source: "Published message specification, StringFixture label constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

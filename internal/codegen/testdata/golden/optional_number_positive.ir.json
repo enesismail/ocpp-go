@@ -1,0 +1,1 @@
+{"definitions":[{"name":"MappingRequest","kind":"root","properties":[{"name":"threshold","type":"number","minimum":1.5}]}],"messages":[]}

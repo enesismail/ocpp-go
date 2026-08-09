@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: IdTokenInfo
+    property: chargingPriority
+    tag: max=10
+    rule: add
+    rationale: The published schema places no upper bound on this value, but this boundary caps it at the highest priority the operational range uses, even though the published schema accepts a larger number.
+    source: "Published message specification, IdTokenInfo chargingPriority constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

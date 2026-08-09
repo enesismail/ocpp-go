@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:dangling_ref",
+  "title": "dangling_ref",
+  "type": "object",
+  "properties": {
+    "present": {
+      "$ref": "#/definitions/PresentType"
+    },
+    "value": {
+      "$ref": "#/definitions/MissingType"
+    }
+  },
+  "definitions": {
+    "PresentType": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,20 @@
+version: v201
+tagOverrides:
+  - definition: RecordFieldFixture
+    property: value
+    tag: gte=1
+    from: gte=0
+    rule: tighten
+    rationale: The published schema allows zero here, but this project requires a positive value even though the published schema accepts zero.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+  - definition: RecordFieldFixture
+    property: value
+    tag: lte=100
+    rule: add
+    rationale: The published schema states no upper bound, but this project keeps the value within the operational range it can process even though the published schema accepts a larger one.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

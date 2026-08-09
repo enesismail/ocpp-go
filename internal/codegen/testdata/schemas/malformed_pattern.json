@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:malformed_pattern",
+  "title": "malformed_pattern",
+  "type": "object",
+  "properties": {
+    "plain": {
+      "type": "string",
+      "pattern": "^[A-Z]+$"
+    },
+    "value": {
+      "type": "string",
+      "pattern": 42
+    }
+  },
+  "definitions": {}
+}

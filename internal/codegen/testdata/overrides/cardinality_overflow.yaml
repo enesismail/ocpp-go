@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: StringFixture
+    property: label
+    tag: "min=99999999999999999999"
+    rule: add
+    rationale: The published schema places no bound here, but this project constrains it at the message boundary even though the published schema accepts a wider range.
+    source: "Published message specification, StringFixture label constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

@@ -1,0 +1,9 @@
+// smartcharging/notify_ev_charging_needs.go:66's own StateOfCharge field
+// (*int, validate:"omitempty,gte=0,lte=100") is the real anatomy this
+// fixture pins: minimum 0 makes this an optional-numeric pointer (the
+// narrowed optionality rule — no minimum, or minimum <= 0, both admit a
+// pointer), and maximum renders lte=, ordered after gte= exactly like
+// every other bound token in this directory (BaseTagSet's own doc
+// comment).
+
+StateOfCharge *int `json:"stateOfCharge,omitempty" validate:"omitempty,gte=0,lte=100"`

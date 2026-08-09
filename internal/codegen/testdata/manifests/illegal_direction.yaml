@@ -1,0 +1,20 @@
+version: v201
+schemaDir: schemas/hardfail
+goModule: github.com/enesismail/ocpp-go
+goTree: ocpp2.0.1
+typesPackage: ocpp2.0.1/types
+messages:
+  # Row 1 carries a legal direction, so the error below has to identify row 2
+  # by something other than "the only row there is".
+  - name: FirstRow
+    block: availability
+    direction: CS->CSMS
+    request: FixtureMessageRequest.json
+    response: FixtureMessageResponse.json
+    emit: false
+  - name: SecondRow
+    block: availability
+    direction: server-to-client
+    request: SecondFixtureMessageRequest.json
+    response: SecondFixtureMessageResponse.json
+    emit: false

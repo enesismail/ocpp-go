@@ -1,0 +1,31 @@
+// Pins the lowerCamel step against a leading initialism run, not just a
+// leading letter: EVSEStatusEnumType strips to EVSEStatusType (the enum
+// naming rule). The switch variable and the "201"
+// tag (enum_leading_initialism.golden, which RenderDefinition itself never
+// emits) share ONLY the first-word-lowering mechanism, not the whole
+// derivation — the tag keeps "Type" (evseStatusType201, lowering the
+// leading word of the full Go name and keeping everything after it), while
+// the switch variable drops "Type" entirely (evseStatus, never
+// evseStatusType): RenderDefinition's switch variable names the enum's
+// semantic value, not its own Go type suffix. What the two derivations DO
+// share is that the first word is lowered as a whole run, not just its
+// first character: the first word of EVSEStatusType is the whole
+// initialism "EVSE", so the variable is evseStatus, never eVSEStatus or
+// any single-character-lowered variant.
+
+type EVSEStatusType string
+
+const (
+	EVSEStatusTypeCharging EVSEStatusType = "Charging"
+	EVSEStatusTypeIdle     EVSEStatusType = "Idle"
+)
+
+func isValidEVSEStatusType(fl validator.FieldLevel) bool {
+	evseStatus := EVSEStatusType(fl.Field().String())
+	switch evseStatus {
+	case EVSEStatusTypeCharging, EVSEStatusTypeIdle:
+		return true
+	default:
+		return false
+	}
+}

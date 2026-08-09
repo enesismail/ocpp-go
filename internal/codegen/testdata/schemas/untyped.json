@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:untyped",
+  "title": "untyped",
+  "type": "object",
+  "properties": {"data": {}, "reference": {"type": "string"}},
+  "definitions": {}
+}

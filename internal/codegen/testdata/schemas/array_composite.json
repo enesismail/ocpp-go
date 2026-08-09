@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:array_composite",
+  "title": "array_composite",
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/definitions/EntryType"
+      }
+    }
+  },
+  "definitions": {
+    "EntryType": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer"
+        }
+      }
+    }
+  }
+}

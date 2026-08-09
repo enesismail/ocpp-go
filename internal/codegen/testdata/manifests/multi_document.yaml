@@ -1,0 +1,21 @@
+version: v201
+schemaDir: schemas/happy_path
+goModule: github.com/enesismail/ocpp-go
+goTree: ocpp2.0.1
+typesPackage: ocpp2.0.1/types
+messages:
+  - name: FixtureMessage
+    block: availability
+    direction: CS->CSMS
+    request: FixtureMessageRequest.json
+    response: FixtureMessageResponse.json
+    emit: true
+---
+unexpected: true
+messages:
+  - name: SecondDocumentMessage
+    block: not-a-block
+    direction: sideways
+    request: DoesNotExistRequest.json
+    response: DoesNotExistResponse.json
+    emit: true

@@ -1,0 +1,19 @@
+version: v201
+tagOverrides:
+  - definition: BootNotificationResponse
+    property: interval
+    tag: gte=0
+    rule: add
+    rationale: The schema declares interval as an integer without a minimum, but a negative heartbeat interval has no operational meaning; this boundary rejects it even though the published schema accepts it.
+    source: "OCPP 2.0.1 Part 2, BootNotification response — interval is the number of seconds between heartbeats"
+    author: "Generator maintainer"
+    date: 2026-08-08
+  - definition: IdTokenInfo
+    property: chargingPriority
+    tag: gte=0
+    rule: add
+    rationale: The schema permits a negative charging priority, but this boundary keeps the generated value within the operational range even though the published schema accepts it.
+    source: "OCPP 2.0.1 Part 2, IdTokenInfo chargingPriority"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

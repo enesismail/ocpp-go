@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:custom_data",
+  "title": "custom_data",
+  "type": "object",
+  "properties": {
+    "customData": {"$ref": "#/definitions/CustomDataType"},
+    "vendorInfo": {"$ref": "#/definitions/VendorInfoType"}
+  },
+  "definitions": {
+    "CustomDataType": {
+      "type": "object",
+      "javaType": "CustomData",
+      "properties": {"vendorId": {"type": "string", "maxLength": 255}},
+      "required": ["vendorId"]
+    },
+    "VendorInfoType": {
+      "type": "object",
+      "properties": {"note": {"type": "string"}}
+    }
+  }
+}

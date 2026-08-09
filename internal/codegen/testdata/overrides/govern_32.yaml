@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: RecordFieldFixture
+    property: value
+    tag: omitempty
+    rule: add
+    rationale: The published schema requires this field, but a row cannot use this table to reach for optionality either way.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

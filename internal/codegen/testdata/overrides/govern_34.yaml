@@ -1,0 +1,19 @@
+version: v201
+tagOverrides:
+  - definition: StringFixture
+    property: label
+    tag: min=1
+    rule: add
+    rationale: The published schema permits an empty label, but this project requires at least one character.
+    source: "Published message specification, StringFixture label constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+  - definition: RecordFieldFixture
+    property: value
+    tag: gte=0
+    rule: add
+    rationale: The published schema accepts a negative value, but this boundary rejects it because the value cannot be used safely.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

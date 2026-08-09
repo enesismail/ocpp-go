@@ -1,0 +1,11 @@
+version: v201
+tagOverrides:
+  - definition: RecordFieldFixture
+    property: value
+    tag: gte=0
+    rule: add
+    rationale: ""
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

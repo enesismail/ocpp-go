@@ -1,0 +1,16 @@
+# Exported identifier words used by the generator. Order matters: the
+# naming transform resolves overlapping entries by longest match (EVSE
+# before EV is the case that decides), so this list is data, not a
+# cosmetically sortable set.
+initialisms:
+  - ID
+  - URL
+  - URI
+  - EVSE
+  - EV
+  - SOC
+  - OCSP
+  - ISO
+  - CSMS
+  - AC
+  - DC

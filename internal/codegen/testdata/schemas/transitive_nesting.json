@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:transitive_nesting",
+  "title": "transitive_nesting",
+  "type": "object",
+  "properties": {
+    "profile": {
+      "$ref": "#/definitions/ChargingProfileType"
+    }
+  },
+  "definitions": {
+    "ChargingProfileType": {
+      "type": "object",
+      "properties": {
+        "schedule": {
+          "$ref": "#/definitions/ChargingScheduleType"
+        }
+      }
+    },
+    "ChargingScheduleType": {
+      "type": "object",
+      "properties": {
+        "tariff": {
+          "$ref": "#/definitions/SalesTariffType"
+        }
+      }
+    },
+    "SalesTariffType": {
+      "type": "object",
+      "properties": {
+        "entry": {
+          "$ref": "#/definitions/SalesTariffEntryType"
+        }
+      }
+    },
+    "SalesTariffEntryType": {
+      "type": "object",
+      "properties": {
+        "cost": {
+          "$ref": "#/definitions/ConsumptionCostType"
+        }
+      }
+    },
+    "ConsumptionCostType": {
+      "type": "object",
+      "properties": {
+        "amount": {
+          "$ref": "#/definitions/CostType"
+        }
+      }
+    },
+    "CostType": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "number"
+        }
+      }
+    }
+  }
+}

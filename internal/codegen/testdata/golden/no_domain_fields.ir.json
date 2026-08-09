@@ -1,0 +1,1 @@
+{"definitions":[{"name":"HeartbeatRequest","kind":"root","properties":[{"name":"customData","ref":"#/definitions/CustomDataType"}]},{"name":"HeartbeatResponse","kind":"root","properties":[{"name":"customData","ref":"#/definitions/CustomDataType"}]},{"name":"CustomDataType","kind":"object","reserved":true}],"messages":[]}

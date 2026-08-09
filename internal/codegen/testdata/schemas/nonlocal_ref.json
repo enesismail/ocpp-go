@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:nonlocal_ref",
+  "title": "nonlocal_ref",
+  "type": "object",
+  "properties": {
+    "value": {
+      "$ref": "Other.json#/definitions/ValueType"
+    }
+  },
+  "definitions": {}
+}

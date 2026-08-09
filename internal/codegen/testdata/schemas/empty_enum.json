@@ -1,0 +1,10 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:empty_enum",
+  "title": "empty_enum",
+  "type": "object",
+  "properties": {"status": {"$ref": "#/definitions/EmptyStatusEnumType"}},
+  "definitions": {
+    "EmptyStatusEnumType": {"type": "string", "enum": []}
+  }
+}

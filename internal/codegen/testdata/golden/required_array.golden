@@ -1,0 +1,7 @@
+// types.go:412's own SalesTariffEntry field ([]SalesTariffEntry,
+// validate:"required,min=1,max=1024,dive") is the real anatomy this
+// fixture pins: a required array carries no omitempty in either tag, min
+// renders before max exactly like every other cardinality golden in this
+// directory, and a composite element type still gets dive.
+
+Entries []Entry `json:"entries" validate:"required,min=1,max=1024,dive"`

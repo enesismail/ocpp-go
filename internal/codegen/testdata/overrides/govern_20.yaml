@@ -1,0 +1,12 @@
+version: v201
+tagOverrides:
+  - definition: IdTokenInfo
+    property: chargingPriority
+    tag: gte=6
+    from: gte=5
+    rule: tighten
+    rationale: The published schema permits values below the operational floor, so this boundary uses a stricter lower bound.
+    source: "Published message specification, IdTokenInfo chargingPriority constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []

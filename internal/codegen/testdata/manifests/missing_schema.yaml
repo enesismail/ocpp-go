@@ -1,0 +1,24 @@
+version: v201
+schemaDir: schemas/hardfail
+goModule: github.com/enesismail/ocpp-go
+goTree: ocpp2.0.1
+typesPackage: ocpp2.0.1/types
+messages:
+  # Row 1 claims two files that exist, so the error below has to identify row
+  # 2 by something other than "the only row there is".
+  - name: FirstRow
+    block: availability
+    direction: CS->CSMS
+    request: FixtureMessageRequest.json
+    response: FixtureMessageResponse.json
+    emit: false
+  # SecondRow's request names a file absent from schemaDir; the loader must
+  # report that missing file against this row before it ever reaches the
+  # unclaimed-file sweep, which this fixture also trips by construction
+  # (SecondFixtureMessageRequest.json is left claimed by nobody).
+  - name: SecondRow
+    block: availability
+    direction: CS->CSMS
+    request: DoesNotExistRequest.json
+    response: SecondFixtureMessageResponse.json
+    emit: false

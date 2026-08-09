@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "$id": "urn:OCPP:Cp:2:2020:3:draft04",
+  "title": "draft04",
+  "type": "object",
+  "properties": {"value": {"type": "string"}},
+  "definitions": {}
+}

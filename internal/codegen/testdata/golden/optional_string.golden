@@ -1,0 +1,4 @@
+// When no other validator token applies, the base tag set is still exactly
+// ["omitempty"] — never an empty or entirely absent validate tag.
+
+Label string `json:"label,omitempty" validate:"omitempty"`

@@ -1,0 +1,12 @@
+version: v201
+tagOverrides:
+  - definition: RecordFieldFixture
+    property: value
+    tag: gte=6
+    rule: tighten
+    from: bogus=1
+    rationale: The published schema permits values below the operational floor, so this boundary uses a stricter lower bound.
+    source: "Published message specification, RecordFieldFixture value constraint"
+    author: "Generator maintainer"
+    date: 2026-08-08
+dedupAllowlist: []
