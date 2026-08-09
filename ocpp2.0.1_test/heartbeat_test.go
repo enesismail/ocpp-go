@@ -24,7 +24,7 @@ func (suite *OcppV2TestSuite) TestHeartbeatRequestValidation() {
 func (suite *OcppV2TestSuite) TestHeartbeatResponseValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{availability.HeartbeatResponse{CurrentTime: *types.NewDateTime(time.Now())}, true},
+		{availability.HeartbeatResponse{CurrentTime: types.NewDateTime(time.Now())}, true},
 		{availability.HeartbeatResponse{}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
@@ -38,7 +38,7 @@ func (suite *OcppV2TestSuite) TestHeartbeatE2EMocked() {
 	currentTime := types.NewDateTime(time.Now())
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{}]`, messageId, availability.HeartbeatFeatureName)
 	responseJson := fmt.Sprintf(`[3,"%v",{"currentTime":"%v"}]`, messageId, currentTime.FormatTimestamp())
-	heartbeatResponse := availability.NewHeartbeatResponse(*currentTime)
+	heartbeatResponse := availability.NewHeartbeatResponse(currentTime)
 	channel := NewMockWebSocket(wsId)
 
 	handler := &MockCSMSAvailabilityHandler{}
@@ -56,7 +56,7 @@ func (suite *OcppV2TestSuite) TestHeartbeatE2EMocked() {
 	response, err := suite.chargingStation.Heartbeat()
 	assert.Nil(t, err)
 	assert.NotNil(t, response)
-	assertDateTimeEquality(t, currentTime, &response.CurrentTime)
+	assertDateTimeEquality(t, currentTime, response.CurrentTime)
 }
 
 func (suite *OcppV2TestSuite) TestHeartbeatInvalidEndpoint() {

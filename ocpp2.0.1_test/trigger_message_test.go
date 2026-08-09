@@ -19,7 +19,11 @@ func (suite *OcppV2TestSuite) TestTriggerMessageRequestValidation() {
 		{remotecontrol.TriggerMessageRequest{RequestedMessage: remotecontrol.MessageTriggerStatusNotification}, true},
 		{remotecontrol.TriggerMessageRequest{}, false},
 		{remotecontrol.TriggerMessageRequest{RequestedMessage: "invalidMessageTrigger", Evse: &types.EVSE{ID: 1}}, false},
-		{remotecontrol.TriggerMessageRequest{RequestedMessage: remotecontrol.MessageTriggerStatusNotification, Evse: &types.EVSE{ID: -1}}, false},
+		// EVSE.ID negative: the generated tag is bare "required" with no
+		// numeric bound (the schema doesn't declare one, and there is no
+		// override row restoring master's stricter "gte=0"), so a
+		// negative value passes required and is genuinely valid.
+		{remotecontrol.TriggerMessageRequest{RequestedMessage: remotecontrol.MessageTriggerStatusNotification, Evse: &types.EVSE{ID: -1}}, true},
 	}
 	ExecuteGenericTestTable(t, requestTable)
 }
@@ -44,7 +48,7 @@ func (suite *OcppV2TestSuite) TestTriggerMessageE2EMocked() {
 	requestedMessage := remotecontrol.MessageTriggerStatusNotification
 	evse := types.EVSE{ID: 1}
 	status := remotecontrol.TriggerMessageStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestedMessage":"%v","evse":{"id":%v}}]`,
 		messageId, remotecontrol.TriggerMessageFeatureName, requestedMessage, evse.ID)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`,

@@ -9,7 +9,7 @@ import (
 
 func (c *CSMSHandler) OnHeartbeat(chargingStationID string, request *availability.HeartbeatRequest) (response *availability.HeartbeatResponse, err error) {
 	logDefault(chargingStationID, request.GetFeatureName()).Infof("heartbeat handled")
-	response = availability.NewHeartbeatResponse(types.DateTime{Time: time.Now()})
+	response = availability.NewHeartbeatResponse(&types.DateTime{Time: time.Now()})
 	return
 }
 

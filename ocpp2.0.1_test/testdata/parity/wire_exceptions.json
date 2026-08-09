@@ -1,0 +1,10 @@
+[
+  {
+    "message": "TransactionEvent",
+    "half": "request",
+    "path": "offline",
+    "class": "SCHEMA_FAITHFUL_CHANGE",
+    "citation": "TransactionEvent.request.offline",
+    "note": "master's Offline is a non-pointer bool with omitempty, so an explicit false is indistinguishable from absent and is dropped on marshal; the generated field is *bool, so an explicit false survives on the wire. This is the schema-optional-boolean-to-pointer mapping rule applied as intended, not a content bug. Observed on TransactionEvent/all-optionals-populated-request.json, the only GOLDEN wire case that sets offline:false; every other wire case in the corpus that never sets offline is unaffected."
+  }
+]

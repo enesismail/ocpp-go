@@ -329,7 +329,7 @@ func (suite *OcppV2TestSuite) TestNoRegressionResponseRoundTrip() {
 		require.NotNil(t, result.confirmation)
 		hbConfirmation, ok := result.confirmation.(*availability.HeartbeatResponse)
 		require.True(t, ok)
-		assertDateTimeEquality(t, currentTime, &hbConfirmation.CurrentTime)
+		assertDateTimeEquality(t, currentTime, hbConfirmation.CurrentTime)
 	case <-time.After(l2Bound):
 		t.Fatal("timed out waiting for the response callback")
 	}

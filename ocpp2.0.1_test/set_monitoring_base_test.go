@@ -27,8 +27,8 @@ func (suite *OcppV2TestSuite) TestSetMonitoringBaseRequestValidation() {
 func (suite *OcppV2TestSuite) TestSetMonitoringBaseConfirmationValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{diagnostics.SetMonitoringBaseResponse{Status: types.GenericDeviceModelStatusAccepted, StatusInfo: types.NewStatusInfo("200", "")}, true},
-		{diagnostics.SetMonitoringBaseResponse{Status: types.GenericDeviceModelStatusAccepted}, true},
+		{diagnostics.SetMonitoringBaseResponse{Status: types.GenericDeviceModelStatusTypeAccepted, StatusInfo: types.NewStatusInfo("200")}, true},
+		{diagnostics.SetMonitoringBaseResponse{Status: types.GenericDeviceModelStatusTypeAccepted}, true},
 		{diagnostics.SetMonitoringBaseResponse{Status: "invalidDeviceModelStatus"}, false},
 		{diagnostics.SetMonitoringBaseResponse{}, false},
 	}
@@ -41,8 +41,8 @@ func (suite *OcppV2TestSuite) TestSetMonitoringBaseE2EMocked() {
 	messageId := defaultMessageId
 	wsUrl := "someUrl"
 	monitoringBase := diagnostics.MonitoringBaseAll
-	status := types.GenericDeviceModelStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	status := types.GenericDeviceModelStatusTypeAccepted
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"monitoringBase":"%v"}]`,
 		messageId, diagnostics.SetMonitoringBaseFeatureName, monitoringBase)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`,

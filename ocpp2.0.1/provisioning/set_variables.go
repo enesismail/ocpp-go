@@ -34,18 +34,18 @@ func isValidSetVariableStatus(fl validator.FieldLevel) bool {
 }
 
 type SetVariableData struct {
-	AttributeType  types.Attribute `json:"attributeType,omitempty" validate:"omitempty,attribute"`
-	AttributeValue string          `json:"attributeValue" validate:"required,max=1000"`
-	Component      types.Component `json:"component" validate:"required"`
-	Variable       types.Variable  `json:"variable" validate:"required"`
+	AttributeType  types.AttributeType `json:"attributeType,omitempty" validate:"omitempty,attributeType201"`
+	AttributeValue string              `json:"attributeValue" validate:"required,max=1000"`
+	Component      types.Component     `json:"component" validate:"required"`
+	Variable       types.Variable      `json:"variable" validate:"required"`
 }
 
 type SetVariableResult struct {
-	AttributeType   types.Attribute   `json:"attributeType,omitempty" validate:"omitempty,attribute"`
-	AttributeStatus SetVariableStatus `json:"attributeStatus" validate:"required,setVariableStatus"`
-	Component       types.Component   `json:"component" validate:"required"`
-	Variable        types.Variable    `json:"variable" validate:"required"`
-	StatusInfo      *types.StatusInfo `json:"statusInfo,omitempty" validate:"omitempty"`
+	AttributeType   types.AttributeType `json:"attributeType,omitempty" validate:"omitempty,attributeType201"`
+	AttributeStatus SetVariableStatus   `json:"attributeStatus" validate:"required,setVariableStatus"`
+	Component       types.Component     `json:"component" validate:"required"`
+	Variable        types.Variable      `json:"variable" validate:"required"`
+	StatusInfo      *types.StatusInfo   `json:"statusInfo,omitempty" validate:"omitempty"`
 }
 
 // The field definition of the SetVariables request payload sent by the CSMS to the Charging Station.

@@ -47,11 +47,16 @@ func (suite *OcppV2TestSuite) TestServerRequestHandlerPanicRecoveredFacade() {
 	wsId := "test_id"
 	messageId := defaultMessageId
 	wsUrl := "someUrl"
-	reason := provisioning.BootReasonPowerUp
+	reason := provisioning.BootReasonTypePowerUp
 	chargePointModel := "model1"
 	chargePointVendor := "ABL"
 	panicValue := "boom: OnBootNotification panic"
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"reason":"%v","chargingStation":{"model":"%v","vendorName":"%v"}}]`, messageId, provisioning.BootNotificationFeatureName, reason, chargePointModel, chargePointVendor)
+	// Field order (chargingStation before reason) matches the generated
+	// struct's declaration order, which derives from the schema; the
+	// literal below is written in that order. This is a mechanical
+	// adaptation, not a weakened assertion -- the same exact-byte-match
+	// requirement still applies, against the correct current output.
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"chargingStation":{"model":"%v","vendorName":"%v"},"reason":"%v"}]`, messageId, provisioning.BootNotificationFeatureName, chargePointModel, chargePointVendor, reason)
 	errorDescription := "internal error while handling request"
 	errorJson := fmt.Sprintf(`[4,"%v","%v","%v",{}]`, messageId, ocppj.InternalError, errorDescription)
 	channel := NewMockWebSocket(wsId)
@@ -87,7 +92,7 @@ func (suite *OcppV2TestSuite) TestServerRequestHandlerPanicRecoveredFacade() {
 	// queue. The CSMS handler panics, is recovered, and replies with a
 	// CALL ERROR(InternalError) that the charging station's error handler
 	// receives via completion ownership.
-	_, err = suite.ocppjClient.SendRequest(provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor))
+	_, err = suite.ocppjClient.SendRequest(provisioning.NewBootNotificationRequest(provisioning.ChargingStation{Model: chargePointModel, VendorName: chargePointVendor}, reason))
 	assert.Nil(t, err)
 
 	// 1. The panic must be recovered (no crash) and reported.
@@ -210,11 +215,11 @@ func (suite *OcppV2TestSuite) TestClientResponseCallbackPanicRecoveredFacade() {
 	t := suite.T()
 	wsId := "test_id"
 	wsUrl := "someUrl"
-	reason := provisioning.BootReasonPowerUp
+	reason := provisioning.BootReasonTypePowerUp
 	chargePointModel := "model1"
 	chargePointVendor := "ABL"
 	interval := 60
-	registrationStatus := provisioning.RegistrationStatusAccepted
+	registrationStatus := provisioning.RegistrationStatusTypeAccepted
 	currentTime := types.NewDateTime(time.Now())
 	bootNotificationConfirmation := provisioning.NewBootNotificationResponse(currentTime, interval, registrationStatus)
 	panicValue := "boom: BootNotification response callback panic"
@@ -238,7 +243,7 @@ func (suite *OcppV2TestSuite) TestClientResponseCallbackPanicRecoveredFacade() {
 
 	// 1. Send a BootNotification whose response callback panics when the
 	// confirmation arrives inside asyncCallbackHandler.
-	err = suite.chargingStation.SendRequestAsync(provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor), func(confirmation ocpp.Response, err error) {
+	err = suite.chargingStation.SendRequestAsync(provisioning.NewBootNotificationRequest(provisioning.ChargingStation{Model: chargePointModel, VendorName: chargePointVendor}, reason), func(confirmation ocpp.Response, err error) {
 		panic(panicValue)
 	})
 	require.Nil(t, err)
@@ -266,7 +271,7 @@ func (suite *OcppV2TestSuite) TestClientResponseCallbackPanicRecoveredFacade() {
 	// 2. Crucial: prove asyncCallbackHandler's loop survived. Send a second
 	// request whose (non-panicking) callback must still be invoked.
 	secondCallbackC := make(chan ocpp.Response, 1)
-	err = suite.chargingStation.SendRequestAsync(provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor), func(confirmation ocpp.Response, err error) {
+	err = suite.chargingStation.SendRequestAsync(provisioning.NewBootNotificationRequest(provisioning.ChargingStation{Model: chargePointModel, VendorName: chargePointVendor}, reason), func(confirmation ocpp.Response, err error) {
 		secondCallbackC <- confirmation
 	})
 	require.Nil(t, err)
@@ -453,7 +458,7 @@ func (suite *OcppV2TestSuite) TestClientErrorCallbackPanicRecoveredFacade() {
 	t := suite.T()
 	wsId := "test_id"
 	wsUrl := "someUrl"
-	reason := provisioning.BootReasonPowerUp
+	reason := provisioning.BootReasonTypePowerUp
 	chargePointModel := "model1"
 	chargePointVendor := "ABL"
 	panicValue := "boom: BootNotification error callback panic"
@@ -481,7 +486,7 @@ func (suite *OcppV2TestSuite) TestClientErrorCallbackPanicRecoveredFacade() {
 
 	// 1. Send a BootNotification whose callback panics when the CALL ERROR
 	// arrives inside asyncCallbackHandler's error branch.
-	err = suite.chargingStation.SendRequestAsync(provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor), func(confirmation ocpp.Response, err error) {
+	err = suite.chargingStation.SendRequestAsync(provisioning.NewBootNotificationRequest(provisioning.ChargingStation{Model: chargePointModel, VendorName: chargePointVendor}, reason), func(confirmation ocpp.Response, err error) {
 		panic(panicValue)
 	})
 	require.Nil(t, err)
@@ -508,7 +513,7 @@ func (suite *OcppV2TestSuite) TestClientErrorCallbackPanicRecoveredFacade() {
 	// 2. Crucial: prove asyncCallbackHandler's loop survived the error-branch
 	// panic. A second request's callback must still be invoked.
 	secondCallbackC := make(chan struct{}, 1)
-	err = suite.chargingStation.SendRequestAsync(provisioning.NewBootNotificationRequest(reason, chargePointModel, chargePointVendor), func(confirmation ocpp.Response, err error) {
+	err = suite.chargingStation.SendRequestAsync(provisioning.NewBootNotificationRequest(provisioning.ChargingStation{Model: chargePointModel, VendorName: chargePointVendor}, reason), func(confirmation ocpp.Response, err error) {
 		secondCallbackC <- struct{}{}
 	})
 	require.Nil(t, err)

@@ -14,7 +14,7 @@ import (
 func (suite *OcppV2TestSuite) TestCertificateSignedRequestValidation() {
 	t := suite.T()
 	var testTable = []GenericTestEntry{
-		{security.CertificateSignedRequest{CertificateChain: "sampleCert", TypeOfCertificate: types.ChargingStationCert}, true},
+		{security.CertificateSignedRequest{CertificateChain: "sampleCert", TypeOfCertificate: types.CertificateSigningUseTypeChargingStationCertificate}, true},
 		{security.CertificateSignedRequest{CertificateChain: "sampleCert"}, true},
 		{security.CertificateSignedRequest{CertificateChain: ""}, false},
 		{security.CertificateSignedRequest{}, false},
@@ -27,11 +27,11 @@ func (suite *OcppV2TestSuite) TestCertificateSignedRequestValidation() {
 func (suite *OcppV2TestSuite) TestCertificateSignedConfirmationValidation() {
 	t := suite.T()
 	var testTable = []GenericTestEntry{
-		{security.CertificateSignedResponse{Status: security.CertificateSignedStatusAccepted, StatusInfo: types.NewStatusInfo("200", "ok")}, true},
+		{security.CertificateSignedResponse{Status: security.CertificateSignedStatusAccepted, StatusInfo: &types.StatusInfo{ReasonCode: "200", AdditionalInfo: "ok"}}, true},
 		{security.CertificateSignedResponse{Status: security.CertificateSignedStatusAccepted}, true},
 		{security.CertificateSignedResponse{Status: security.CertificateSignedStatusRejected}, true},
 		{security.CertificateSignedResponse{Status: "invalidCertificateSignedStatus"}, false},
-		{security.CertificateSignedResponse{Status: security.CertificateSignedStatusAccepted, StatusInfo: types.NewStatusInfo("", "")}, false},
+		{security.CertificateSignedResponse{Status: security.CertificateSignedStatusAccepted, StatusInfo: types.NewStatusInfo("")}, false},
 		{security.CertificateSignedResponse{}, false},
 	}
 	ExecuteGenericTestTable(t, testTable)
@@ -44,7 +44,7 @@ func (suite *OcppV2TestSuite) TestCertificateSignedE2EMocked() {
 	messageId := defaultMessageId
 	wsUrl := "someUrl"
 	certificateChain := "someX509CertificateChain"
-	certificateType := types.ChargingStationCert
+	certificateType := types.CertificateSigningUseTypeChargingStationCertificate
 	status := security.CertificateSignedStatusAccepted
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"certificateChain":"%v","certificateType":"%v"}]`,
 		messageId, security.CertificateSignedFeatureName, certificateChain, certificateType)
@@ -82,7 +82,7 @@ func (suite *OcppV2TestSuite) TestCertificateSignedE2EMocked() {
 func (suite *OcppV2TestSuite) TestCertificateSignedInvalidEndpoint() {
 	messageId := defaultMessageId
 	certificate := "someX509Certificate"
-	certificateType := types.ChargingStationCert
+	certificateType := types.CertificateSigningUseTypeChargingStationCertificate
 	certificateSignedRequest := security.NewCertificateSignedRequest(certificate)
 	certificateSignedRequest.TypeOfCertificate = certificateType
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"certificateChain":"%v","certificateType":"%v"}]`, messageId, security.CertificateSignedFeatureName, certificate, certificateType)

@@ -73,14 +73,14 @@ func (suite *OcppV2TestSuite) TestVariableAttributeValidation() {
 	t := suite.T()
 	var table = []GenericTestEntry{
 		{provisioning.NewVariableAttribute(), true},
-		{provisioning.VariableAttribute{Type: types.AttributeActual, Value: "someValue", Mutability: provisioning.MutabilityReadWrite, Persistent: false, Constant: false}, true},
-		{provisioning.VariableAttribute{Type: types.AttributeActual, Value: "someValue", Mutability: provisioning.MutabilityWriteOnly, Persistent: false, Constant: false}, true},
-		{provisioning.VariableAttribute{Type: types.AttributeActual, Value: "someValue", Mutability: provisioning.MutabilityReadOnly, Persistent: false, Constant: false}, true},
-		{provisioning.VariableAttribute{Type: types.AttributeMaxSet, Value: "someValue", Mutability: provisioning.MutabilityReadWrite, Persistent: false, Constant: false}, true},
-		{provisioning.VariableAttribute{Type: types.AttributeMinSet, Value: "someValue", Mutability: provisioning.MutabilityReadWrite, Persistent: false, Constant: false}, true},
-		{provisioning.VariableAttribute{Type: types.AttributeTarget, Value: "someValue", Mutability: provisioning.MutabilityReadWrite, Persistent: false, Constant: false}, true},
-		{provisioning.VariableAttribute{Type: types.AttributeActual, Value: "someValue", Mutability: provisioning.MutabilityReadWrite}, true},
-		{provisioning.VariableAttribute{Type: types.AttributeActual, Value: "someValue"}, true},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeActual, Value: "someValue", Mutability: provisioning.MutabilityReadWrite, Persistent: false, Constant: false}, true},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeActual, Value: "someValue", Mutability: provisioning.MutabilityWriteOnly, Persistent: false, Constant: false}, true},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeActual, Value: "someValue", Mutability: provisioning.MutabilityReadOnly, Persistent: false, Constant: false}, true},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeMaxSet, Value: "someValue", Mutability: provisioning.MutabilityReadWrite, Persistent: false, Constant: false}, true},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeMinSet, Value: "someValue", Mutability: provisioning.MutabilityReadWrite, Persistent: false, Constant: false}, true},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeTarget, Value: "someValue", Mutability: provisioning.MutabilityReadWrite, Persistent: false, Constant: false}, true},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeActual, Value: "someValue", Mutability: provisioning.MutabilityReadWrite}, true},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeActual, Value: "someValue"}, true},
 		{provisioning.VariableAttribute{Value: "someValue"}, true},
 		//TODO: enable tests once validation on mutability field is enabled
 		//{provisioning.VariableAttribute{Mutability: provisioning.MutabilityWriteOnly}, true},
@@ -88,8 +88,8 @@ func (suite *OcppV2TestSuite) TestVariableAttributeValidation() {
 		//{provisioning.VariableAttribute{Mutability: provisioning.MutabilityReadOnly}, false},
 		//{provisioning.VariableAttribute{Mutability: provisioning.MutabilityReadWrite}, false},
 		{provisioning.VariableAttribute{Type: "invalidType", Value: "someValue", Mutability: provisioning.MutabilityReadWrite}, false},
-		{provisioning.VariableAttribute{Type: types.AttributeActual, Value: "someValue", Mutability: "invalidMutability"}, false},
-		{provisioning.VariableAttribute{Type: types.AttributeActual, Value: ">2500................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................", Mutability: provisioning.MutabilityReadWrite}, false},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeActual, Value: "someValue", Mutability: "invalidMutability"}, false},
+		{provisioning.VariableAttribute{Type: types.AttributeTypeActual, Value: ">2500................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................", Mutability: provisioning.MutabilityReadWrite}, false},
 	}
 	ExecuteGenericTestTable(t, table)
 }
@@ -112,7 +112,7 @@ func (suite *OcppV2TestSuite) TestNotifyReportE2EMocked() {
 	seqNo := 0
 	requestID := 42
 	tbc := true
-	variableAttribute := provisioning.VariableAttribute{Type: types.AttributeTarget, Value: "someValue", Mutability: provisioning.MutabilityReadWrite}
+	variableAttribute := provisioning.VariableAttribute{Type: types.AttributeTypeTarget, Value: "someValue", Mutability: provisioning.MutabilityReadWrite}
 	variableCharacteristics := &provisioning.VariableCharacteristics{Unit: "KWh", DataType: provisioning.TypeString, MaxLimit: newFloat(22.0), SupportsMonitoring: true}
 	reportData := provisioning.ReportData{
 		Component:               types.Component{Name: "component1"},
@@ -168,7 +168,7 @@ func (suite *OcppV2TestSuite) TestNotifyReportInvalidEndpoint() {
 	seqNo := 0
 	requestID := 42
 	tbc := true
-	variableAttribute := provisioning.VariableAttribute{Type: types.AttributeTarget, Value: "someValue", Mutability: provisioning.MutabilityReadWrite}
+	variableAttribute := provisioning.VariableAttribute{Type: types.AttributeTypeTarget, Value: "someValue", Mutability: provisioning.MutabilityReadWrite}
 	variableCharacteristics := &provisioning.VariableCharacteristics{Unit: "KWh", DataType: provisioning.TypeString, MaxLimit: newFloat(22.0), SupportsMonitoring: true}
 	reportData := provisioning.ReportData{
 		Component:               types.Component{Name: "component1"},

@@ -40,7 +40,7 @@ func (handler *ChargingStationHandler) OnReserveNow(request *reservation.Reserve
 	}
 	resp = reservation.NewReserveNowResponse(status)
 	if resp.Status != reservation.ReserveNowStatusAccepted {
-		resp.StatusInfo = types.NewStatusInfo("code", err.Error())
+		resp.StatusInfo = &types.StatusInfo{ReasonCode: "code", AdditionalInfo: err.Error()}
 		return
 	}
 	// Complete reservation

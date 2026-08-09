@@ -15,11 +15,12 @@ import (
 func (suite *OcppV2TestSuite) TestNotifyEVChargingScheduleRequestValidation() {
 	t := suite.T()
 	chargingSchedule := types.ChargingSchedule{
+		ID:                     1,
 		StartSchedule:          types.NewDateTime(time.Now()),
 		Duration:               newInt(600),
-		ChargingRateUnit:       types.ChargingRateUnitWatts,
+		ChargingRateUnit:       types.ChargingRateUnitTypeW,
 		MinChargingRate:        newFloat(6.0),
-		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(0, 10.0)},
+		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(1, 10.0)},
 	}
 	var requestTable = []GenericTestEntry{
 		// {ChargingRateUnit: "invalidStruct"}
@@ -37,12 +38,12 @@ func (suite *OcppV2TestSuite) TestNotifyEVChargingScheduleRequestValidation() {
 func (suite *OcppV2TestSuite) TestNotifyEVChargingScheduleResponseValidation() {
 	t := suite.T()
 	var responseTable = []GenericTestEntry{
-		{smartcharging.NotifyEVChargingScheduleResponse{Status: types.GenericStatusAccepted, StatusInfo: types.NewStatusInfo("ok", "someInfo")}, true},
-		{smartcharging.NotifyEVChargingScheduleResponse{Status: types.GenericStatusRejected, StatusInfo: types.NewStatusInfo("ok", "someInfo")}, true},
-		{smartcharging.NotifyEVChargingScheduleResponse{Status: types.GenericStatusAccepted}, true},
+		{smartcharging.NotifyEVChargingScheduleResponse{Status: types.GenericStatusTypeAccepted, StatusInfo: &types.StatusInfo{ReasonCode: "ok", AdditionalInfo: "someInfo"}}, true},
+		{smartcharging.NotifyEVChargingScheduleResponse{Status: types.GenericStatusTypeRejected, StatusInfo: &types.StatusInfo{ReasonCode: "ok", AdditionalInfo: "someInfo"}}, true},
+		{smartcharging.NotifyEVChargingScheduleResponse{Status: types.GenericStatusTypeAccepted}, true},
 		{smartcharging.NotifyEVChargingScheduleResponse{}, false},
 		{smartcharging.NotifyEVChargingScheduleResponse{Status: "invalidStatus"}, false},
-		{smartcharging.NotifyEVChargingScheduleResponse{Status: types.GenericStatusAccepted, StatusInfo: types.NewStatusInfo("", "invalidStatusInfo")}, false},
+		{smartcharging.NotifyEVChargingScheduleResponse{Status: types.GenericStatusTypeAccepted, StatusInfo: &types.StatusInfo{ReasonCode: "", AdditionalInfo: "invalidStatusInfo"}}, false},
 	}
 	ExecuteGenericTestTable(t, responseTable)
 }
@@ -58,14 +59,14 @@ func (suite *OcppV2TestSuite) TestNotifyEVChargingScheduleE2EMocked() {
 		ID:                     1,
 		StartSchedule:          types.NewDateTime(time.Now()),
 		Duration:               newInt(600),
-		ChargingRateUnit:       types.ChargingRateUnitWatts,
+		ChargingRateUnit:       types.ChargingRateUnitTypeW,
 		MinChargingRate:        newFloat(6.0),
-		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(0, 10.0)},
+		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(1, 10.0)},
 	}
-	status := types.GenericStatusAccepted
-	statusInfo := types.NewStatusInfo("ok", "someInfo")
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"timeBase":"%v","evseId":%v,"chargingSchedule":{"id":%v,"startSchedule":"%v","duration":%v,"chargingRateUnit":"%v","minChargingRate":%v,"chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}]}}]`,
-		messageId, smartcharging.NotifyEVChargingScheduleFeatureName, timeBase.FormatTimestamp(), evseID, chargingSchedule.ID, chargingSchedule.StartSchedule.FormatTimestamp(), *chargingSchedule.Duration, chargingSchedule.ChargingRateUnit, *chargingSchedule.MinChargingRate, chargingSchedule.ChargingSchedulePeriod[0].StartPeriod, chargingSchedule.ChargingSchedulePeriod[0].Limit)
+	status := types.GenericStatusTypeAccepted
+	statusInfo := &types.StatusInfo{ReasonCode: "ok", AdditionalInfo: "someInfo"}
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"timeBase":"%v","evseId":%v,"chargingSchedule":{"id":%v,"startSchedule":"%v","duration":%v,"chargingRateUnit":"%v","chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}],"minChargingRate":%v}}]`,
+		messageId, smartcharging.NotifyEVChargingScheduleFeatureName, timeBase.FormatTimestamp(), evseID, chargingSchedule.ID, chargingSchedule.StartSchedule.FormatTimestamp(), *chargingSchedule.Duration, chargingSchedule.ChargingRateUnit, chargingSchedule.ChargingSchedulePeriod[0].StartPeriod, chargingSchedule.ChargingSchedulePeriod[0].Limit, *chargingSchedule.MinChargingRate)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v","additionalInfo":"%v"}}]`,
 		messageId, status, statusInfo.ReasonCode, statusInfo.AdditionalInfo)
 	notifyEVChargingScheduleResponse := smartcharging.NewNotifyEVChargingScheduleResponse(status)
@@ -109,14 +110,15 @@ func (suite *OcppV2TestSuite) TestNotifyEVChargingScheduleInvalidEndpoint() {
 	timeBase := types.NewDateTime(time.Now())
 	evseID := 42
 	chargingSchedule := types.ChargingSchedule{
+		ID:                     1,
 		StartSchedule:          types.NewDateTime(time.Now()),
 		Duration:               newInt(600),
-		ChargingRateUnit:       types.ChargingRateUnitWatts,
+		ChargingRateUnit:       types.ChargingRateUnitTypeW,
 		MinChargingRate:        newFloat(6.0),
-		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(0, 10.0)},
+		ChargingSchedulePeriod: []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(1, 10.0)},
 	}
 	notifyEVChargingScheduleRequest := smartcharging.NewNotifyEVChargingScheduleRequest(timeBase, evseID, chargingSchedule)
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"timeBase":"%v","evseId":%v,"chargingSchedule":{"startSchedule":"%v","duration":%v,"chargingRateUnit":"%v","minChargingRate":%v,"chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}]}}]`,
-		messageId, smartcharging.NotifyEVChargingScheduleFeatureName, timeBase.FormatTimestamp(), evseID, chargingSchedule.StartSchedule.FormatTimestamp(), *chargingSchedule.Duration, chargingSchedule.ChargingRateUnit, *chargingSchedule.MinChargingRate, chargingSchedule.ChargingSchedulePeriod[0].StartPeriod, chargingSchedule.ChargingSchedulePeriod[0].Limit)
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"timeBase":"%v","evseId":%v,"chargingSchedule":{"id":%v,"startSchedule":"%v","duration":%v,"chargingRateUnit":"%v","chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}],"minChargingRate":%v}}]`,
+		messageId, smartcharging.NotifyEVChargingScheduleFeatureName, timeBase.FormatTimestamp(), evseID, chargingSchedule.ID, chargingSchedule.StartSchedule.FormatTimestamp(), *chargingSchedule.Duration, chargingSchedule.ChargingRateUnit, chargingSchedule.ChargingSchedulePeriod[0].StartPeriod, chargingSchedule.ChargingSchedulePeriod[0].Limit, *chargingSchedule.MinChargingRate)
 	testUnsupportedRequestFromCentralSystem(suite, notifyEVChargingScheduleRequest, requestJson, messageId)
 }

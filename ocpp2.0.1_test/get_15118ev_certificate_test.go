@@ -30,14 +30,14 @@ func (suite *OcppV2TestSuite) TestGet15118EVCertificateRequestValidation() {
 func (suite *OcppV2TestSuite) TestGet15118EVCertificateConfirmationValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{iso15118.Get15118EVCertificateResponse{Status: types.Certificate15188EVStatusAccepted, ExiResponse: "deadbeef", StatusInfo: types.NewStatusInfo("200", "ok")}, true},
+		{iso15118.Get15118EVCertificateResponse{Status: types.Certificate15188EVStatusAccepted, ExiResponse: "deadbeef", StatusInfo: &types.StatusInfo{ReasonCode: "200", AdditionalInfo: "ok"}}, true},
 		{iso15118.Get15118EVCertificateResponse{Status: types.Certificate15188EVStatusAccepted, ExiResponse: "deadbeef"}, true},
 		{iso15118.Get15118EVCertificateResponse{Status: types.Certificate15188EVStatusAccepted}, false},
 		{iso15118.Get15118EVCertificateResponse{ExiResponse: "deadbeef"}, false},
 		{iso15118.Get15118EVCertificateResponse{}, false},
-		{iso15118.Get15118EVCertificateResponse{Status: "invalidCertificateStatus", ExiResponse: "deadbeef", StatusInfo: types.NewStatusInfo("200", "ok")}, false},
-		{iso15118.Get15118EVCertificateResponse{Status: types.Certificate15188EVStatusAccepted, ExiResponse: newLongString(5601), StatusInfo: types.NewStatusInfo("200", "ok")}, false},
-		{iso15118.Get15118EVCertificateResponse{Status: types.Certificate15188EVStatusAccepted, ExiResponse: "deadbeef", StatusInfo: types.NewStatusInfo("", "")}, false},
+		{iso15118.Get15118EVCertificateResponse{Status: "invalidCertificateStatus", ExiResponse: "deadbeef", StatusInfo: &types.StatusInfo{ReasonCode: "200", AdditionalInfo: "ok"}}, false},
+		{iso15118.Get15118EVCertificateResponse{Status: types.Certificate15188EVStatusAccepted, ExiResponse: newLongString(5601), StatusInfo: &types.StatusInfo{ReasonCode: "200", AdditionalInfo: "ok"}}, false},
+		{iso15118.Get15118EVCertificateResponse{Status: types.Certificate15188EVStatusAccepted, ExiResponse: "deadbeef", StatusInfo: types.NewStatusInfo("")}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
 }
@@ -52,7 +52,7 @@ func (suite *OcppV2TestSuite) TestGet15118EVCertificateE2EMocked() {
 	action := iso15118.CertificateActionInstall
 	exiRequest := "deadbeef"
 	exiResponse := "deadbeef2"
-	statusInfo := types.NewStatusInfo("200", "ok")
+	statusInfo := &types.StatusInfo{ReasonCode: "200", AdditionalInfo: "ok"}
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"iso15118SchemaVersion":"%v","action":"%v","exiRequest":"%v"}]`,
 		messageId, iso15118.Get15118EVCertificateFeatureName, schemaVersion, action, exiRequest)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","exiResponse":"%v","statusInfo":{"reasonCode":"%v","additionalInfo":"%v"}}]`,

@@ -83,7 +83,7 @@ func exampleRoutine(chargingStationID string, handler *CSMSHandler) {
 	time.Sleep(2 * time.Second)
 	// Reserve a connector
 	reservationID := 42
-	clientIDTokenType := types.IdToken{IdToken: "1234", Type: types.IdTokenTypeKeyCode}
+	clientIDTokenType := types.IDToken{IDToken: "1234", Type: types.IDTokenTypeKeyCode}
 	clientIdTag := "l33t"
 	connectorID := 1
 	expiryDate := types.NewDateTime(time.Now().Add(1 * time.Hour))
@@ -137,13 +137,13 @@ func exampleRoutine(chargingStationID string, handler *CSMSHandler) {
 	time.Sleep(5 * time.Second)
 	setVariableData := []provisioning.SetVariableData{
 		{
-			AttributeType:  types.AttributeTarget,
+			AttributeType:  types.AttributeTypeTarget,
 			AttributeValue: "10",
 			Component:      types.Component{Name: "OCPPCommCtrlr"},
 			Variable:       types.Variable{Name: "HeartbeatInterval"},
 		},
 		{
-			AttributeType:  types.AttributeTarget,
+			AttributeType:  types.AttributeTypeTarget,
 			AttributeValue: "true",
 			Component:      types.Component{Name: "AuthCtrlr"},
 			Variable:       types.Variable{Name: "Enabled"},
@@ -234,7 +234,7 @@ func exampleRoutine(chargingStationID string, handler *CSMSHandler) {
 		State:         display.MessageStateCharging,
 		TransactionID: fmt.Sprintf("%d", currentTx),
 		Message: types.MessageContent{
-			Format:   types.MessageFormatUTF8,
+			Format:   types.MessageFormatTypeUTF8,
 			Language: "en-US",
 			Content:  "Hello world!",
 		},

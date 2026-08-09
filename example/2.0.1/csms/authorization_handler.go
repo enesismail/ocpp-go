@@ -7,6 +7,6 @@ import (
 
 func (c *CSMSHandler) OnAuthorize(chargingStationID string, request *authorization.AuthorizeRequest) (response *authorization.AuthorizeResponse, err error) {
 	logDefault(chargingStationID, request.GetFeatureName()).Infof("client with token %v authorized", request.IdToken)
-	response = authorization.NewAuthorizationResponse(*types.NewIdTokenInfo(types.AuthorizationStatusAccepted))
+	response = authorization.NewAuthorizationResponse(*types.NewIDTokenInfo(types.AuthorizationStatusTypeAccepted))
 	return
 }

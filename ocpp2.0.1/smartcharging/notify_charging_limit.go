@@ -12,8 +12,8 @@ const NotifyChargingLimitFeatureName = "NotifyChargingLimit"
 
 // ChargingLimit contains the source of the charging limit and whether it is grid critical.
 type ChargingLimit struct {
-	ChargingLimitSource types.ChargingLimitSourceType `json:"chargingLimitSource" validate:"required,chargingLimitSource"` // Represents the source of the charging limit.
-	IsGridCritical      *bool                         `json:"isGridCritical,omitempty" validate:"omitempty"`               // Indicates whether the charging limit is critical for the grid.
+	ChargingLimitSource types.ChargingLimitSourceType `json:"chargingLimitSource" validate:"required,chargingLimitSourceType201"` // Represents the source of the charging limit.
+	IsGridCritical      *bool                         `json:"isGridCritical,omitempty" validate:"omitempty"`                      // Indicates whether the charging limit is critical for the grid.
 }
 
 // The field definition of the NotifyChargingLimit request payload sent by the Charging Station to the CSMS.

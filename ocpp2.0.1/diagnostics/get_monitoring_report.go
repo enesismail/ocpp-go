@@ -40,7 +40,7 @@ type GetMonitoringReportRequest struct {
 // This field definition of the GetMonitoringReport response payload, sent by the Charging Station to the CSMS in response to a GetMonitoringReportRequest.
 // In case the request was invalid, or couldn't be processed, an error will be sent instead.
 type GetMonitoringReportResponse struct {
-	Status types.GenericDeviceModelStatus `json:"status" validate:"required,genericDeviceModelStatus"` // This field indicates whether the Charging Station was able to accept the request.
+	Status types.GenericDeviceModelStatusType `json:"status" validate:"required,genericDeviceModelStatusType201"` // This field indicates whether the Charging Station was able to accept the request.
 }
 
 // A CSMS can request the Charging Station to send a report about configured monitoring settings per component and variable.
@@ -76,7 +76,7 @@ func NewGetMonitoringReportRequest() *GetMonitoringReportRequest {
 }
 
 // Creates a new GetMonitoringReportResponse, containing all required fields. There are no optional fields for this message.
-func NewGetMonitoringReportResponse(status types.GenericDeviceModelStatus) *GetMonitoringReportResponse {
+func NewGetMonitoringReportResponse(status types.GenericDeviceModelStatusType) *GetMonitoringReportResponse {
 	return &GetMonitoringReportResponse{Status: status}
 }
 

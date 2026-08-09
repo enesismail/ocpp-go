@@ -1,0 +1,1 @@
+{"evseId":2,"chargingProfile":{"id":3,"stackLevel":0,"chargingProfilePurpose":"ChargingStationMaxProfile","chargingProfileKind":"Absolute","chargingSchedule":[{"id":3,"chargingRateUnit":"W","chargingSchedulePeriod":[{"startPeriod":0,"limit":11000},{"startPeriod":1800,"limit":7400}]}]}}

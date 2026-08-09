@@ -14,8 +14,8 @@ import (
 // Test
 func (suite *OcppV2TestSuite) TestSignCertificateRequestValidation() {
 	var requestTable = []GenericTestEntry{
-		{security.SignCertificateRequest{CSR: "deadc0de", CertificateType: types.ChargingStationCert}, true},
-		{security.SignCertificateRequest{CSR: "deadc0de", CertificateType: types.V2GCertificate}, true},
+		{security.SignCertificateRequest{CSR: "deadc0de", CertificateType: types.CertificateSigningUseTypeChargingStationCertificate}, true},
+		{security.SignCertificateRequest{CSR: "deadc0de", CertificateType: types.CertificateSigningUseTypeV2GCertificate}, true},
 		{security.SignCertificateRequest{CSR: "deadc0de"}, true},
 		{security.SignCertificateRequest{}, false},
 		{security.SignCertificateRequest{CSR: "deadc0de", CertificateType: "invalidType"}, false},
@@ -26,11 +26,11 @@ func (suite *OcppV2TestSuite) TestSignCertificateRequestValidation() {
 func (suite *OcppV2TestSuite) TestSignCertificateConfirmationValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{security.SignCertificateResponse{Status: types.GenericStatusAccepted, StatusInfo: types.NewStatusInfo("200", "")}, true},
-		{security.SignCertificateResponse{Status: types.GenericStatusAccepted}, true},
+		{security.SignCertificateResponse{Status: types.GenericStatusTypeAccepted, StatusInfo: types.NewStatusInfo("200")}, true},
+		{security.SignCertificateResponse{Status: types.GenericStatusTypeAccepted}, true},
 		{security.SignCertificateResponse{}, false},
-		{security.SignCertificateResponse{Status: types.GenericStatusAccepted, StatusInfo: types.NewStatusInfo("", "")}, false},
-		{security.SignCertificateResponse{Status: "invalidStatus", StatusInfo: types.NewStatusInfo("200", "")}, false},
+		{security.SignCertificateResponse{Status: types.GenericStatusTypeAccepted, StatusInfo: types.NewStatusInfo("")}, false},
+		{security.SignCertificateResponse{Status: "invalidStatus", StatusInfo: types.NewStatusInfo("200")}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
 }
@@ -41,9 +41,9 @@ func (suite *OcppV2TestSuite) TestSignCertificateE2EMocked() {
 	messageId := defaultMessageId
 	wsUrl := "someUrl"
 	csr := "deadc0de"
-	certificateType := types.ChargingStationCert
-	status := types.GenericStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	certificateType := types.CertificateSigningUseTypeChargingStationCertificate
+	status := types.GenericStatusTypeAccepted
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"csr":"%v","certificateType":"%v"}]`,
 		messageId, security.SignCertificateFeatureName, csr, certificateType)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`,
@@ -79,7 +79,7 @@ func (suite *OcppV2TestSuite) TestSignCertificateE2EMocked() {
 func (suite *OcppV2TestSuite) TestSignCertificateInvalidEndpoint() {
 	messageId := defaultMessageId
 	csr := "deadc0de"
-	certificateType := types.ChargingStationCert
+	certificateType := types.CertificateSigningUseTypeChargingStationCertificate
 	request := security.NewSignCertificateRequest(csr)
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"csr":"%v","certificateType":"%v"}]`,
 		messageId, security.SignCertificateFeatureName, csr, certificateType)

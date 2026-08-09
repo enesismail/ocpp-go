@@ -37,16 +37,16 @@ func isValidAuthorizeCertificateStatus(fl validator.FieldLevel) bool {
 
 // The field definition of the Authorize request payload sent by the Charging Station to the CSMS.
 type AuthorizeRequest struct {
-	Certificate         string                      `json:"certificate,omitempty" validate:"max=5500"`
-	IdToken             types.IdToken               `json:"idToken" validate:"required"`
-	CertificateHashData []types.OCSPRequestDataType `json:"iso15118CertificateHashData,omitempty" validate:"max=4,dive"`
+	Certificate         string                  `json:"certificate,omitempty" validate:"max=5500"`
+	IdToken             types.IDToken           `json:"idToken" validate:"required"`
+	CertificateHashData []types.OCSPRequestData `json:"iso15118CertificateHashData,omitempty" validate:"max=4,dive"`
 }
 
 // This field definition of the Authorize response payload, sent by the Charging Station to the CSMS in response to an AuthorizeRequest.
 // In case the request was invalid, or couldn't be processed, an error will be sent instead.
 type AuthorizeResponse struct {
 	CertificateStatus AuthorizeCertificateStatus `json:"certificateStatus,omitempty" validate:"omitempty,authorizeCertificateStatus"`
-	IdTokenInfo       types.IdTokenInfo          `json:"idTokenInfo" validate:"required"`
+	IdTokenInfo       types.IDTokenInfo          `json:"idTokenInfo" validate:"required"`
 }
 
 // Before the owner of an electric vehicle can start or stop charging, the Charging Station has to authorize the operation.
@@ -80,12 +80,12 @@ func (c AuthorizeResponse) GetFeatureName() string {
 }
 
 // Creates a new AuthorizeRequest, containing all required fields. There are no optional fields for this message.
-func NewAuthorizationRequest(idToken string, tokenType types.IdTokenType) *AuthorizeRequest {
-	return &AuthorizeRequest{IdToken: types.IdToken{IdToken: idToken, Type: tokenType}}
+func NewAuthorizationRequest(idToken string, tokenType types.IDTokenType) *AuthorizeRequest {
+	return &AuthorizeRequest{IdToken: types.IDToken{IDToken: idToken, Type: tokenType}}
 }
 
 // Creates a new AuthorizeResponse. There are no optional fields for this message.
-func NewAuthorizationResponse(idTokenInfo types.IdTokenInfo) *AuthorizeResponse {
+func NewAuthorizationResponse(idTokenInfo types.IDTokenInfo) *AuthorizeResponse {
 	return &AuthorizeResponse{IdTokenInfo: idTokenInfo}
 }
 

@@ -23,7 +23,7 @@ func (suite *OcppV2TestSuite) TestClearCacheRequestValidation() {
 func (suite *OcppV2TestSuite) TestClearCacheConfirmationValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{authorization.ClearCacheResponse{Status: authorization.ClearCacheStatusAccepted, StatusInfo: types.NewStatusInfo("200", "ok")}, true},
+		{authorization.ClearCacheResponse{Status: authorization.ClearCacheStatusAccepted, StatusInfo: &types.StatusInfo{ReasonCode: "200", AdditionalInfo: "ok"}}, true},
 		{authorization.ClearCacheResponse{Status: authorization.ClearCacheStatusAccepted}, true},
 		{authorization.ClearCacheResponse{Status: authorization.ClearCacheStatusRejected}, true},
 		{authorization.ClearCacheResponse{Status: "invalidClearCacheStatus"}, false},
@@ -38,7 +38,7 @@ func (suite *OcppV2TestSuite) TestClearCacheE2EMocked() {
 	messageId := defaultMessageId
 	wsUrl := "someUrl"
 	status := authorization.ClearCacheStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{}]`, messageId, authorization.ClearCacheFeatureName)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`, messageId, status, statusInfo.ReasonCode)
 	clearCacheResponse := authorization.NewClearCacheResponse(status)

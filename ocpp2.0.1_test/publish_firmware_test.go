@@ -35,11 +35,11 @@ func (suite *OcppV2TestSuite) TestPublishFirmwareRequestValidation() {
 func (suite *OcppV2TestSuite) TestPublishFirmwareResponseValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{firmware.PublishFirmwareResponse{Status: types.GenericStatusAccepted, StatusInfo: &types.StatusInfo{ReasonCode: "ok", AdditionalInfo: "someInfo"}}, true},
-		{firmware.PublishFirmwareResponse{Status: types.GenericStatusAccepted}, true},
+		{firmware.PublishFirmwareResponse{Status: types.GenericStatusTypeAccepted, StatusInfo: &types.StatusInfo{ReasonCode: "ok", AdditionalInfo: "someInfo"}}, true},
+		{firmware.PublishFirmwareResponse{Status: types.GenericStatusTypeAccepted}, true},
 		{firmware.PublishFirmwareResponse{}, false},
 		{firmware.PublishFirmwareResponse{Status: "invalidStatus"}, false},
-		{firmware.PublishFirmwareResponse{Status: types.GenericStatusAccepted, StatusInfo: &types.StatusInfo{}}, false},
+		{firmware.PublishFirmwareResponse{Status: types.GenericStatusTypeAccepted, StatusInfo: &types.StatusInfo{}}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
 }
@@ -54,7 +54,7 @@ func (suite *OcppV2TestSuite) TestPublishFirmwareE2EMocked() {
 	checksum := "deadc0d3"
 	requestID := 42
 	retryInterval := newInt(300)
-	status := types.GenericStatusAccepted
+	status := types.GenericStatusTypeAccepted
 	statusInfo := types.StatusInfo{ReasonCode: "ok", AdditionalInfo: "someInfo"}
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"location":"%v","retries":%v,"checksum":"%v","requestId":%v,"retryInterval":%v}]`,
 		messageId, firmware.PublishFirmwareFeatureName, location, *retries, checksum, requestID, *retryInterval)

@@ -15,10 +15,10 @@ import (
 func (suite *OcppV2TestSuite) TestClearedChargingLimitRequestValidation() {
 	t := suite.T()
 	var requestTable = []GenericTestEntry{
-		{smartcharging.ClearedChargingLimitRequest{ChargingLimitSource: types.ChargingLimitSourceEMS, EvseID: newInt(0)}, true},
-		{smartcharging.ClearedChargingLimitRequest{ChargingLimitSource: types.ChargingLimitSourceEMS}, true},
+		{smartcharging.ClearedChargingLimitRequest{ChargingLimitSource: types.ChargingLimitSourceTypeEMS, EvseID: newInt(0)}, true},
+		{smartcharging.ClearedChargingLimitRequest{ChargingLimitSource: types.ChargingLimitSourceTypeEMS}, true},
 		{smartcharging.ClearedChargingLimitRequest{}, false},
-		{smartcharging.ClearedChargingLimitRequest{ChargingLimitSource: types.ChargingLimitSourceEMS, EvseID: newInt(-1)}, false},
+		{smartcharging.ClearedChargingLimitRequest{ChargingLimitSource: types.ChargingLimitSourceTypeEMS, EvseID: newInt(-1)}, false},
 		{smartcharging.ClearedChargingLimitRequest{ChargingLimitSource: "invalidChargingLimitSource"}, false},
 	}
 	ExecuteGenericTestTable(t, requestTable)
@@ -37,7 +37,7 @@ func (suite *OcppV2TestSuite) TestClearedChargingLimitE2EMocked() {
 	wsId := "test_id"
 	messageId := "1234"
 	wsUrl := "someUrl"
-	chargingLimitSource := types.ChargingLimitSourceEMS
+	chargingLimitSource := types.ChargingLimitSourceTypeEMS
 	evseID := 42
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"chargingLimitSource":"%v","evseId":%v}]`, messageId, smartcharging.ClearedChargingLimitFeatureName, chargingLimitSource, evseID)
 	responseJson := fmt.Sprintf(`[3,"%v",{}]`, messageId)
@@ -67,7 +67,7 @@ func (suite *OcppV2TestSuite) TestClearedChargingLimitE2EMocked() {
 
 func (suite *OcppV2TestSuite) TestClearedChargingLimitInvalidEndpoint() {
 	messageId := defaultMessageId
-	chargingLimitSource := types.ChargingLimitSourceEMS
+	chargingLimitSource := types.ChargingLimitSourceTypeEMS
 	evseID := 42
 	clearedChargingLimitRequest := smartcharging.NewClearedChargingLimitRequest(chargingLimitSource)
 	clearedChargingLimitRequest.EvseID = newInt(evseID)

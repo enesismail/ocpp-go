@@ -75,7 +75,7 @@ func checkError(err error) {
 	}
 }
 
-func getExpiryDate(info *types.IdTokenInfo) string {
+func getExpiryDate(info *types.IDTokenInfo) string {
 	if info.CacheExpiryDateTime != nil {
 		return fmt.Sprintf("authorized until %v", info.CacheExpiryDateTime.String())
 	}

@@ -1030,3 +1030,52 @@ project's own Go code, never in the schema file itself.
 
 **Guard:** `schemas/schemas_test.go` hashes every vendored file against
 `schemas/SHA256SUMS` and fails the build the moment a byte changes.
+
+## OCPP 2.0.1 generated messages
+
+Four OCPP 2.0.1 messages — Heartbeat, BootNotification, SetChargingProfile and
+TransactionEvent — plus every shared type they reach are now generated from the vendored OCA
+schemas by `internal/codegen`, replacing their hand-written declarations. Generated shared
+types live in `ocpp2.0.1/types/types_gen.go`; `ocpp2.0.1/types/types.go` keeps only the
+declarations the generator does not own (the shared validator plumbing among them; `DateTime` stays in its own pre-existing file),
+and `CustomData` moved to its own file. Regenerating is deterministic and byte-stable:
+
+```
+go run ./internal/codegen -manifest internal/codegen/config/v201.yaml
+```
+
+reproduces the committed tree byte-for-byte; a dirty diff after running it means the tree
+was edited by hand and the edit belongs in the generator's configs instead.
+
+The generated code follows the schema wherever the hand-written tree disagreed with it.
+Every accept/reject and wire-shape difference this introduces is captured, classified and
+test-enforced — the authoritative record is the exception manifests under
+`ocpp2.0.1_test/testdata/parity/` (classes `FORK_BUG`, `OVERRIDE_CANDIDATE`,
+`SCHEMA_FAITHFUL_CHANGE`, `STRUCT_VALIDATOR`; every row carries a citation), compared on
+every test run against accept/reject and wire goldens recorded from the pre-swap tree at a
+pinned commit. Semantic changes worth naming in prose:
+
+- `ComponentVariable.Variable` is now `*Variable` with `omitempty` (optional), as the schema
+  declares — the hand-written tree required it as a value, stricter than the schema.
+- `ChargingProfile.ID` and `ChargingProfile.StackLevel` are now rejected when omitted — the
+  schema marks both required; the hand-written tags (`gte=0`, no `required`) silently
+  accepted the zero-value omission.
+- Known limitation, recorded not fixed: a `required` token on a non-pointer numeric field
+  (e.g. `ChargingSchedulePeriod.StartPeriod`) cannot distinguish an explicit, valid `0` from
+  an absent field — validator.v9 sees the same zero value for both.
+- Struct-level validators are carried forward only from a closed, named list
+  (`allowedStructValidatorRows` in `ocpp2.0.1_test/validator_parity_test.go`); no other
+  struct validator survives onto generated types unannounced.
+
+| File | Why keep it |
+|------|-------------|
+| `ocpp2.0.1/types/types_gen.go` | every generated shared type; regenerated, never hand-edited |
+| `internal/codegen/config/{v201,transform,overrides}.yaml` | the manifest, naming rules and audited per-field overrides that fully determine the generated output |
+| `ocpp2.0.1_test/testdata/parity/` | recorded goldens + the exception manifests that authorize every intentional divergence |
+
+**Guard:** the `ocpp2.0.1_test` harness bundle — wire parity against recorded goldens,
+validator (accept/reject) parity with the closed exception classes above, round-trip and
+new-representation coverage, allocation benchmarks, and completeness guards that rebuild the
+generator's IR in-test so harness coverage cannot drift from the manifest.
+`ocpp2.0.1/types/validator_tags_test.go` additionally proves every validate token the
+generated code uses is registered on the shared validator.

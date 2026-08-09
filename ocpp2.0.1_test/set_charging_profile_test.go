@@ -15,18 +15,27 @@ import (
 // Test
 func (suite *OcppV2TestSuite) TestSetChargingProfileRequestValidation() {
 	t := suite.T()
-	schedule := types.NewChargingSchedule(1, types.ChargingRateUnitWatts, types.NewChargingSchedulePeriod(0, 200.0))
+	schedule := types.NewChargingSchedule(1, types.ChargingRateUnitTypeW, []types.ChargingSchedulePeriod{types.NewChargingSchedulePeriod(1, 200.0)})
+	// StackLevel bumped from the old incidental 0 to 1: its generated tag is
+	// bare "required", so 0 would fail here, and 0 was never this fixture's
+	// subject.
 	chargingProfile := types.NewChargingProfile(
 		1,
-		0,
-		types.ChargingProfilePurposeChargingStationMaxProfile,
-		types.ChargingProfileKindAbsolute,
-		[]types.ChargingSchedule{*schedule})
+		1,
+		types.ChargingProfilePurposeTypeChargingStationMaxProfile,
+		types.ChargingProfileKindTypeAbsolute,
+		[]types.ChargingSchedule{schedule})
 	var requestTable = []GenericTestEntry{
-		{smartcharging.SetChargingProfileRequest{EvseID: 1, ChargingProfile: chargingProfile}, true},
-		{smartcharging.SetChargingProfileRequest{ChargingProfile: chargingProfile}, true},
+		{smartcharging.SetChargingProfileRequest{EVSEID: 1, ChargingProfile: *chargingProfile}, true},
+		// EVSEID omitted (zero value): previously valid (master's tag was "gte=0", no
+		// "required"); the schema marks evseId required and the generated tag now
+		// rejects the omission.
+		{smartcharging.SetChargingProfileRequest{ChargingProfile: *chargingProfile}, false},
 		{smartcharging.SetChargingProfileRequest{}, false},
-		{smartcharging.SetChargingProfileRequest{EvseID: 1, ChargingProfile: types.NewChargingProfile(1, -1, types.ChargingProfilePurposeChargingStationMaxProfile, types.ChargingProfileKindAbsolute, []types.ChargingSchedule{*schedule})}, false},
+		// StackLevel negative: master's bound has no override row, so the generated
+		// tag carries no numeric bound; -1 passes the bare "required" tag and is
+		// genuinely valid now.
+		{smartcharging.SetChargingProfileRequest{EVSEID: 1, ChargingProfile: *types.NewChargingProfile(1, -1, types.ChargingProfilePurposeTypeChargingStationMaxProfile, types.ChargingProfileKindTypeAbsolute, []types.ChargingSchedule{schedule})}, true},
 	}
 	ExecuteGenericTestTable(t, requestTable)
 }
@@ -34,11 +43,11 @@ func (suite *OcppV2TestSuite) TestSetChargingProfileRequestValidation() {
 func (suite *OcppV2TestSuite) TestSetChargingProfileResponseValidation() {
 	t := suite.T()
 	var confirmationTable = []GenericTestEntry{
-		{smartcharging.SetChargingProfileResponse{Status: smartcharging.ChargingProfileStatusAccepted, StatusInfo: types.NewStatusInfo("200", "")}, true},
-		{smartcharging.SetChargingProfileResponse{Status: smartcharging.ChargingProfileStatusAccepted}, true},
+		{smartcharging.SetChargingProfileResponse{Status: smartcharging.ChargingProfileStatusTypeAccepted, StatusInfo: types.NewStatusInfo("200")}, true},
+		{smartcharging.SetChargingProfileResponse{Status: smartcharging.ChargingProfileStatusTypeAccepted}, true},
 		{smartcharging.SetChargingProfileResponse{}, false},
 		{smartcharging.SetChargingProfileResponse{Status: "invalidChargingProfileStatus"}, false},
-		{smartcharging.SetChargingProfileResponse{Status: smartcharging.ChargingProfileStatusAccepted, StatusInfo: types.NewStatusInfo("", "")}, false},
+		{smartcharging.SetChargingProfileResponse{Status: smartcharging.ChargingProfileStatusTypeAccepted, StatusInfo: types.NewStatusInfo("")}, false},
 	}
 	ExecuteGenericTestTable(t, confirmationTable)
 }
@@ -49,20 +58,20 @@ func (suite *OcppV2TestSuite) TestSetChargingProfileE2EMocked() {
 	messageId := defaultMessageId
 	wsUrl := "someUrl"
 	evseID := 1
-	period := types.NewChargingSchedulePeriod(0, 200.0)
+	period := types.NewChargingSchedulePeriod(1, 200.0)
 	schedule := types.NewChargingSchedule(
 		1,
-		types.ChargingRateUnitWatts,
-		period)
+		types.ChargingRateUnitTypeW,
+		[]types.ChargingSchedulePeriod{period})
 	profile := types.NewChargingProfile(
 		1,
 		7,
-		types.ChargingProfilePurposeChargingStationMaxProfile,
-		types.ChargingProfileKindAbsolute,
-		[]types.ChargingSchedule{*schedule})
+		types.ChargingProfilePurposeTypeChargingStationMaxProfile,
+		types.ChargingProfileKindTypeAbsolute,
+		[]types.ChargingSchedule{schedule})
 	profile.ValidFrom = types.NewDateTime(time.Now())
-	status := smartcharging.ChargingProfileStatusAccepted
-	statusInfo := types.NewStatusInfo("200", "")
+	status := smartcharging.ChargingProfileStatusTypeAccepted
+	statusInfo := types.NewStatusInfo("200")
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"evseId":%v,"chargingProfile":{"id":%v,"stackLevel":%v,"chargingProfilePurpose":"%v","chargingProfileKind":"%v","validFrom":"%v","chargingSchedule":[{"id":%v,"chargingRateUnit":"%v","chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}]}]}}]`,
 		messageId, smartcharging.SetChargingProfileFeatureName, evseID, profile.ID, profile.StackLevel, profile.ChargingProfilePurpose, profile.ChargingProfileKind, profile.ValidFrom.FormatTimestamp(), schedule.ID, schedule.ChargingRateUnit, period.StartPeriod, period.Limit)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v","statusInfo":{"reasonCode":"%v"}}]`, messageId, status, statusInfo.ReasonCode)
@@ -75,8 +84,7 @@ func (suite *OcppV2TestSuite) TestSetChargingProfileE2EMocked() {
 		request, ok := args.Get(0).(*smartcharging.SetChargingProfileRequest)
 		require.True(t, ok)
 		require.NotNil(t, request)
-		assert.Equal(t, evseID, request.EvseID)
-		require.NotNil(t, request.ChargingProfile)
+		assert.Equal(t, evseID, request.EVSEID)
 		assert.Equal(t, profile.ID, request.ChargingProfile.ID)
 		assert.Equal(t, profile.StackLevel, request.ChargingProfile.StackLevel)
 		assert.Equal(t, profile.ChargingProfilePurpose, request.ChargingProfile.ChargingProfilePurpose)
@@ -113,20 +121,20 @@ func (suite *OcppV2TestSuite) TestSetChargingProfileE2EMocked() {
 func (suite *OcppV2TestSuite) TestSetChargingProfileInvalidEndpoint() {
 	messageId := defaultMessageId
 	evseID := 1
-	period := types.NewChargingSchedulePeriod(0, 200.0)
+	period := types.NewChargingSchedulePeriod(1, 200.0)
 	schedule := types.NewChargingSchedule(
 		1,
-		types.ChargingRateUnitWatts,
-		period)
+		types.ChargingRateUnitTypeW,
+		[]types.ChargingSchedulePeriod{period})
 	profile := types.NewChargingProfile(
 		1,
 		7,
-		types.ChargingProfilePurposeChargingStationMaxProfile,
-		types.ChargingProfileKindAbsolute,
-		[]types.ChargingSchedule{*schedule})
+		types.ChargingProfilePurposeTypeChargingStationMaxProfile,
+		types.ChargingProfileKindTypeAbsolute,
+		[]types.ChargingSchedule{schedule})
 	profile.ValidFrom = types.NewDateTime(time.Now())
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"evseId":%v,"chargingProfile":{"id":%v,"stackLevel":%v,"chargingProfilePurpose":"%v","chargingProfileKind":"%v","validFrom":"%v","chargingSchedule":[{"id":%v,"chargingRateUnit":"%v","chargingSchedulePeriod":[{"startPeriod":%v,"limit":%v}]}]}}]`,
 		messageId, smartcharging.SetChargingProfileFeatureName, evseID, profile.ID, profile.StackLevel, profile.ChargingProfilePurpose, profile.ChargingProfileKind, profile.ValidFrom.FormatTimestamp(), schedule.ID, schedule.ChargingRateUnit, period.StartPeriod, period.Limit)
-	request := smartcharging.NewSetChargingProfileRequest(evseID, profile)
+	request := smartcharging.NewSetChargingProfileRequest(evseID, *profile)
 	testUnsupportedRequestFromChargingStation(suite, request, requestJson, messageId)
 }

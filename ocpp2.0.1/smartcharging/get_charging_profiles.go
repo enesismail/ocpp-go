@@ -33,10 +33,10 @@ func isValidGetChargingProfileStatus(fl validator.FieldLevel) bool {
 // ChargingProfileCriterion specifies the charging profile within a GetChargingProfilesRequest.
 // A ChargingProfile consists of ChargingSchedule, describing the amount of power or current that can be delivered per time interval.
 type ChargingProfileCriterion struct {
-	ChargingProfilePurpose types.ChargingProfilePurposeType `json:"chargingProfilePurpose,omitempty" validate:"omitempty,chargingProfilePurpose201"`
+	ChargingProfilePurpose types.ChargingProfilePurposeType `json:"chargingProfilePurpose,omitempty" validate:"omitempty,chargingProfilePurposeType201"`
 	StackLevel             *int                             `json:"stackLevel,omitempty" validate:"omitempty,gte=0"`
 	ChargingProfileID      []int                            `json:"chargingProfileId,omitempty" validate:"omitempty"` // This field SHALL NOT contain more ids than set in ChargingProfileEntries.maxLimit
-	ChargingLimitSource    []types.ChargingLimitSourceType  `json:"chargingLimitSource,omitempty" validate:"omitempty,max=4,dive,chargingLimitSource"`
+	ChargingLimitSource    []types.ChargingLimitSourceType  `json:"chargingLimitSource,omitempty" validate:"omitempty,max=4,dive,chargingLimitSourceType201"`
 }
 
 // The field definition of the GetChargingProfiles request payload sent by the CSMS to the Charging Station.

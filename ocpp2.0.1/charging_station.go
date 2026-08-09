@@ -265,8 +265,8 @@ func (cs *chargingStation) onRequestTimeout(_ string, _ ocpp.Request, err *ocpp.
 	}
 }
 
-func (cs *chargingStation) BootNotification(reason provisioning.BootReason, model string, vendor string, props ...func(request *provisioning.BootNotificationRequest)) (*provisioning.BootNotificationResponse, error) {
-	request := provisioning.NewBootNotificationRequest(reason, model, vendor)
+func (cs *chargingStation) BootNotification(reason provisioning.BootReasonType, model string, vendor string, props ...func(request *provisioning.BootNotificationRequest)) (*provisioning.BootNotificationResponse, error) {
+	request := provisioning.NewBootNotificationRequest(provisioning.ChargingStation{Model: model, VendorName: vendor}, reason)
 	for _, fn := range props {
 		fn(request)
 	}
@@ -278,7 +278,7 @@ func (cs *chargingStation) BootNotification(reason provisioning.BootReason, mode
 	}
 }
 
-func (cs *chargingStation) Authorize(idToken string, tokenType types.IdTokenType, props ...func(request *authorization.AuthorizeRequest)) (*authorization.AuthorizeResponse, error) {
+func (cs *chargingStation) Authorize(idToken string, tokenType types.IDTokenType, props ...func(request *authorization.AuthorizeRequest)) (*authorization.AuthorizeResponse, error) {
 	request := authorization.NewAuthorizationRequest(idToken, tokenType)
 	for _, fn := range props {
 		fn(request)
@@ -343,7 +343,7 @@ func (cs *chargingStation) Get15118EVCertificate(schemaVersion string, action is
 	}
 }
 
-func (cs *chargingStation) GetCertificateStatus(ocspRequestData types.OCSPRequestDataType, props ...func(request *iso15118.GetCertificateStatusRequest)) (*iso15118.GetCertificateStatusResponse, error) {
+func (cs *chargingStation) GetCertificateStatus(ocspRequestData types.OCSPRequestData, props ...func(request *iso15118.GetCertificateStatusRequest)) (*iso15118.GetCertificateStatusResponse, error) {
 	request := iso15118.NewGetCertificateStatusRequest(ocspRequestData)
 	for _, fn := range props {
 		fn(request)
@@ -577,7 +577,7 @@ func (cs *chargingStation) StatusNotification(timestamp *types.DateTime, status 
 	}
 }
 
-func (cs *chargingStation) TransactionEvent(t transactions.TransactionEvent, timestamp *types.DateTime, reason transactions.TriggerReason, seqNo int, info transactions.Transaction, props ...func(request *transactions.TransactionEventRequest)) (*transactions.TransactionEventResponse, error) {
+func (cs *chargingStation) TransactionEvent(t transactions.TransactionEventType, timestamp *types.DateTime, reason transactions.TriggerReasonType, seqNo int, info transactions.Transaction, props ...func(request *transactions.TransactionEventRequest)) (*transactions.TransactionEventResponse, error) {
 	request := transactions.NewTransactionEventRequest(t, timestamp, reason, seqNo, info)
 	for _, fn := range props {
 		fn(request)

@@ -15,7 +15,7 @@ import (
 // Test
 func (suite *OcppV2TestSuite) TestNotifyDisplayMessagesRequestValidation() {
 	t := suite.T()
-	messageInfo := display.MessageInfo{ID: 42, Priority: display.MessagePriorityAlwaysFront, State: display.MessageStateIdle, Message: types.MessageContent{Format: types.MessageFormatUTF8, Content: "hello world"}}
+	messageInfo := display.MessageInfo{ID: 42, Priority: display.MessagePriorityAlwaysFront, State: display.MessageStateIdle, Message: types.MessageContent{Format: types.MessageFormatTypeUTF8, Content: "hello world"}}
 	var requestTable = []GenericTestEntry{
 		{display.NotifyDisplayMessagesRequest{RequestID: 42, Tbc: false, MessageInfo: []display.MessageInfo{messageInfo}}, true},
 		{display.NotifyDisplayMessagesRequest{RequestID: 42, Tbc: false, MessageInfo: []display.MessageInfo{}}, true},
@@ -23,7 +23,7 @@ func (suite *OcppV2TestSuite) TestNotifyDisplayMessagesRequestValidation() {
 		{display.NotifyDisplayMessagesRequest{RequestID: 42}, true},
 		{display.NotifyDisplayMessagesRequest{}, true},
 		{display.NotifyDisplayMessagesRequest{RequestID: -1}, false},
-		{display.NotifyDisplayMessagesRequest{RequestID: 42, MessageInfo: []display.MessageInfo{{ID: 42, Priority: "invalidPriority", State: display.MessageStateIdle, Message: types.MessageContent{Format: types.MessageFormatUTF8, Content: "hello world"}}}}, false},
+		{display.NotifyDisplayMessagesRequest{RequestID: 42, MessageInfo: []display.MessageInfo{{ID: 42, Priority: "invalidPriority", State: display.MessageStateIdle, Message: types.MessageContent{Format: types.MessageFormatTypeUTF8, Content: "hello world"}}}}, false},
 	}
 	ExecuteGenericTestTable(t, requestTable)
 }
@@ -43,7 +43,7 @@ func (suite *OcppV2TestSuite) TestNotifyDisplayMessagesE2EMocked() {
 	wsUrl := "someUrl"
 	requestID := 42
 	tbc := false
-	messageInfo := display.MessageInfo{ID: 42, Priority: display.MessagePriorityAlwaysFront, State: display.MessageStateIdle, StartDateTime: types.NewDateTime(time.Now()), Message: types.MessageContent{Format: types.MessageFormatUTF8, Content: "hello world"}}
+	messageInfo := display.MessageInfo{ID: 42, Priority: display.MessagePriorityAlwaysFront, State: display.MessageStateIdle, StartDateTime: types.NewDateTime(time.Now()), Message: types.MessageContent{Format: types.MessageFormatTypeUTF8, Content: "hello world"}}
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"messageInfo":[{"id":%v,"priority":"%v","state":"%v","startDateTime":"%v","message":{"format":"%v","content":"%v"}}]}]`,
 		messageId, display.NotifyDisplayMessagesFeatureName, requestID, messageInfo.ID, messageInfo.Priority, messageInfo.State, messageInfo.StartDateTime.FormatTimestamp(), messageInfo.Message.Format, messageInfo.Message.Content)
 	responseJson := fmt.Sprintf(`[3,"%v",{}]`, messageId)
@@ -81,7 +81,7 @@ func (suite *OcppV2TestSuite) TestNotifyDisplayMessagesE2EMocked() {
 func (suite *OcppV2TestSuite) TestNotifyDisplayMessagesInvalidEndpoint() {
 	messageId := defaultMessageId
 	requestID := 42
-	messageInfo := display.MessageInfo{ID: 42, Priority: display.MessagePriorityAlwaysFront, State: display.MessageStateIdle, StartDateTime: types.NewDateTime(time.Now()), Message: types.MessageContent{Format: types.MessageFormatUTF8, Content: "hello world"}}
+	messageInfo := display.MessageInfo{ID: 42, Priority: display.MessagePriorityAlwaysFront, State: display.MessageStateIdle, StartDateTime: types.NewDateTime(time.Now()), Message: types.MessageContent{Format: types.MessageFormatTypeUTF8, Content: "hello world"}}
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"messageInfo":[{"id":%v,"priority":"%v","state":"%v","startDateTime":"%v","message":{"format":"%v","content":"%v"}}]}]`,
 		messageId, display.NotifyDisplayMessagesFeatureName, requestID, messageInfo.ID, messageInfo.Priority, messageInfo.State, messageInfo.StartDateTime.FormatTimestamp(), messageInfo.Message.Format, messageInfo.Message.Content)
 	req := display.NewNotifyDisplayMessagesRequest(requestID)

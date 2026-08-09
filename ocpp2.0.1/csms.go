@@ -503,7 +503,7 @@ func (cs *csms) PublishFirmware(clientId string, callback func(*firmware.Publish
 	return cs.SendRequestAsync(clientId, request, genericCallback)
 }
 
-func (cs *csms) RequestStartTransaction(clientId string, callback func(*remotecontrol.RequestStartTransactionResponse, error), remoteStartID int, IdToken types.IdToken, props ...func(request *remotecontrol.RequestStartTransactionRequest)) error {
+func (cs *csms) RequestStartTransaction(clientId string, callback func(*remotecontrol.RequestStartTransactionResponse, error), remoteStartID int, IdToken types.IDToken, props ...func(request *remotecontrol.RequestStartTransactionRequest)) error {
 	request := remotecontrol.NewRequestStartTransactionRequest(remoteStartID, IdToken)
 	for _, fn := range props {
 		fn(request)
@@ -533,7 +533,7 @@ func (cs *csms) RequestStopTransaction(clientId string, callback func(*remotecon
 	return cs.SendRequestAsync(clientId, request, genericCallback)
 }
 
-func (cs *csms) ReserveNow(clientId string, callback func(*reservation.ReserveNowResponse, error), id int, expiryDateTime *types.DateTime, idToken types.IdToken, props ...func(request *reservation.ReserveNowRequest)) error {
+func (cs *csms) ReserveNow(clientId string, callback func(*reservation.ReserveNowResponse, error), id int, expiryDateTime *types.DateTime, idToken types.IDToken, props ...func(request *reservation.ReserveNowRequest)) error {
 	request := reservation.NewReserveNowRequest(id, expiryDateTime, idToken)
 	for _, fn := range props {
 		fn(request)
@@ -579,7 +579,7 @@ func (cs *csms) SendLocalList(clientId string, callback func(*localauth.SendLoca
 }
 
 func (cs *csms) SetChargingProfile(clientId string, callback func(*smartcharging.SetChargingProfileResponse, error), evseID int, chargingProfile *types.ChargingProfile, props ...func(request *smartcharging.SetChargingProfileRequest)) error {
-	request := smartcharging.NewSetChargingProfileRequest(evseID, chargingProfile)
+	request := smartcharging.NewSetChargingProfileRequest(evseID, *chargingProfile)
 	for _, fn := range props {
 		fn(request)
 	}

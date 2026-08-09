@@ -15,8 +15,8 @@ import (
 func (suite *OcppV2TestSuite) TestCustomerInformationRequestValidation() {
 	t := suite.T()
 	var requestTable = []GenericTestEntry{
-		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true, CustomerIdentifier: "0001", IdToken: &types.IdToken{IdToken: "1234", Type: types.IdTokenTypeKeyCode, AdditionalInfo: nil}, CustomerCertificate: &types.CertificateHashData{HashAlgorithm: types.SHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}}, true},
-		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true, CustomerIdentifier: "0001", IdToken: &types.IdToken{IdToken: "1234", Type: types.IdTokenTypeKeyCode, AdditionalInfo: nil}}, true},
+		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true, CustomerIdentifier: "0001", IdToken: &types.IDToken{IDToken: "1234", Type: types.IDTokenTypeKeyCode, AdditionalInfo: nil}, CustomerCertificate: &types.CertificateHashData{HashAlgorithm: types.HashAlgorithmTypeSHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}}, true},
+		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true, CustomerIdentifier: "0001", IdToken: &types.IDToken{IDToken: "1234", Type: types.IDTokenTypeKeyCode, AdditionalInfo: nil}}, true},
 		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true, CustomerIdentifier: "0001"}, true},
 		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true}, true},
 		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true}, true},
@@ -25,7 +25,7 @@ func (suite *OcppV2TestSuite) TestCustomerInformationRequestValidation() {
 		{diagnostics.CustomerInformationRequest{}, true},
 		{diagnostics.CustomerInformationRequest{RequestID: -1, Report: true, Clear: true}, false},
 		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true, CustomerIdentifier: ">64.............................................................."}, false},
-		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true, IdToken: &types.IdToken{IdToken: "1234", Type: "invalidTokenType", AdditionalInfo: nil}}, false},
+		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true, IdToken: &types.IDToken{IDToken: "1234", Type: "invalidTokenType", AdditionalInfo: nil}}, false},
 		{diagnostics.CustomerInformationRequest{RequestID: 42, Report: true, Clear: true, CustomerCertificate: &types.CertificateHashData{HashAlgorithm: "invalidHasAlgorithm", IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}}, false},
 	}
 	ExecuteGenericTestTable(t, requestTable)
@@ -50,11 +50,11 @@ func (suite *OcppV2TestSuite) TestCustomerInformationE2EMocked() {
 	report := true
 	clear := true
 	customerId := "0001"
-	idToken := types.IdToken{IdToken: "1234", Type: types.IdTokenTypeKeyCode}
-	customerCertificate := types.CertificateHashData{HashAlgorithm: types.SHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}
+	idToken := types.IDToken{IDToken: "1234", Type: types.IDTokenTypeKeyCode}
+	customerCertificate := types.CertificateHashData{HashAlgorithm: types.HashAlgorithmTypeSHA256, IssuerNameHash: "hash00", IssuerKeyHash: "hash01", SerialNumber: "serial0"}
 	status := diagnostics.CustomerInformationStatusAccepted
 	requestJson := fmt.Sprintf(`[2,"%v","%v",{"requestId":%v,"report":%v,"clear":%v,"customerIdentifier":"%v","idToken":{"idToken":"%v","type":"%v"},"customerCertificate":{"hashAlgorithm":"%v","issuerNameHash":"%v","issuerKeyHash":"%v","serialNumber":"%v"}}]`,
-		messageId, diagnostics.CustomerInformationFeatureName, requestId, report, clear, customerId, idToken.IdToken, idToken.Type, customerCertificate.HashAlgorithm, customerCertificate.IssuerNameHash, customerCertificate.IssuerKeyHash, customerCertificate.SerialNumber)
+		messageId, diagnostics.CustomerInformationFeatureName, requestId, report, clear, customerId, idToken.IDToken, idToken.Type, customerCertificate.HashAlgorithm, customerCertificate.IssuerNameHash, customerCertificate.IssuerKeyHash, customerCertificate.SerialNumber)
 	responseJson := fmt.Sprintf(`[3,"%v",{"status":"%v"}]`, messageId, status)
 	customerInformationConfirmation := diagnostics.NewCustomerInformationResponse(status)
 	channel := NewMockWebSocket(wsId)

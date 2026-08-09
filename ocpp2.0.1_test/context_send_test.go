@@ -104,7 +104,7 @@ func (suite *OcppV2TestSuite) Test4ChargingStationSendRequestCtxNilCtxBehavesAsB
 	wsURL := "someUrl"
 	channel := NewMockWebSocket(wsID)
 
-	heartbeatConf := availability.NewHeartbeatResponse(*types.NewDateTime(time.Now()))
+	heartbeatConf := availability.NewHeartbeatResponse(types.NewDateTime(time.Now()))
 
 	csmsAvailabilityHandler := &MockCSMSAvailabilityHandler{}
 	csmsAvailabilityHandler.On("OnHeartbeat", mock.AnythingOfType("string"), mock.Anything).Return(heartbeatConf, nil)
@@ -138,7 +138,7 @@ func (suite *OcppV2TestSuite) Test4ChargingStationSendRequestUntouched() {
 	wsURL := "someUrl"
 	channel := NewMockWebSocket(wsID)
 
-	heartbeatConf := availability.NewHeartbeatResponse(*types.NewDateTime(time.Now()))
+	heartbeatConf := availability.NewHeartbeatResponse(types.NewDateTime(time.Now()))
 
 	csmsAvailabilityHandler := &MockCSMSAvailabilityHandler{}
 	csmsAvailabilityHandler.On("OnHeartbeat", mock.AnythingOfType("string"), mock.Anything).Return(heartbeatConf, nil)

@@ -20,8 +20,8 @@ type NotifyEVChargingScheduleRequest struct {
 // This field definition of the NotifyEVChargingSchedule response payload, sent by the CSMS to the Charging Station in response to a NotifyEVChargingScheduleRequest.
 // In case the request was invalid, or couldn't be processed, an error will be sent instead.
 type NotifyEVChargingScheduleResponse struct {
-	Status     types.GenericStatus `json:"status" validate:"required,genericStatus"`
-	StatusInfo *types.StatusInfo   `json:"statusInfo,omitempty" validate:"omitempty,dive"` // Detailed status information.
+	Status     types.GenericStatusType `json:"status" validate:"required,genericStatusType201"`
+	StatusInfo *types.StatusInfo       `json:"statusInfo,omitempty" validate:"omitempty,dive"` // Detailed status information.
 }
 
 // A power renegotiation, either initiated by the EV or by the CSMS, may involve the EV providing a power profile.
@@ -57,6 +57,6 @@ func NewNotifyEVChargingScheduleRequest(timeBase *types.DateTime, evseID int, ch
 }
 
 // Creates a new NotifyEVChargingScheduleResponse, containing all required fields. Optional fields may be set afterwards.
-func NewNotifyEVChargingScheduleResponse(status types.GenericStatus) *NotifyEVChargingScheduleResponse {
+func NewNotifyEVChargingScheduleResponse(status types.GenericStatusType) *NotifyEVChargingScheduleResponse {
 	return &NotifyEVChargingScheduleResponse{Status: status}
 }

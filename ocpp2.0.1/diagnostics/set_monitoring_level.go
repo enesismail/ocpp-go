@@ -42,8 +42,8 @@ type SetMonitoringLevelRequest struct {
 // This field definition of the SetMonitoringLevel response payload, sent by the Charging Station to the CSMS in response to a SetMonitoringLevelRequest.
 // In case the request was invalid, or couldn't be processed, an error will be sent instead.
 type SetMonitoringLevelResponse struct {
-	Status     types.GenericDeviceModelStatus `json:"status" validate:"required,genericDeviceModelStatus"` // Indicates whether the Charging Station was able to accept the request.
-	StatusInfo *types.StatusInfo              `json:"statusInfo,omitempty" validate:"omitempty"`           // Detailed status information.
+	Status     types.GenericDeviceModelStatusType `json:"status" validate:"required,genericDeviceModelStatusType201"` // Indicates whether the Charging Station was able to accept the request.
+	StatusInfo *types.StatusInfo                  `json:"statusInfo,omitempty" validate:"omitempty"`                  // Detailed status information.
 }
 
 // It may be desirable to restrict the reporting of monitoring events, to only those monitors with a
@@ -82,10 +82,9 @@ func NewSetMonitoringLevelRequest(severity int) *SetMonitoringLevelRequest {
 }
 
 // Creates a new SetMonitoringLevelResponse, containing all required fields. Optional fields may be set afterwards.
-func NewSetMonitoringLevelResponse(status types.GenericDeviceModelStatus) *SetMonitoringLevelResponse {
+func NewSetMonitoringLevelResponse(status types.GenericDeviceModelStatusType) *SetMonitoringLevelResponse {
 	return &SetMonitoringLevelResponse{Status: status}
 }
 
-func init() {
-	_ = types.Validate.RegisterValidation("monitoringBase", isValidMonitoringBase)
-}
+// monitoringBase is registered once, in set_monitoring_base.go: that request carries the field this
+// validator checks, and SetMonitoringLevelRequest does not reuse the tag.

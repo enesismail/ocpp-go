@@ -15,12 +15,12 @@ import (
 // Test
 func (suite *OcppV2TestSuite) TestMeterValuesRequestValidation() {
 	var requestTable = []GenericTestEntry{
-		{meter.MeterValuesRequest{EvseID: 1, MeterValue: []types.MeterValue{{Timestamp: types.DateTime{Time: time.Now()}, SampledValue: []types.SampledValue{{Value: 3.14, Context: types.ReadingContextTransactionEnd, Measurand: types.MeasurandPowerActiveExport, Phase: types.PhaseL2, Location: types.LocationBody}}}}}, true},
-		{meter.MeterValuesRequest{MeterValue: []types.MeterValue{{Timestamp: types.DateTime{Time: time.Now()}, SampledValue: []types.SampledValue{{Value: 3.14, Context: types.ReadingContextTransactionEnd, Measurand: types.MeasurandPowerActiveExport, Phase: types.PhaseL2, Location: types.LocationBody}}}}}, true},
+		{meter.MeterValuesRequest{EvseID: 1, MeterValue: []types.MeterValue{{Timestamp: &types.DateTime{Time: time.Now()}, SampledValue: []types.SampledValue{{Value: 3.14, Context: types.ReadingContextTypeTransactionEnd, Measurand: types.MeasurandTypePowerActiveExport, Phase: types.PhaseTypeL2, Location: types.LocationTypeBody}}}}}, true},
+		{meter.MeterValuesRequest{MeterValue: []types.MeterValue{{Timestamp: &types.DateTime{Time: time.Now()}, SampledValue: []types.SampledValue{{Value: 3.14, Context: types.ReadingContextTypeTransactionEnd, Measurand: types.MeasurandTypePowerActiveExport, Phase: types.PhaseTypeL2, Location: types.LocationTypeBody}}}}}, true},
 		{meter.MeterValuesRequest{EvseID: 1, MeterValue: []types.MeterValue{}}, false},
 		{meter.MeterValuesRequest{EvseID: 1}, false},
-		{meter.MeterValuesRequest{EvseID: 1, MeterValue: []types.MeterValue{{Timestamp: types.DateTime{Time: time.Now()}, SampledValue: []types.SampledValue{{Value: 3.14, Context: "invalidContext", Measurand: types.MeasurandPowerActiveExport, Phase: types.PhaseL2, Location: types.LocationBody}}}}}, false},
-		{meter.MeterValuesRequest{EvseID: -1, MeterValue: []types.MeterValue{{Timestamp: types.DateTime{Time: time.Now()}, SampledValue: []types.SampledValue{{Value: 3.14, Context: types.ReadingContextTransactionEnd, Measurand: types.MeasurandPowerActiveExport, Phase: types.PhaseL2, Location: types.LocationBody}}}}}, false},
+		{meter.MeterValuesRequest{EvseID: 1, MeterValue: []types.MeterValue{{Timestamp: &types.DateTime{Time: time.Now()}, SampledValue: []types.SampledValue{{Value: 3.14, Context: "invalidContext", Measurand: types.MeasurandTypePowerActiveExport, Phase: types.PhaseTypeL2, Location: types.LocationTypeBody}}}}}, false},
+		{meter.MeterValuesRequest{EvseID: -1, MeterValue: []types.MeterValue{{Timestamp: &types.DateTime{Time: time.Now()}, SampledValue: []types.SampledValue{{Value: 3.14, Context: types.ReadingContextTypeTransactionEnd, Measurand: types.MeasurandTypePowerActiveExport, Phase: types.PhaseTypeL2, Location: types.LocationTypeBody}}}}}, false},
 	}
 	ExecuteGenericTestTable(suite.T(), requestTable)
 }
@@ -40,13 +40,13 @@ func (suite *OcppV2TestSuite) TestMeterValuesE2EMocked() {
 	evseId := 1
 	signedMeterValue := types.SignedMeterValue{SignedMeterData: "0xdeadbeef", SigningMethod: "ECDSAP256SHA256", EncodingMethod: "DLMS Message", PublicKey: "0xd34dc0de"}
 	unitOfMeasure := types.UnitOfMeasure{Unit: "kW", Multiplier: newInt(0)}
-	sampledValue := types.SampledValue{Value: 3.14, Context: types.ReadingContextTransactionEnd, Measurand: types.MeasurandPowerActiveExport, Phase: types.PhaseL2, Location: types.LocationBody, SignedMeterValue: &signedMeterValue, UnitOfMeasure: &unitOfMeasure}
+	sampledValue := types.SampledValue{Value: 3.14, Context: types.ReadingContextTypeTransactionEnd, Measurand: types.MeasurandTypePowerActiveExport, Phase: types.PhaseTypeL2, Location: types.LocationTypeBody, SignedMeterValue: &signedMeterValue, UnitOfMeasure: &unitOfMeasure}
 	sampledValues := []types.SampledValue{sampledValue}
-	meterValue := types.MeterValue{Timestamp: types.DateTime{Time: time.Now()}, SampledValue: sampledValues}
+	meterValue := types.MeterValue{Timestamp: &types.DateTime{Time: time.Now()}, SampledValue: sampledValues}
 	meterValues := []types.MeterValue{meterValue}
 	timestamp := types.DateTime{Time: time.Now()}
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"evseId":%v,"meterValue":[{"timestamp":"%v","sampledValue":[{"value":%v,"context":"%v","measurand":"%v","phase":"%v","location":"%v","signedMeterValue":{"signedMeterData":"%v","signingMethod":"%v","encodingMethod":"%v","publicKey":"%v"},"unitOfMeasure":{"unit":"%v","multiplier":%v}}]}]}]`,
-		messageId, meter.MeterValuesFeatureName, evseId, timestamp.FormatTimestamp(), sampledValue.Value, sampledValue.Context, sampledValue.Measurand, sampledValue.Phase, sampledValue.Location, signedMeterValue.SignedMeterData, signedMeterValue.SigningMethod, signedMeterValue.EncodingMethod, signedMeterValue.PublicKey, unitOfMeasure.Unit, *unitOfMeasure.Multiplier)
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"evseId":%v,"meterValue":[{"sampledValue":[{"value":%v,"context":"%v","measurand":"%v","phase":"%v","location":"%v","signedMeterValue":{"signedMeterData":"%v","signingMethod":"%v","encodingMethod":"%v","publicKey":"%v"},"unitOfMeasure":{"unit":"%v","multiplier":%v}}],"timestamp":"%v"}]}]`,
+		messageId, meter.MeterValuesFeatureName, evseId, sampledValue.Value, sampledValue.Context, sampledValue.Measurand, sampledValue.Phase, sampledValue.Location, signedMeterValue.SignedMeterData, signedMeterValue.SigningMethod, signedMeterValue.EncodingMethod, signedMeterValue.PublicKey, unitOfMeasure.Unit, *unitOfMeasure.Multiplier, timestamp.FormatTimestamp())
 	responseJson := fmt.Sprintf(`[3,"%v",{}]`, messageId)
 	response := meter.NewMeterValuesResponse()
 	channel := NewMockWebSocket(wsId)
@@ -56,7 +56,7 @@ func (suite *OcppV2TestSuite) TestMeterValuesE2EMocked() {
 		request := args.Get(1).(*meter.MeterValuesRequest)
 		assert.Equal(t, evseId, request.EvseID)
 		require.Len(t, request.MeterValue, len(meterValues))
-		assertDateTimeEquality(t, &meterValue.Timestamp, &request.MeterValue[0].Timestamp)
+		assertDateTimeEquality(t, meterValue.Timestamp, request.MeterValue[0].Timestamp)
 		require.Len(t, request.MeterValue[0].SampledValue, len(sampledValues))
 		assert.Equal(t, sampledValue.Value, request.MeterValue[0].SampledValue[0].Value)
 		assert.Equal(t, sampledValue.Context, request.MeterValue[0].SampledValue[0].Context)
@@ -89,13 +89,13 @@ func (suite *OcppV2TestSuite) TestMeterValuesInvalidEndpoint() {
 	evseId := 1
 	signedMeterValue := types.SignedMeterValue{SignedMeterData: "0xdeadbeef", SigningMethod: "ECDSAP256SHA256", EncodingMethod: "DLMS Message", PublicKey: "0xd34dc0de"}
 	unitOfMeasure := types.UnitOfMeasure{Unit: "kW", Multiplier: newInt(0)}
-	sampledValue := types.SampledValue{Value: 3.14, Context: types.ReadingContextTransactionEnd, Measurand: types.MeasurandPowerActiveExport, Phase: types.PhaseL2, Location: types.LocationBody, SignedMeterValue: &signedMeterValue, UnitOfMeasure: &unitOfMeasure}
+	sampledValue := types.SampledValue{Value: 3.14, Context: types.ReadingContextTypeTransactionEnd, Measurand: types.MeasurandTypePowerActiveExport, Phase: types.PhaseTypeL2, Location: types.LocationTypeBody, SignedMeterValue: &signedMeterValue, UnitOfMeasure: &unitOfMeasure}
 	sampledValues := []types.SampledValue{sampledValue}
-	meterValue := types.MeterValue{Timestamp: types.DateTime{Time: time.Now()}, SampledValue: sampledValues}
+	meterValue := types.MeterValue{Timestamp: &types.DateTime{Time: time.Now()}, SampledValue: sampledValues}
 	meterValues := []types.MeterValue{meterValue}
 	timestamp := types.DateTime{Time: time.Now()}
 	meterValuesRequest := meter.NewMeterValuesRequest(connectorId, meterValues)
-	requestJson := fmt.Sprintf(`[2,"%v","%v",{"evseId":%v,"meterValue":[{"timestamp":"%v","sampledValue":[{"value":%v,"context":"%v","measurand":"%v","phase":"%v","location":"%v","signedMeterValue":{"signedMeterData":"%v","signingMethod":"%v","encodingMethod":"%v","publicKey":"%v"},"unitOfMeasure":{"unit":"%v","multiplier":%v}}]}]}]`,
-		messageId, meter.MeterValuesFeatureName, evseId, timestamp.FormatTimestamp(), sampledValue.Value, sampledValue.Context, sampledValue.Measurand, sampledValue.Phase, sampledValue.Location, signedMeterValue.SignedMeterData, signedMeterValue.SigningMethod, signedMeterValue.EncodingMethod, signedMeterValue.PublicKey, unitOfMeasure.Unit, *unitOfMeasure.Multiplier)
+	requestJson := fmt.Sprintf(`[2,"%v","%v",{"evseId":%v,"meterValue":[{"sampledValue":[{"value":%v,"context":"%v","measurand":"%v","phase":"%v","location":"%v","signedMeterValue":{"signedMeterData":"%v","signingMethod":"%v","encodingMethod":"%v","publicKey":"%v"},"unitOfMeasure":{"unit":"%v","multiplier":%v}}],"timestamp":"%v"}]}]`,
+		messageId, meter.MeterValuesFeatureName, evseId, sampledValue.Value, sampledValue.Context, sampledValue.Measurand, sampledValue.Phase, sampledValue.Location, signedMeterValue.SignedMeterData, signedMeterValue.SigningMethod, signedMeterValue.EncodingMethod, signedMeterValue.PublicKey, unitOfMeasure.Unit, *unitOfMeasure.Multiplier, timestamp.FormatTimestamp())
 	testUnsupportedRequestFromCentralSystem(suite, meterValuesRequest, requestJson, messageId)
 }

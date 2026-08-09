@@ -50,8 +50,8 @@ func isValidSendLocalListStatus(fl validator.FieldLevel) bool {
 
 // Contains the identifier to use for authorization.
 type AuthorizationData struct {
-	IdTokenInfo *types.IdTokenInfo `json:"idTokenInfo,omitempty" validate:"omitempty"`
-	IdToken     types.IdToken      `json:"idToken"`
+	IdTokenInfo *types.IDTokenInfo `json:"idTokenInfo,omitempty" validate:"omitempty"`
+	IdToken     types.IDToken      `json:"idToken"`
 }
 
 // The field definition of the SendLocalList request payload sent by the CSMS to the Charging Station.
